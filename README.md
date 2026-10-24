@@ -18,13 +18,16 @@ Implemented:
   atomic winner selection, default cases, and monotonic timeouts.
 - Cooperative task sleep and a cancellable timer heap that progresses
   while workers have runnable work and while all workers are idle.
+- Edge-triggered epoll I/O for sockets and pipes, including timed
+  readiness/read/write/accept/connect, descriptor ownership, and stale-event
+  rejection after descriptor/registry-slot reuse.
 - Cooperative main-task shutdown, removal of abandoned channel waiters,
   repeated runs, independent runtimes, and deadlock reporting.
 - GCC and Clang builds, concurrency and failure-injection tests, sanitizer
   checks, and equivalent C/Go benchmarks.
 
-The next part of milestone 0 is the epoll netpoller, followed by syscall
-handoff, sysmon, and scheduling/performance work. Perl
+The next parts of milestone 0 are syscall handoff, sysmon, and
+scheduling/performance work. Perl
 integration and deployment tooling remain later milestones. The design's
 million-task and within-2x-of-Go targets have not been achieved or validated.
 
@@ -38,6 +41,7 @@ for comparisons only. There are no downloaded dependencies.
 make
 ./build/hello
 ./build/select
+./build/echo
 make test
 make stress
 make ubsan
@@ -46,7 +50,8 @@ make memcheck # optional: requires Valgrind and its development headers
 make BUILD=build/clang CC=clang test
 ```
 
-`make` produces `build/libwump.a` and channel/timeout examples. The public API is
+`make` produces `build/libwump.a` and channel, timeout, and socketpair echo
+examples. The public API is
 [runtime/include/wump.h](runtime/include/wump.h).
 
 ```c
@@ -131,10 +136,63 @@ Timers register on the scheduler stack after the task context is saved.
 Channel and timer wakeups compete through the same atomic winner; the
 resumed task removes losing waiters and cancels its timer before returning.
 
+## Socket and pipe I/O
+
+Call `wump_io_open(fd)` from a task to transfer ownership of a socket or pipe
+to its runtime. It sets O_NONBLOCK and FD_CLOEXEC; on attachment failure the
+caller retains ownership and the original flags are restored. Regular
+files are not supported by epoll. Borrow the native descriptor with
+`wump_io_fd` for configuration/inspection, keeping the handle open while
+using it. Never close/reuse that descriptor or attach it to another owner.
+O_NONBLOCK also affects any duplicated descriptors for the same open file.
+
+`wump_io_wait(io, WUMP_IO_READ | WUMP_IO_WRITE, timeout_ns)` returns ready
+bits, 0 for timeout, or -1 for an error. Timeout units and -1/0 meanings
+match `wump_sel`. Readiness is a snapshot and can be stale; direct native
+I/O must still handle EAGAIN. One reader and one writer can park on a handle
+at the same time; an overlapping parked wait returns EBUSY.
+
+`wump_io_read`, `wump_io_write`, `wump_io_accept`, and `wump_io_connect` try
+nonblocking syscalls and park on readiness when necessary. The timeout
+bounds the entire retry loop. Would-block at zero timeout reports
+ETIMEDOUT. Read/write return partial results as POSIX does; EOF returns 0,
+and write retains write(2)'s SIGPIPE behavior. Accept returns another owned,
+nonblocking, close-on-exec handle. Connect waits for EINPROGRESS/EALREADY
+completion and checks SO_ERROR and the connected peer; other connect
+errors, including Unix-domain backlog EAGAIN, propagate to the caller.
+Closing the handle abandons a connection attempt that timed out.
+
+`wump_io_close` interrupts parked operations with EBADF while leaving the
+handle allocated. `wump_io_free` closes and frees, but reports EBUSY until
+all in-flight calls have returned. Join those tasks before freeing; no new
+calls may begin concurrently with free. Handles belong to one runtime;
+foreign-runtime use fails with EXDEV. Shutdown stops and joins its poller,
+detaches pending waits/timers, and closes/frees every remaining I/O handle.
+Handles cannot be retained after `wump_run` returns.
+
+Each runtime lazily starts one helper thread, epoll instance, and eventfd
+on its first attachment. It uses
+[EPOLLET with EPOLLONESHOT rearming](https://www.man7.org/linux/man-pages/man7/epoll.7.html).
+Rearming rechecks current readiness, covering arrivals between EAGAIN and
+parking. Timer and epoll wakeups claim one shared atomic winner after the
+task's stack is saved. External wakeup publication updates the scheduler's
+I/O count and run queue under the same lock, preventing false deadlocks.
+Kernel events carry slot/generation tokens, not pointers to freed handles.
+Nonblocking syscalls and close serialize under the poller mutex so an fd
+cannot be closed/reused between lookup and the syscall. Linux
+[close errors are not retried](https://www.man7.org/linux/man-pages/man2/close.2.html).
+
+This is an initial implementation: the poller uses a shared mutex and a
+separate thread, and the echo benchmark exposes a large latency gap versus
+Go. Generic blocking syscall handoff, DNS, PerlIO integration, fork/signal
+integration, and mixing I/O cases directly into `wump_sel` remain future
+work. I/O calls currently take their own timeout argument.
+
 ## Scheduling and lifetime rules
 
 Scheduling is cooperative. Tasks must return, call `wump_yield`, or park in
-a channel operation or sleep to let their worker run something else. An operation
+a channel operation, sleep, or I/O wait to let their worker run something
+else. An operation
 that succeeds immediately need not yield. Native blocking calls block the
 worker; a task that never yields can delay shutdown indefinitely.
 
@@ -143,7 +201,9 @@ Tasks may migrate. Do not retain native TLS addresses, including cached
 points. The C compiler can cache TLS pointers across function calls; use a
 separate non-inlined accessor if C task code reads/writes `errno` across a
 yield (as the test does). This runtime is a foundation for a task-aware
-interpreter; it cannot make arbitrary C TLS task-local.
+interpreter; it cannot make arbitrary C TLS task-local. Runtime retry loops
+use non-inlined errno accessors so they do not retain a native TLS address
+after resuming on a different worker.
 
 Task arguments and referenced data remain the caller's responsibility.
 Sending copies bytes, including any pointer values; it does not copy the
@@ -160,9 +220,9 @@ supported; shutdown removes abandoned waiters and timers before unmapping
 their stacks. Shutdown does not close or free channels or run abandoned
 tasks' cleanup code.
 
-All parked tasks with no runnable work or pending timers produce
-`wump_run == -1` and `errno == EDEADLK`. I/O integration will extend the idle
-protocol for external event sources. Timers cannot interrupt a running task
+All parked tasks with no runnable work, pending timers, or active I/O waits
+produce `wump_run == -1` and `errno == EDEADLK`. An open handle without an
+active wait does not prevent deadlock reporting. Timers cannot interrupt a running task
 that does not yield. Invalid API calls
 report EINVAL; nested runs report EBUSY; send/close on an already closed
 channel report EPIPE. A receive on a closed, drained channel returns 0 and
@@ -185,7 +245,11 @@ capacities 0/1/7/256. The selection suite covers duplicate channels,
 disabled/default cases, randomized ready choices, selected closed-channel
 operations, selection-to-selection rendezvous with opposite lock orders,
 timer expiry and cancellation, timeout/message races, unchanged losing
-outputs, and abandoned selections. `make stress` repeats both suites ten
+outputs, and abandoned selections. The I/O suite covers external pipe
+wakeups while workers are idle, simultaneous read/write waits, parallel
+socketpair echo, timeout/close races, descriptor reuse, EOF/half-close,
+loopback TCP, runtime ownership, and leak-free shutdown. `make stress`
+repeats all three behavior suites ten
 times, including timeout races at 1/4/16 workers.
 
 The failure suite injects allocation, mutex/condition initialization,
@@ -195,6 +259,13 @@ task never runs on failed startup, and subsequent runs/spawns still work.
 It also injects monotonic condition-attribute failures, selection allocation
 failures, and timer allocation/growth failures after parking, checking that
 outputs and existing waits stay intact and later operations still work.
+The I/O failure suite injects poller/thread/descriptor setup failures,
+epoll rearm/wait errors, timer allocation errors, interrupted reads and
+writes, accepted-descriptor registration failure, stale connect readiness,
+and close EINTR. It checks fd counts and rollback, preserves libc's
+fortified entry points in the fault harness, and deliberately delays an
+old epoll event until after descriptor/slot reuse to test generation checks.
+These syscall fixtures complement the real network integration tests.
 
 `make ubsan` fails immediately on undefined behavior. `make tsan` uses the
 [ThreadSanitizer fiber API](https://github.com/llvm/llvm-project/blob/main/compiler-rt/include/sanitizer/tsan_interface.h)
@@ -215,6 +286,15 @@ still terminate with SIGSEGV; ordinary tests retain full error reporting.
 Run a focused case with `./build/test_runtime --case 'channel free'`.
 Selection cases support the same filter, for example
 `./build/test_select --case 'channel-timeout'`.
+I/O cases support it too: `./build/test_io --case 'external pipe'`.
+
+The full I/O suite requires permission for IPv4 loopback sockets and socket
+operations such as shutdown. Some command sandboxes return EPERM for those
+calls while allowing socketpair/pipe I/O. The full test, stress, and
+sanitizer targets intentionally retain those integration checks; they do
+not silently skip them. Run on a host with local socket access when the
+sandbox denies these operations. Filtered socketpair/pipe checks and syscall
+fixtures do not establish that the TCP/half-close checks passed.
 
 ## Benchmarks
 
@@ -226,7 +306,7 @@ make bench-compare ITERATIONS=1000000
 
 CSV output reports spawn/completion, voluntary yield, unbuffered round trips,
 a buffered 4-producer/4-consumer channel, ready two-channel selection,
-one-microsecond sleeps, and four compute tasks at 1 and 4
+one-microsecond sleeps, socketpair echo, and four compute tasks at 1 and 4
 workers. Both implementations check message counts/checksums and use the
 same work sizes and buffer capacities. Spawn uses batches of at most 1024
 tasks, so it does not measure a million simultaneously live tasks. The
@@ -235,6 +315,9 @@ Each CPU operation is one xorshift iteration; ping-pong operations are
 whole round trips. Setup of the runtime itself is excluded from timings.
 The sleep case runs ceil(ITERATIONS / 100) sleeps; each reported operation
 is one sleep, including scheduler and OS wakeup latency.
+Echo runs ceil(ITERATIONS / 10) round trips of an eight-byte sequence value
+over a nonblocking Unix socketpair. Both implementations verify replies;
+Go uses pollable `os.File` handles. Connection/poller setup is excluded.
 
 The Go comparison builds locally with networking and telemetry disabled,
 and keeps its build cache under `build/`. Treat measurements as local
@@ -246,5 +329,6 @@ drawing conclusions.
 Linux amd64). It shows compute scaling while exposing substantial remaining
 spawn overhead. [select-timers.csv](bench/select-timers.csv) records the
 expanded suite on 2026-10-24 with the same toolchain, including selection
-and sleep. The machine reports 16 online CPUs; these figures do not
+and sleep. [netpoller.csv](bench/netpoller.csv) adds the Unix socketpair echo
+baseline; it does not measure TCP networking. The machine reports 16 online CPUs; these figures do not
 establish behavior on other hardware or long-running workloads.

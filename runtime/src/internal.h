@@ -55,6 +55,7 @@ typedef struct wump_g {
 } wump_g;
 
 typedef struct wump_runtime wump_runtime;
+typedef struct wump_poller wump_poller;
 
 #define WUMP_SEL_PENDING SIZE_MAX
 #define WUMP_SEL_TIMEOUT (SIZE_MAX - 1)
@@ -107,5 +108,18 @@ int64_t wump_now(void);
 /* Add only on the scheduler stack, after the parked context is saved. */
 int wump_timer_add(wump_timer *timer);
 void wump_timer_cancel(wump_timer *timer);
+
+wump_runtime *wump_current_runtime(void);
+wump_poller *wump_netpoll(void);
+/* Publish external wakeups and change the active-I/O count atomically
+ * under the scheduler mutex, preventing a false idle deadlock. */
+void wump_io_count(wump_runtime *rt, int delta, wump_g *ready);
+wump_poller *wump_poller_create(wump_runtime *rt);
+void wump_poller_stop(wump_poller *poller);
+void wump_poller_destroy(wump_poller *poller);
+/* Access libc errno without letting a caller cache its native TLS address
+ * across a coroutine migration. These accessors must never be inlined. */
+int wump_errno(void);
+void wump_set_errno(int error);
 
 #endif

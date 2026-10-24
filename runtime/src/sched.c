@@ -23,6 +23,8 @@ struct wump_runtime {
 	wump_g *main_g;
 	wump_timer **timers;
 	size_t ntimers, timer_cap;
+	wump_poller *poller;
+	size_t io_waiters;
 };
 
 static _Thread_local wump_worker *current;
@@ -59,6 +61,39 @@ static void global_push_locked(wump_runtime *rt, wump_g *g) {
 static void global_push(wump_runtime *rt, wump_g *g) {
 	pthread_mutex_lock(&rt->mu);
 	global_push_locked(rt, g);
+	pthread_mutex_unlock(&rt->mu);
+}
+
+wump_runtime *wump_current_runtime(void) {
+	return current != NULL ? current->rt : NULL;
+}
+
+wump_poller *wump_netpoll(void) {
+	wump_runtime *rt = current->rt;
+	pthread_mutex_lock(&rt->mu);
+	if (rt->poller == NULL) {
+		rt->poller = wump_poller_create(rt);
+	}
+	wump_poller *poller = rt->poller;
+	pthread_mutex_unlock(&rt->mu);
+	return poller;
+}
+
+void wump_io_count(wump_runtime *rt, int delta, wump_g *ready) {
+	pthread_mutex_lock(&rt->mu);
+	if (delta > 0) {
+		rt->io_waiters++;
+	} else {
+		assert(rt->io_waiters != 0);
+		rt->io_waiters--;
+	}
+	if (ready != NULL) {
+		ready->state = G_RUNNABLE;
+		global_push_locked(rt, ready);
+	} else {
+		rt->epoch++;
+		pthread_cond_signal(&rt->work);
+	}
 	pthread_mutex_unlock(&rt->mu);
 }
 
@@ -372,7 +407,7 @@ static void schedule(wump_worker *w) {
 			if (epoch == rt->epoch &&
 				!atomic_load_explicit(&rt->stopping, memory_order_relaxed)) {
 				rt->idle++;
-				if (rt->idle == rt->nprocs && rt->ntimers == 0) {
+				if (rt->idle == rt->nprocs && rt->ntimers == 0 && rt->io_waiters == 0) {
 					rt->error = EDEADLK;
 					atomic_store_explicit(&rt->stopping, 1, memory_order_release);
 					pthread_cond_broadcast(&rt->work);
@@ -577,6 +612,9 @@ int wump_run(wump_fn main_fn, void *arg, int nprocs) {
 	error = rt.error;
 
 destroy_workers:
+	/* Stop external wakeups before touching parked stacks. The poller
+	 * stays allocated until cancellation hooks detach all I/O waits. */
+	wump_poller_stop(rt.poller);
 	/* No worker can touch a channel or a coroutine now. Unlink parked
 	 * stack-resident waiters before unmapping their stacks, so channels
 	 * owned by the caller remain reusable after early exit/deadlock. */
@@ -585,6 +623,7 @@ destroy_workers:
 			g->cancel_fn(g->cancel_arg);
 		}
 	}
+	wump_poller_destroy(rt.poller);
 	while (rt.all != NULL) {
 		wump_g *g = rt.all;
 		rt.all = g->all_next;

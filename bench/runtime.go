@@ -1,10 +1,13 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -156,6 +159,50 @@ func sleepBench() {
 	report("sleep", uint64(iterations), started)
 }
 
+func echoBench() {
+	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM|syscall.SOCK_NONBLOCK|syscall.SOCK_CLOEXEC, 0)
+	if err != nil {
+		panic(err)
+	}
+	client := os.NewFile(uintptr(fds[0]), "echo-client")
+	server := os.NewFile(uintptr(fds[1]), "echo-server")
+	if client == nil || server == nil {
+		panic("socketpair file creation failed")
+	}
+	defer client.Close()
+	defer server.Close()
+	iterations := (count + 9) / 10
+	done := make(chan struct{})
+	started := time.Now()
+	go func() {
+		var value [8]byte
+		for i := 0; i < iterations; i++ {
+			if _, err := io.ReadFull(server, value[:]); err != nil {
+				panic(err)
+			}
+			if n, err := server.Write(value[:]); err != nil || n != len(value) {
+				panic("short echo write")
+			}
+		}
+		done <- struct{}{}
+	}()
+	var value [8]byte
+	for i := 0; i < iterations; i++ {
+		binary.LittleEndian.PutUint64(value[:], uint64(i))
+		if n, err := client.Write(value[:]); err != nil || n != len(value) {
+			panic("short client write")
+		}
+		if _, err := io.ReadFull(client, value[:]); err != nil {
+			panic(err)
+		}
+		if binary.LittleEndian.Uint64(value[:]) != uint64(i) {
+			panic("echo value mismatch")
+		}
+	}
+	<-done
+	report("echo", uint64(iterations), started)
+}
+
 func number(value string) int {
 	n, err := strconv.Atoi(value)
 	if err != nil || n <= 0 || n > 1073741823 {
@@ -177,7 +224,7 @@ func main() {
 	}
 	runtime.GOMAXPROCS(workers)
 	fmt.Println("implementation,workload,workers,operations,seconds,ns_per_op")
-	for _, benchmark := range []func(){spawnBench, yieldBench, pingBench, mpmcBench, selectBench, sleepBench, cpuBench} {
+	for _, benchmark := range []func(){spawnBench, yieldBench, pingBench, mpmcBench, selectBench, sleepBench, echoBench, cpuBench} {
 		benchmark()
 	}
 }

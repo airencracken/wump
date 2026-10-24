@@ -163,7 +163,7 @@ static int park(wump_chan *ch, void *data, int sending) {
 
 wump_chan *wump_chan_make(size_t elem_size, size_t cap) {
 	if (elem_size != 0 && cap > SIZE_MAX / elem_size) {
-		errno = EOVERFLOW;
+		wump_set_errno(EOVERFLOW);
 		return NULL;
 	}
 	wump_chan *ch = calloc(1, sizeof(*ch));
@@ -181,7 +181,7 @@ wump_chan *wump_chan_make(size_t elem_size, size_t cap) {
 	if (error != 0) {
 		free(ch->buffer);
 		free(ch);
-		errno = error;
+		wump_set_errno(error);
 		return NULL;
 	}
 	ch->elem_size = elem_size;
@@ -205,7 +205,7 @@ void wump_chan_free(wump_chan *ch) {
 
 static int valid(wump_chan *ch, const void *data) {
 	if (ch == NULL || wump_self() == NULL || (ch->elem_size != 0 && data == NULL)) {
-		errno = EINVAL;
+		wump_set_errno(EINVAL);
 		return 0;
 	}
 	return 1;
@@ -277,7 +277,7 @@ int wump_chan_send(wump_chan *ch, const void *elem) {
 		result = park(ch, (void *)elem, 1);
 	}
 	if (result == -1) {
-		errno = EPIPE;
+		wump_set_errno(EPIPE);
 	}
 	return result;
 }
@@ -298,13 +298,13 @@ int wump_chan_recv(wump_chan *ch, void *out) {
 
 int wump_chan_close(wump_chan *ch) {
 	if (ch == NULL || wump_self() == NULL) {
-		errno = EINVAL;
+		wump_set_errno(EINVAL);
 		return -1;
 	}
 	pthread_mutex_lock(&ch->mu);
 	if (ch->closed) {
 		pthread_mutex_unlock(&ch->mu);
-		errno = EPIPE;
+		wump_set_errno(EPIPE);
 		return -1;
 	}
 	ch->closed = 1;
@@ -387,7 +387,7 @@ static void park_selection(void *arg) {
 	 * wakers, expiry does not need a channel lock and could otherwise
 	 * dispatch this task while it was still running on its own stack. */
 	if (sel->timed && wump_timer_add(&sel->timer) != 0) {
-		sel->error = errno;
+		sel->error = wump_errno();
 		atomic_store(&sel->winner, WUMP_SEL_ERROR);
 		failed = 1;
 	}
@@ -401,17 +401,17 @@ static void park_selection(void *arg) {
 int wump_sel(wump_case *cases, size_t ncases, int64_t timeout_ns, size_t *chosen) {
 	wump_g *g = wump_self();
 	if (g == NULL || (ncases != 0 && cases == NULL) || timeout_ns < -1) {
-		errno = EINVAL;
+		wump_set_errno(EINVAL);
 		return -1;
 	}
 	if (ncases > SIZE_MAX / sizeof(sel_slot)) {
-		errno = EOVERFLOW;
+		wump_set_errno(EOVERFLOW);
 		return -1;
 	}
 	for (size_t i = 0; i < ncases; i++) {
 		if ((cases[i].op != WUMP_SEND && cases[i].op != WUMP_RECV) ||
 			(cases[i].ch != NULL && cases[i].ch->elem_size != 0 && cases[i].data == NULL)) {
-			errno = EINVAL;
+			wump_set_errno(EINVAL);
 			return -1;
 		}
 	}
@@ -419,7 +419,7 @@ int wump_sel(wump_case *cases, size_t ncases, int64_t timeout_ns, size_t *chosen
 	if (timeout_ns > 0) {
 		int64_t now = wump_now();
 		if (timeout_ns > INT64_MAX - now) {
-			errno = EOVERFLOW;
+			wump_set_errno(EOVERFLOW);
 			return -1;
 		}
 		deadline = now + timeout_ns;
@@ -479,7 +479,7 @@ int wump_sel(wump_case *cases, size_t ncases, int64_t timeout_ns, size_t *chosen
 				*chosen = index;
 			}
 			if (result == -1) {
-				errno = EPIPE;
+				wump_set_errno(EPIPE);
 			}
 			return 1;
 		}
@@ -514,7 +514,7 @@ int wump_sel(wump_case *cases, size_t ncases, int64_t timeout_ns, size_t *chosen
 	detach_selection(&sel);
 	size_t winner = atomic_load(&sel.winner);
 	if (winner == WUMP_SEL_ERROR) {
-		errno = sel.error;
+		wump_set_errno(sel.error);
 		return -1;
 	}
 	if (winner == WUMP_SEL_TIMEOUT) {
@@ -528,14 +528,14 @@ int wump_sel(wump_case *cases, size_t ncases, int64_t timeout_ns, size_t *chosen
 		*chosen = winner;
 	}
 	if (sel.result == -1) {
-		errno = EPIPE;
+		wump_set_errno(EPIPE);
 	}
 	return 1;
 }
 
 int wump_sleep(int64_t duration_ns) {
 	if (wump_self() == NULL || duration_ns < 0) {
-		errno = EINVAL;
+		wump_set_errno(EINVAL);
 		return -1;
 	}
 	if (duration_ns == 0) {

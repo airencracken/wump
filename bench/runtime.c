@@ -226,6 +226,51 @@ static void sleep_bench(void *arg) {
 	report("sleep", (uint64_t)iterations, started);
 }
 
+typedef struct echo_arg { wump_io *io; wump_chan *done; int iterations; } echo_arg;
+
+static void io_full(wump_io *io, uint64_t *value, int writing) {
+	for (size_t offset = 0; offset < sizeof(*value);) {
+		ssize_t n = writing ?
+			wump_io_write(io, (char *)value + offset, sizeof(*value) - offset, -1) :
+			wump_io_read(io, (char *)value + offset, sizeof(*value) - offset, -1);
+		REQUIRE(n > 0);
+		offset += (size_t)n;
+	}
+}
+
+static void echo_worker(void *arg) {
+	echo_arg *ctx = arg;
+	for (int i = 0; i < ctx->iterations; i++) {
+		uint64_t value;
+		io_full(ctx->io, &value, 0);
+		io_full(ctx->io, &value, 1);
+	}
+	REQUIRE(wump_chan_send(ctx->done, NULL) == 0);
+}
+
+static void echo_bench(void *arg) {
+	(void)arg;
+	int fd[2];
+	REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, fd) == 0);
+	wump_io *client = wump_io_open(fd[0]), *server = wump_io_open(fd[1]);
+	wump_chan *done = wump_chan_make(0, 0);
+	REQUIRE(client != NULL && server != NULL && done != NULL);
+	int iterations = (count + 9) / 10;
+	echo_arg ctx = { server, done, iterations };
+	double started = now();
+	REQUIRE(wump_go(echo_worker, &ctx) == 0);
+	for (int i = 0; i < iterations; i++) {
+		uint64_t value = (uint64_t)i;
+		io_full(client, &value, 1);
+		io_full(client, &value, 0);
+		REQUIRE(value == (uint64_t)i);
+	}
+	REQUIRE(wump_chan_recv(done, NULL) == 1);
+	report("echo", (uint64_t)iterations, started);
+	REQUIRE(wump_io_free(client) == 0 && wump_io_free(server) == 0);
+	wump_chan_free(done);
+}
+
 static int number(const char *value) {
 	char *end;
 	errno = 0;
@@ -246,7 +291,7 @@ int main(int argc, char **argv) {
 		count = number(argv[1]);
 	}
 	int workers = argc > 2 ? number(argv[2]) : 1;
-	wump_fn cases[] = { spawn_bench, yield_bench, ping_bench, mpmc_bench, select_bench, sleep_bench, cpu_bench };
+	wump_fn cases[] = { spawn_bench, yield_bench, ping_bench, mpmc_bench, select_bench, sleep_bench, echo_bench, cpu_bench };
 	puts("implementation,workload,workers,operations,seconds,ns_per_op");
 	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
 		REQUIRE(wump_run(cases[i], NULL, workers) == 0);
