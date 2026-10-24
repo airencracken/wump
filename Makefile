@@ -9,10 +9,10 @@ LDLIBS = -lm
 
 RUNTIME = stack sched chan
 OBJECTS = $(addprefix $(BUILD)/,$(addsuffix .o,$(RUNTIME))) $(BUILD)/ctx_x86_64.o
-WRAPPED = pthread_mutex_init pthread_cond_init posix_memalign mmap munmap mprotect pthread_create pthread_join malloc calloc
+WRAPPED = pthread_mutex_init pthread_cond_init pthread_condattr_init pthread_condattr_setclock posix_memalign mmap munmap mprotect pthread_create pthread_join malloc calloc realloc
 
 .PHONY: all test stress ubsan tsan tsan-control memcheck bench bench-compare clean
-all: $(BUILD)/libwump.a $(BUILD)/hello
+all: $(BUILD)/libwump.a $(BUILD)/hello $(BUILD)/select
 
 $(BUILD):
 	mkdir -p $@
@@ -29,6 +29,9 @@ $(BUILD)/libwump.a: $(OBJECTS)
 $(BUILD)/hello: examples/hello.c $(BUILD)/libwump.a
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) -o $@
 
+$(BUILD)/select: examples/select.c $(BUILD)/libwump.a
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) -o $@
+
 $(BUILD)/test_runtime: tests/test_runtime.c tests/errno_probe.c tests/context_probe.S $(BUILD)/libwump.a
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_runtime.c tests/errno_probe.c tests/context_probe.S $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) -o $@
 
@@ -37,12 +40,17 @@ $(BUILD)/test_failures: tests/test_failures.c $(BUILD)/libwump.a
 
 comma := ,
 
-test: $(BUILD)/test_runtime $(BUILD)/test_failures
+$(BUILD)/test_select: tests/test_select.c tests/errno_probe.c $(BUILD)/libwump.a
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_select.c tests/errno_probe.c $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) -o $@
+
+test: $(BUILD)/test_runtime $(BUILD)/test_select $(BUILD)/test_failures
 	timeout 60s $(BUILD)/test_runtime
+	timeout 60s $(BUILD)/test_select
 	timeout 30s $(BUILD)/test_failures
 
-stress: $(BUILD)/test_runtime
+stress: $(BUILD)/test_runtime $(BUILD)/test_select
 	timeout 180s $(BUILD)/test_runtime --stress
+	timeout 180s $(BUILD)/test_select --stress
 
 ubsan:
 	$(MAKE) BUILD=build/ubsan CFLAGS='$(CFLAGS) -fsanitize=undefined -fno-sanitize-recover=all' LDFLAGS='$(LDFLAGS) -fsanitize=undefined' test
@@ -51,8 +59,9 @@ tsan:
 	$(MAKE) BUILD=build/tsan CFLAGS='$(CFLAGS) -fsanitize=thread' LDFLAGS='$(LDFLAGS) -fsanitize=thread' test tsan-control
 
 memcheck:
-	$(MAKE) BUILD=build/valgrind CPPFLAGS='$(CPPFLAGS) -DWUMP_VALGRIND' build/valgrind/test_runtime build/valgrind/test_failures
+	$(MAKE) BUILD=build/valgrind CPPFLAGS='$(CPPFLAGS) -DWUMP_VALGRIND' build/valgrind/test_runtime build/valgrind/test_select build/valgrind/test_failures
 	timeout 300s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --log-file=build/valgrind/runtime.%p.log build/valgrind/test_runtime
+	timeout 300s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --log-file=build/valgrind/select.%p.log build/valgrind/test_select
 	timeout 120s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --log-file=build/valgrind/failures.%p.log build/valgrind/test_failures
 
 $(BUILD)/tsan_race: tests/tsan_race.c $(BUILD)/libwump.a

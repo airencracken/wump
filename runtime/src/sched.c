@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "internal.h"
@@ -20,6 +21,8 @@ struct wump_runtime {
 	wump_g *head, *tail;
 	wump_g *all;
 	wump_g *main_g;
+	wump_timer **timers;
+	size_t ntimers, timer_cap;
 };
 
 static _Thread_local wump_worker *current;
@@ -41,9 +44,8 @@ static void stop(wump_runtime *rt, int error) {
 	pthread_mutex_unlock(&rt->mu);
 }
 
-static void global_push(wump_runtime *rt, wump_g *g) {
+static void global_push_locked(wump_runtime *rt, wump_g *g) {
 	g->next = NULL;
-	pthread_mutex_lock(&rt->mu);
 	if (rt->tail != NULL) {
 		rt->tail->next = g;
 	} else {
@@ -52,7 +54,136 @@ static void global_push(wump_runtime *rt, wump_g *g) {
 	rt->tail = g;
 	rt->epoch++;
 	pthread_cond_signal(&rt->work);
+}
+
+static void global_push(wump_runtime *rt, wump_g *g) {
+	pthread_mutex_lock(&rt->mu);
+	global_push_locked(rt, g);
 	pthread_mutex_unlock(&rt->mu);
+}
+
+int64_t wump_now(void) {
+	struct timespec now;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0 || now.tv_sec < 0 ||
+		now.tv_sec > (INT64_MAX - now.tv_nsec) / INT64_C(1000000000)) {
+		abort();
+	}
+	return (int64_t)now.tv_sec * INT64_C(1000000000) + now.tv_nsec;
+}
+
+static void timer_swap(wump_runtime *rt, size_t a, size_t b) {
+	wump_timer *tmp = rt->timers[a];
+	rt->timers[a] = rt->timers[b];
+	rt->timers[b] = tmp;
+	rt->timers[a]->index = a;
+	rt->timers[b]->index = b;
+}
+
+static void timer_up(wump_runtime *rt, size_t index) {
+	while (index != 0) {
+		size_t parent = (index - 1) / 2;
+		if (rt->timers[parent]->deadline <= rt->timers[index]->deadline) {
+			break;
+		}
+		timer_swap(rt, parent, index);
+		index = parent;
+	}
+}
+
+static void timer_remove(wump_runtime *rt, wump_timer *timer) {
+	size_t index = timer->index;
+	timer->index = SIZE_MAX;
+	rt->ntimers--;
+	if (index == rt->ntimers) {
+		return;
+	}
+	rt->timers[index] = rt->timers[rt->ntimers];
+	rt->timers[index]->index = index;
+	if (index != 0 && rt->timers[index]->deadline < rt->timers[(index - 1) / 2]->deadline) {
+		timer_up(rt, index);
+		return;
+	}
+	while (index < rt->ntimers / 2) {
+		size_t child = index * 2 + 1;
+		if (child + 1 < rt->ntimers &&
+			rt->timers[child + 1]->deadline < rt->timers[child]->deadline) {
+			child++;
+		}
+		if (rt->timers[index]->deadline <= rt->timers[child]->deadline) {
+			break;
+		}
+		timer_swap(rt, index, child);
+		index = child;
+	}
+}
+
+int wump_timer_add(wump_timer *timer) {
+	wump_runtime *rt = current->rt;
+	timer->rt = rt;
+	pthread_mutex_lock(&rt->mu);
+	if (rt->ntimers == rt->timer_cap) {
+		size_t cap = rt->timer_cap == 0 ? 16 : rt->timer_cap * 2;
+		if (cap < rt->timer_cap || cap > SIZE_MAX / sizeof(*rt->timers)) {
+			pthread_mutex_unlock(&rt->mu);
+			errno = ENOMEM;
+			return -1;
+		}
+		wump_timer **timers = realloc(rt->timers, cap * sizeof(*timers));
+		if (timers == NULL) {
+			pthread_mutex_unlock(&rt->mu);
+			return -1;
+		}
+		rt->timers = timers;
+		rt->timer_cap = cap;
+	}
+	timer->index = rt->ntimers;
+	rt->timers[rt->ntimers++] = timer;
+	timer_up(rt, timer->index);
+	rt->epoch++;
+	pthread_cond_signal(&rt->work);
+	pthread_mutex_unlock(&rt->mu);
+	/* Expiry may already have resumed the task. Do not touch timer. */
+	return 0;
+}
+
+void wump_timer_cancel(wump_timer *timer) {
+	wump_runtime *rt = timer->rt;
+	if (rt == NULL) {
+		return;
+	}
+	pthread_mutex_lock(&rt->mu);
+	if (timer->index != SIZE_MAX) {
+		timer_remove(rt, timer);
+		rt->epoch++;
+		pthread_cond_signal(&rt->work);
+	}
+	pthread_mutex_unlock(&rt->mu);
+}
+
+static void timers_expire_locked(wump_runtime *rt) {
+	if (rt->ntimers != 0) {
+		int64_t now = wump_now();
+		while (rt->ntimers != 0 && rt->timers[0]->deadline <= now) {
+			wump_timer *timer = rt->timers[0];
+			timer_remove(rt, timer);
+			size_t expected = WUMP_SEL_PENDING;
+			if (atomic_compare_exchange_strong(timer->winner, &expected, WUMP_SEL_TIMEOUT)) {
+				wump_g *g = timer->g;
+				g->state = G_RUNNABLE;
+				global_push_locked(rt, g);
+			}
+			/* A published task may free its timer after we unlock mu. */
+		}
+	}
+}
+
+uint64_t wump_random(void) {
+	uint64_t x = current->rng;
+	x ^= x << 13;
+	x ^= x >> 7;
+	x ^= x << 17;
+	current->rng = x;
+	return x;
 }
 
 static wump_g *global_pop(wump_runtime *rt) {
@@ -232,6 +363,7 @@ static void schedule(wump_worker *w) {
 		/* Pair the work scan with an epoch under the sleep mutex.
 		 * Every enqueue changes it, preventing a lost wakeup. */
 		pthread_mutex_lock(&rt->mu);
+		timers_expire_locked(rt);
 		uint64_t epoch = rt->epoch;
 		pthread_mutex_unlock(&rt->mu);
 		wump_g *g = find_work(w);
@@ -240,10 +372,20 @@ static void schedule(wump_worker *w) {
 			if (epoch == rt->epoch &&
 				!atomic_load_explicit(&rt->stopping, memory_order_relaxed)) {
 				rt->idle++;
-				if (rt->idle == rt->nprocs) {
+				if (rt->idle == rt->nprocs && rt->ntimers == 0) {
 					rt->error = EDEADLK;
 					atomic_store_explicit(&rt->stopping, 1, memory_order_release);
 					pthread_cond_broadcast(&rt->work);
+				} else if (rt->ntimers != 0) {
+					int64_t deadline = rt->timers[0]->deadline;
+					struct timespec until = {
+						.tv_sec = (time_t)(deadline / INT64_C(1000000000)),
+						.tv_nsec = (long)(deadline % INT64_C(1000000000))
+					};
+					int result = pthread_cond_timedwait(&rt->work, &rt->mu, &until);
+					if (result != 0 && result != ETIMEDOUT) {
+						abort();
+					}
 				} else {
 					pthread_cond_wait(&rt->work, &rt->mu);
 				}
@@ -365,7 +507,18 @@ int wump_run(wump_fn main_fn, void *arg, int nprocs) {
 		errno = error;
 		return -1;
 	}
-	error = pthread_cond_init(&rt.work, NULL);
+	pthread_condattr_t attr;
+	error = pthread_condattr_init(&attr);
+	if (error != 0) {
+		pthread_mutex_destroy(&rt.mu);
+		errno = error;
+		return -1;
+	}
+	error = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+	if (error == 0) {
+		error = pthread_cond_init(&rt.work, &attr);
+	}
+	pthread_condattr_destroy(&attr);
 	if (error != 0) {
 		pthread_mutex_destroy(&rt.mu);
 		errno = error;
@@ -384,6 +537,7 @@ int wump_run(wump_fn main_fn, void *arg, int nprocs) {
 	for (int i = 0; i < nprocs; i++) {
 		wump_worker *w = &rt.workers[i];
 		*w = (wump_worker){ .rt = &rt, .id = i, .steal_start = (unsigned)i + 1 };
+		w->rng = ((uintptr_t)&rt ^ ((uint64_t)i + 1) * UINT64_C(0x9e3779b97f4a7c15)) | 1;
 		error = pthread_mutex_init(&w->q_mu, NULL);
 		if (error != 0) {
 			goto destroy_workers;
@@ -446,6 +600,7 @@ destroy_workers:
 	}
 	free(rt.workers);
 destroy_runtime:
+	free(rt.timers);
 	pthread_cond_destroy(&rt.work);
 	pthread_mutex_destroy(&rt.mu);
 	if (error != 0) {

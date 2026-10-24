@@ -3,6 +3,7 @@
 #define WUMP_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -14,7 +15,7 @@ typedef void (*wump_fn)(void *arg);
  * run `main_fn(arg)` as a coroutine, and return once it returns.
  * The calling thread becomes worker 0. Coroutines still alive when
  * main_fn returns are abandoned, as in Go. Shutdown is cooperative: each
- * running task must return, yield, or use a blocking channel operation.
+ * running task must return, yield, or park in a channel/selection/sleep.
  * Returns 0, or -1 with errno set (including EDEADLK when all tasks park).
  * Nested runs on a worker fail with EBUSY; independent callers may run
  * separate runtimes, but must not share channels between active runtimes. */
@@ -59,6 +60,31 @@ int wump_chan_close(wump_chan *ch);
 
 size_t wump_chan_len(wump_chan *ch);
 size_t wump_chan_cap(wump_chan *ch);
+
+enum wump_case_op { WUMP_RECV, WUMP_SEND };
+typedef struct wump_case {
+	wump_chan *ch;             /* NULL disables this case */
+	enum wump_case_op op;
+	void *data;                /* send source or receive destination */
+	int result;                /* selected channel operation's return value */
+} wump_case;
+
+/* Select exactly one ready channel operation, polling in randomized order.
+ * timeout_ns: -1 waits indefinitely, 0 is a nonblocking/default selection,
+ * positive values bound the wait using monotonic time, in nanoseconds.
+ * Returns 1 for a selected case, 0 for timeout/default, or -1 on error.
+ * On success *chosen is the original case index; on timeout it is SIZE_MAX.
+ * chosen may be NULL. Only the selected case's result/data are modified.
+ * A selected send on a closed channel returns 1 with case.result == -1
+ * and errno == EPIPE. Invalid input/allocation errors leave outputs alone.
+ * cases may be NULL only when ncases == 0. Duplicate channels are allowed.
+ * Every referenced channel and data buffer must stay alive until this
+ * call returns; shutdown detaches all abandoned selections and timers. */
+int wump_sel(wump_case *cases, size_t ncases, int64_t timeout_ns, size_t *chosen);
+
+/* Park this task for at least duration_ns of monotonic time. Zero yields;
+ * negative durations are invalid. Returns 0 or -1 with errno set. */
+int wump_sleep(int64_t duration_ns);
 
 #ifdef __cplusplus
 }

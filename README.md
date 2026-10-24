@@ -14,13 +14,17 @@ Implemented:
   stealing, periodic global-queue polling, and condition-variable sleeping.
 - Buffered and unbuffered channels with byte-copy values, FIFO waiters,
   close/drain semantics, and wakeups after the parked task's stack is saved.
+- Channel selection with randomized polling, duplicate/disabled cases,
+  atomic winner selection, default cases, and monotonic timeouts.
+- Cooperative task sleep and a cancellable timer heap that progresses
+  while workers have runnable work and while all workers are idle.
 - Cooperative main-task shutdown, removal of abandoned channel waiters,
   repeated runs, independent runtimes, and deadlock reporting.
 - GCC and Clang builds, concurrency and failure-injection tests, sanitizer
   checks, and equivalent C/Go benchmarks.
 
-The next part of milestone 0 is `sel` and timers, followed by the epoll
-netpoller, syscall handoff, sysmon, and scheduling/performance work. Perl
+The next part of milestone 0 is the epoll netpoller, followed by syscall
+handoff, sysmon, and scheduling/performance work. Perl
 integration and deployment tooling remain later milestones. The design's
 million-task and within-2x-of-Go targets have not been achieved or validated.
 
@@ -33,6 +37,7 @@ for comparisons only. There are no downloaded dependencies.
 ```sh
 make
 ./build/hello
+./build/select
 make test
 make stress
 make ubsan
@@ -41,7 +46,7 @@ make memcheck # optional: requires Valgrind and its development headers
 make BUILD=build/clang CC=clang test
 ```
 
-`make` produces `build/libwump.a` and the channel example. The public API is
+`make` produces `build/libwump.a` and channel/timeout examples. The public API is
 [runtime/include/wump.h](runtime/include/wump.h).
 
 ```c
@@ -81,10 +86,55 @@ build/libwump.a -o program`. `wump_run` uses the requested number of workers;
 its main task may be stolen and run by another worker. `WUMPPROCS` is not
 implemented yet.
 
+## Channel selection and timers
+
+`wump_sel(cases, ncases, timeout_ns, &chosen)` performs exactly one channel
+operation. It returns 1 for a selected case, 0 for timeout/default, or -1
+for a call/allocation error. `chosen` reports the original case index, or
+SIZE_MAX on timeout; it may be NULL. Each `wump_case` contains a channel,
+WUMP_SEND/WUMP_RECV, a payload pointer, and the selected operation's result.
+
+```c
+int value;
+wump_case cases[] = {
+	{ results, WUMP_RECV, &value, 0 },
+	{ jobs, WUMP_SEND, &job, 0 }
+};
+size_t chosen;
+int ready = wump_sel(cases, 2, INT64_C(50000000), &chosen); /* 50 ms */
+/* ready == 1: inspect cases[chosen].result and handle that operation.
+ * ready == 0: timed out. ready == -1: inspect errno via a TLS-safe accessor. */
+```
+
+Timeout -1 waits indefinitely; 0 polls without parking, implementing a
+default case; positive values bound the wait in nanoseconds. NULL channels
+disable individual cases. Duplicate channels and mixed send/receive cases
+on the same channel are supported; a selection never communicates with
+itself. Multiple ready cases are polled in randomized order, following the
+[Go selection model](https://go.dev/ref/spec#Select_statements).
+
+A selected receive reports result 1 for data, or 0 for a closed/drained
+channel and zeros its destination. A selected send reports result 0 on
+success, or -1 with EPIPE when closed; selecting that send still makes
+`wump_sel` return 1. Only the chosen operation changes outputs. Timeout
+leaves case results/data alone, and validation/allocation errors also leave
+the chosen index alone. Unrepresentable monotonic deadlines fail with
+EOVERFLOW. [examples/select.c](examples/select.c) demonstrates a complete
+exchange and joins the worker before freeing channels on either outcome.
+
+`wump_sleep(duration_ns)` parks just the task; 0 yields and negative
+durations fail with EINVAL. Timers use CLOCK_MONOTONIC and a per-runtime
+binary heap. Workers check expiry before selecting runnable work, and idle
+workers use a
+[monotonic condition-variable deadline](https://www.man7.org/linux/man-pages/man3/pthread_cond_timedwait.3p.html).
+Timers register on the scheduler stack after the task context is saved.
+Channel and timer wakeups compete through the same atomic winner; the
+resumed task removes losing waiters and cancels its timer before returning.
+
 ## Scheduling and lifetime rules
 
 Scheduling is cooperative. Tasks must return, call `wump_yield`, or park in
-a channel operation to let their worker run something else. An operation
+a channel operation or sleep to let their worker run something else. An operation
 that succeeds immediately need not yield. Native blocking calls block the
 worker; a task that never yields can delay shutdown indefinitely.
 
@@ -103,13 +153,17 @@ Zero-sized channel elements allow synchronization with NULL payloads.
 The caller owns channels and must free them. No new operations or parked
 waiters may remain when a channel is freed. Freeing after a rendezvous or
 close waits for the waker's final channel unlock. Do not share a channel
-between independently running runtimes. Sequential reuse is supported;
-shutdown removes abandoned waiters before unmapping their stacks. Shutdown
-does not close or free channels or run abandoned tasks' cleanup code.
+between independently running runtimes. All channels and buffers
+referenced by a selection must remain alive until
+that selection returns, including its losing cases. Sequential reuse is
+supported; shutdown removes abandoned waiters and timers before unmapping
+their stacks. Shutdown does not close or free channels or run abandoned
+tasks' cleanup code.
 
-All parked tasks with no runnable work produce `wump_run == -1` and
-`errno == EDEADLK`. This assumes the runtime has no external event sources;
-timer and I/O integration will extend the idle protocol. Invalid API calls
+All parked tasks with no runnable work or pending timers produce
+`wump_run == -1` and `errno == EDEADLK`. I/O integration will extend the idle
+protocol for external event sources. Timers cannot interrupt a running task
+that does not yield. Invalid API calls
 report EINVAL; nested runs report EBUSY; send/close on an already closed
 channel report EPIPE. A receive on a closed, drained channel returns 0 and
 zeros the destination.
@@ -127,12 +181,20 @@ parallelism, queue overflow, stack reuse, FIFO ordering, randomized buffer
 operations against a reference model, closing blocked tasks, channel-free
 publication, exact-once message delivery, shutdown cleanup, deadlocks, and
 independent runtimes. Message delivery runs with 1/2/4/8/16 workers and
-capacities 0/1/7/256. `make stress` repeats the behavior suite ten times.
+capacities 0/1/7/256. The selection suite covers duplicate channels,
+disabled/default cases, randomized ready choices, selected closed-channel
+operations, selection-to-selection rendezvous with opposite lock orders,
+timer expiry and cancellation, timeout/message races, unchanged losing
+outputs, and abandoned selections. `make stress` repeats both suites ten
+times, including timeout races at 1/4/16 workers.
 
 The failure suite injects allocation, mutex/condition initialization,
 stack mapping/protection, and partial thread-start failures. It checks
 that started threads are joined, stack mappings are released, the main
 task never runs on failed startup, and subsequent runs/spawns still work.
+It also injects monotonic condition-attribute failures, selection allocation
+failures, and timer allocation/growth failures after parking, checking that
+outputs and existing waits stay intact and later operations still work.
 
 `make ubsan` fails immediately on undefined behavior. `make tsan` uses the
 [ThreadSanitizer fiber API](https://github.com/llvm/llvm-project/blob/main/compiler-rt/include/sanitizer/tsan_interface.h)
@@ -151,6 +213,8 @@ guard-page write disables Memcheck error reporting, in the child that must
 still terminate with SIGSEGV; ordinary tests retain full error reporting.
 
 Run a focused case with `./build/test_runtime --case 'channel free'`.
+Selection cases support the same filter, for example
+`./build/test_select --case 'channel-timeout'`.
 
 ## Benchmarks
 
@@ -161,13 +225,16 @@ make bench-compare ITERATIONS=1000000
 ```
 
 CSV output reports spawn/completion, voluntary yield, unbuffered round trips,
-a buffered 4-producer/4-consumer channel, and four compute tasks at 1 and 4
+a buffered 4-producer/4-consumer channel, ready two-channel selection,
+one-microsecond sleeps, and four compute tasks at 1 and 4
 workers. Both implementations check message counts/checksums and use the
 same work sizes and buffer capacities. Spawn uses batches of at most 1024
 tasks, so it does not measure a million simultaneously live tasks. The
 small stack cache intentionally makes this workload expose mapping churn.
 Each CPU operation is one xorshift iteration; ping-pong operations are
 whole round trips. Setup of the runtime itself is excluded from timings.
+The sleep case runs ceil(ITERATIONS / 100) sleeps; each reported operation
+is one sleep, including scheduler and OS wakeup latency.
 
 The Go comparison builds locally with networking and telemetry disabled,
 and keeps its build cache under `build/`. Treat measurements as local
@@ -177,5 +244,7 @@ drawing conclusions.
 [baseline.csv](bench/baseline.csv) records a 100,000-iteration run on
 2026-10-23 with GCC 14.2.1 and Go 1.26.5 (`GOEXPERIMENT=nodwarf5`,
 Linux amd64). It shows compute scaling while exposing substantial remaining
-spawn overhead. The machine reports 16 online CPUs; these figures do not
+spawn overhead. [select-timers.csv](bench/select-timers.csv) records the
+expanded suite on 2026-10-24 with the same toolchain, including selection
+and sleep. The machine reports 16 online CPUs; these figures do not
 establish behavior on other hardware or long-running workloads.

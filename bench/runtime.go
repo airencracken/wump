@@ -123,6 +123,39 @@ func cpuBench() {
 	}
 }
 
+func selectBench() {
+	left, right := make(chan int32, 1), make(chan int32, 1)
+	left <- 42
+	right <- 43
+	started := time.Now()
+	for i := 0; i < count; i++ {
+		select {
+		case value := <-left:
+			if value != 42 {
+				panic("select value mismatch")
+			}
+			left <- value
+		case value := <-right:
+			if value != 43 {
+				panic("select value mismatch")
+			}
+			right <- value
+		default:
+			panic("ready channels must be selected")
+		}
+	}
+	report("select", uint64(count), started)
+}
+
+func sleepBench() {
+	iterations := (count + 99) / 100
+	started := time.Now()
+	for i := 0; i < iterations; i++ {
+		time.Sleep(time.Microsecond)
+	}
+	report("sleep", uint64(iterations), started)
+}
+
 func number(value string) int {
 	n, err := strconv.Atoi(value)
 	if err != nil || n <= 0 || n > 1073741823 {
@@ -144,7 +177,7 @@ func main() {
 	}
 	runtime.GOMAXPROCS(workers)
 	fmt.Println("implementation,workload,workers,operations,seconds,ns_per_op")
-	for _, benchmark := range []func(){spawnBench, yieldBench, pingBench, mpmcBench, cpuBench} {
+	for _, benchmark := range []func(){spawnBench, yieldBench, pingBench, mpmcBench, selectBench, sleepBench, cpuBench} {
 		benchmark()
 	}
 }

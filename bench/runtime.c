@@ -194,6 +194,38 @@ static void cpu_bench(void *arg) {
 	wump_chan_free(done);
 }
 
+static void select_bench(void *arg) {
+	(void)arg;
+	wump_chan *ch[2] = { wump_chan_make(sizeof(int), 1), wump_chan_make(sizeof(int), 1) };
+	REQUIRE(ch[0] != NULL && ch[1] != NULL);
+	for (int i = 0; i < 2; i++) {
+		int value = 42 + i;
+		REQUIRE(wump_chan_send(ch[i], &value) == 0);
+	}
+	double started = now();
+	for (int i = 0; i < count; i++) {
+		int value;
+		wump_case cases[] = { { ch[0], WUMP_RECV, &value, 0 }, { ch[1], WUMP_RECV, &value, 0 } };
+		size_t chosen;
+		REQUIRE(wump_sel(cases, 2, 0, &chosen) == 1 && chosen < 2);
+		REQUIRE(value == 42 + (int)chosen && cases[chosen].result == 1);
+		REQUIRE(wump_chan_send(ch[chosen], &value) == 0);
+	}
+	report("select", (uint64_t)count, started);
+	wump_chan_free(ch[0]);
+	wump_chan_free(ch[1]);
+}
+
+static void sleep_bench(void *arg) {
+	(void)arg;
+	int iterations = (count + 99) / 100;
+	double started = now();
+	for (int i = 0; i < iterations; i++) {
+		REQUIRE(wump_sleep(1000) == 0);
+	}
+	report("sleep", (uint64_t)iterations, started);
+}
+
 static int number(const char *value) {
 	char *end;
 	errno = 0;
@@ -214,7 +246,7 @@ int main(int argc, char **argv) {
 		count = number(argv[1]);
 	}
 	int workers = argc > 2 ? number(argv[2]) : 1;
-	wump_fn cases[] = { spawn_bench, yield_bench, ping_bench, mpmc_bench, cpu_bench };
+	wump_fn cases[] = { spawn_bench, yield_bench, ping_bench, mpmc_bench, select_bench, sleep_bench, cpu_bench };
 	puts("implementation,workload,workers,operations,seconds,ns_per_op");
 	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
 		REQUIRE(wump_run(cases[i], NULL, workers) == 0);

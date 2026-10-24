@@ -55,6 +55,21 @@ typedef struct wump_g {
 } wump_g;
 
 typedef struct wump_runtime wump_runtime;
+
+#define WUMP_SEL_PENDING SIZE_MAX
+#define WUMP_SEL_TIMEOUT (SIZE_MAX - 1)
+#define WUMP_SEL_ERROR (SIZE_MAX - 2)
+
+/* Stack-resident timer. The runtime mutex protects heap membership;
+ * expiry claims the same winner word as channel waiters. */
+typedef struct wump_timer {
+	wump_runtime *rt;
+	wump_g *g;
+	_Atomic size_t *winner;
+	int64_t deadline;
+	size_t index;
+} wump_timer;
+
 typedef struct wump_worker {
 	wump_runtime *rt;
 	int id;
@@ -63,6 +78,7 @@ typedef struct wump_worker {
 	wump_g *cur;
 	unsigned tick;
 	unsigned steal_start;
+	uint64_t rng;
 	void (*park_fn)(void *);
 	void *park_arg;
 	wump_g *gcache;
@@ -86,5 +102,10 @@ wump_g *wump_self(void);
  * after saving the coroutine context and finishing all access to it. */
 void wump_park(void (*unlock)(void *), void *arg);
 void wump_ready(wump_g *g);
+uint64_t wump_random(void);
+int64_t wump_now(void);
+/* Add only on the scheduler stack, after the parked context is saved. */
+int wump_timer_add(wump_timer *timer);
+void wump_timer_cancel(wump_timer *timer);
 
 #endif
