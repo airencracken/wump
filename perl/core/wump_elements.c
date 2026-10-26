@@ -6,6 +6,7 @@ typedef struct wump_element {
 	HV *cell;
 	SSize_t index;
 	bool present;
+	bool pocket;
 	struct wump_element *next;
 } wump_element;
 
@@ -28,33 +29,40 @@ static bool wump_element_has(pTHX_ const SV *origin) {
 	return FALSE;
 }
 
-static wump_element *wump_element_av(pTHX_ AV *av, SSize_t index) {
+static wump_element *wump_element_av(pTHX_ AV *av, SSize_t index, bool inherit) {
 	if (!PL_wump_task) return NULL;
 	for (wump_element *slot = PL_wump_task->elements; slot; slot = slot->next) {
+		if (inherit && slot->pocket) continue;
 		if (slot->origin == (SV *)av && slot->index == index) return slot;
 	}
 	return NULL;
 }
 
 static wump_element *wump_element_hv(pTHX_ HV *hv, const char *key,
-	STRLEN len, int flags) {
+	STRLEN len, int flags, bool inherit) {
 	if (!PL_wump_task) return NULL;
 	for (wump_element *slot = PL_wump_task->elements; slot; slot = slot->next) {
+		if (inherit && slot->pocket) continue;
 		if (slot->origin == (SV *)hv && hv_common(slot->cell, NULL, key, len,
 			flags & HVhek_UTF8, HV_FETCH_ISEXISTS, NULL, 0)) return slot;
 	}
 	return NULL;
 }
 
-SSize_t Perl_wump_av_fill(AV *av) {
-	dTHX;
+static SSize_t wump_element_fill(pTHX_ AV *av, bool inherit) {
 	SSize_t fill = SvRMAGICAL(av) ? mg_size((SV *)av) : AvFILLp(av);
 	if (PL_wump_task) {
 		for (wump_element *slot = PL_wump_task->elements; slot; slot = slot->next) {
+			if (inherit && slot->pocket) continue;
 			if (slot->origin == (SV *)av && slot->index > fill) fill = slot->index;
 		}
 	}
 	return fill;
+}
+
+SSize_t Perl_wump_av_fill(AV *av) {
+	dTHX;
+	return wump_element_fill(aTHX_ av, FALSE);
 }
 
 SV **Perl_wump_av_slot(pTHX_ AV *av, SSize_t *index, bool lval, bool *handled) {
@@ -62,7 +70,7 @@ SV **Perl_wump_av_slot(pTHX_ AV *av, SSize_t *index, bool lval, bool *handled) {
 	if (!wump_element_has(aTHX_ (SV *)av)) return NULL;
 	if (*index < 0) *index += Perl_wump_av_fill(av) + 1;
 	if (*index < 0) { *handled = TRUE; return NULL; }
-	wump_element *slot = wump_element_av(aTHX_ av, *index);
+	wump_element *slot = wump_element_av(aTHX_ av, *index, FALSE);
 	if (!slot) return NULL;
 	*handled = TRUE;
 	if (!slot->present || !slot->value) {
@@ -136,6 +144,7 @@ SV **Perl_wump_local_av(pTHX_ AV *av, SSize_t index) {
 	if (old) wump_local_check(aTHX_ *old, 's');
 	wump_element_mark(aTHX_ (SV *)av);
 	wump_element *slot = wump_element_add(aTHX_ PL_wump_task, (SV *)av);
+	slot->pocket = PL_op->op_wump_pocket;
 	slot->index = index;
 	slot->value = newSV(0);
 	SAVEDESTRUCTOR_X(wump_element_pop, slot);
@@ -154,6 +163,7 @@ HE *Perl_wump_local_hv(pTHX_ HV *hv, SV *key) {
 	if (old) wump_local_check(aTHX_ HeVAL(old), 's');
 	wump_element_mark(aTHX_ (SV *)hv);
 	wump_element *slot = wump_element_add(aTHX_ PL_wump_task, (SV *)hv);
+	slot->pocket = PL_op->op_wump_pocket;
 	slot->cell = newHV();
 	HE *entry = hv_store_ent(slot->cell, name, newSV(0), 0);
 	SAVEDESTRUCTOR_X(wump_element_pop, slot);
@@ -164,7 +174,7 @@ bool Perl_wump_hv_slot(pTHX_ HV *hv, const char *key, STRLEN len, int flags,
 	int action, SV *value, U32 hash, void **result) {
 	if (PL_wump_task && (action & (HV_FETCH_ISSTORE | HV_DELETE)))
 		wump_element_invalidate(aTHX_ PL_wump_task, (SV *)hv);
-	wump_element *slot = wump_element_hv(aTHX_ hv, key, len, flags);
+	wump_element *slot = wump_element_hv(aTHX_ hv, key, len, flags, FALSE);
 	if (!slot) return FALSE;
 	if (action & HV_DELETE) {
 		hv_iterinit(slot->cell);
@@ -189,7 +199,7 @@ bool Perl_wump_hv_slot(pTHX_ HV *hv, const char *key, STRLEN len, int flags,
 	return TRUE;
 }
 
-static HV *wump_element_view(pTHX_ HV *hv) {
+static HV *wump_element_view(pTHX_ HV *hv, bool inherit) {
 	HV *view = newHV();
 	/* Raw buckets avoid disturbing either the base or another task iterator. */
 	if (HvARRAY(hv)) {
@@ -202,12 +212,13 @@ static HV *wump_element_view(pTHX_ HV *hv) {
 	}
 	for (wump_element *slot = PL_wump_task->elements; slot; slot = slot->next) {
 		if (slot->origin != (SV *)hv) continue;
+		if (inherit && slot->pocket) continue;
 		hv_iterinit(slot->cell);
 		HE *he = hv_iternext(slot->cell);
 		SV *key = hv_iterkeysv(he);
 		STRLEN len;
 		const char *bytes = SvPV_const(key, len);
-		if (wump_element_hv(aTHX_ hv, bytes, len, SvUTF8(key) ? HVhek_UTF8 : 0) != slot)
+		if (wump_element_hv(aTHX_ hv, bytes, len, SvUTF8(key) ? HVhek_UTF8 : 0, inherit) != slot)
 			continue;
 		if (slot->present) hv_store_ent(view, key, SvREFCNT_inc(HeVAL(he)), 0);
 		else hv_delete_ent(view, key, G_DISCARD, 0);
@@ -218,7 +229,7 @@ static HV *wump_element_view(pTHX_ HV *hv) {
 STRLEN Perl_wump_hv_used(HV *hv) {
 	dTHX;
 	if (!wump_element_has(aTHX_ (SV *)hv)) return HvTOTALKEYS(hv) - HvPLACEHOLDERS_get(hv);
-	HV *view = wump_element_view(aTHX_ hv);
+	HV *view = wump_element_view(aTHX_ hv, FALSE);
 	STRLEN count = HvTOTALKEYS(view);
 	SvREFCNT_dec(view);
 	return count;
@@ -238,7 +249,7 @@ HV *Perl_wump_hv_iteration(pTHX_ HV *hv, bool reset) {
 	}
 	if (reset || !iter->view || (HvRITER(iter->view) == -1 && !HvEITER(iter->view))) {
 		HV *old = iter->view;
-		iter->view = wump_element_view(aTHX_ hv);
+		iter->view = wump_element_view(aTHX_ hv, FALSE);
 		hv_iterinit(iter->view);
 		SvREFCNT_dec(old);
 	}
@@ -247,7 +258,7 @@ HV *Perl_wump_hv_iteration(pTHX_ HV *hv, bool reset) {
 
 HV *Perl_wump_hv_clone(pTHX_ HV *hv) {
 	if (!hv || !wump_element_has(aTHX_ (SV *)hv)) return NULL;
-	HV *view = wump_element_view(aTHX_ hv);
+	HV *view = wump_element_view(aTHX_ hv, FALSE);
 	HV *copy = newHVhv(view);
 	SvREFCNT_dec(view);
 	return copy;
@@ -267,27 +278,76 @@ void Perl_wump_elements_clear(pTHX_ struct wump_perl_task *task) {
 	LEAVE_SCOPE(mark);
 }
 
-static bool wump_element_visible(pTHX_ wump_element *slot) {
-	if (!slot->cell) return wump_element_av(aTHX_ (AV *)slot->origin, slot->index) == slot;
+static bool wump_element_inheritable(pTHX_ wump_element *slot) {
+	if (slot->pocket) return FALSE;
+	if (!slot->cell) return wump_element_av(aTHX_ (AV *)slot->origin, slot->index, TRUE) == slot;
 	hv_iterinit(slot->cell);
 	SV *key = hv_iterkeysv(hv_iternext(slot->cell));
 	STRLEN len;
 	const char *bytes = SvPV_const(key, len);
 	return wump_element_hv(aTHX_ (HV *)slot->origin, bytes, len,
-		SvUTF8(key) ? HVhek_UTF8 : 0) == slot;
+		SvUTF8(key) ? HVhek_UTF8 : 0, TRUE) == slot;
+}
+
+static SV *wump_snapshot_array_value(pTHX_ AV *av, SSize_t index) {
+	wump_element *slot = wump_element_av(aTHX_ av, index, TRUE);
+	if (slot) return slot->present ? slot->value : NULL;
+	return index <= AvFILLp(av) ? AvARRAY(av)[index] : NULL;
+}
+
+void Perl_wump_snapshot_check(pTHX_ SV *value, char kind) {
+	wump_local_check(aTHX_ value, kind);
+	if (!value || kind == 's') return;
+	if (kind == 'a') {
+		AV *source = (AV *)value;
+		SSize_t end = wump_element_fill(aTHX_ source, TRUE);
+		for (SSize_t i = 0; i <= end; i++)
+			wump_local_check(aTHX_ wump_snapshot_array_value(aTHX_ source, i), 's');
+	} else {
+		I32 mark = PL_savestack_ix;
+		HV *view = wump_element_view(aTHX_ (HV *)value, TRUE);
+		SAVEFREESV(view);
+		hv_iterinit(view);
+		HE *he;
+		while ((he = hv_iternext(view))) wump_local_check(aTHX_ HeVAL(he), 's');
+		LEAVE_SCOPE(mark);
+	}
+}
+
+AV *Perl_wump_snapshot_av(pTHX_ AV *source) {
+	Perl_wump_snapshot_check(aTHX_ (SV *)source, 'a');
+	AV *copy = newAV();
+	SSize_t end = wump_element_fill(aTHX_ source, TRUE);
+	av_extend(copy, end);
+	for (SSize_t i = 0; i <= end; i++) {
+		SV *value = wump_snapshot_array_value(aTHX_ source, i);
+		if (value) av_store(copy, i, newSVsv(value));
+	}
+	AvFILLp(copy) = end;
+	return copy;
+}
+
+HV *Perl_wump_snapshot_hv(pTHX_ HV *source) {
+	Perl_wump_snapshot_check(aTHX_ (SV *)source, 'h');
+	I32 mark = PL_savestack_ix;
+	HV *view = wump_element_view(aTHX_ source, TRUE);
+	SAVEFREESV(view);
+	HV *copy = newHVhv(view);
+	LEAVE_SCOPE(mark);
+	return copy;
 }
 
 void Perl_wump_elements_snapshot(pTHX_ struct wump_perl_task *task) {
 	/* Validate before copying, so FETCH cannot mutate a live binding list. */
 	for (wump_element *slot = PL_wump_task->elements; slot; slot = slot->next) {
-		if (!wump_element_visible(aTHX_ slot)) continue;
+		if (!wump_element_inheritable(aTHX_ slot)) continue;
 		if (slot->cell) {
 			hv_iterinit(slot->cell);
 			wump_local_check(aTHX_ HeVAL(hv_iternext(slot->cell)), 's');
 		} else wump_local_check(aTHX_ slot->value, 's');
 	}
 	for (wump_element *slot = PL_wump_task->elements; slot; slot = slot->next) {
-		if (!wump_element_visible(aTHX_ slot)) continue;
+		if (!wump_element_inheritable(aTHX_ slot)) continue;
 		wump_element *copy = wump_element_add(aTHX_ task, slot->origin);
 		copy->index = slot->index;
 		copy->present = slot->present;

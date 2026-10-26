@@ -82,6 +82,9 @@ STRLEN Perl_wump_hv_used(HV *hv);
 void Perl_wump_elements_clear(pTHX_ struct wump_perl_task *task);
 void Perl_wump_elements_snapshot(pTHX_ struct wump_perl_task *task);
 HV *Perl_wump_hv_clone(pTHX_ HV *hv);
+void Perl_wump_snapshot_check(pTHX_ SV *value, char kind);
+AV *Perl_wump_snapshot_av(pTHX_ AV *source);
+HV *Perl_wump_snapshot_hv(pTHX_ HV *source);
 C
 write_file("$source/wump_task_types.h", $header);
 edit('perl.h', "struct interpreter {\n#  include \"intrpvar.h\"\n};",
@@ -196,6 +199,8 @@ edit('sv.c', 'SvREADONLY_off(PL_regex_pad[(*pmp)->op_pmoffset]);',
 	'SvREADONLY_off(*Perl_wump_pm_slot(aTHX_ *pmp));');
 require "$FindBin::Bin/elements.pl";
 apply_elements($source);
+require "$FindBin::Bin/pocket.pl";
+apply_pocket($source);
 for my $pair (
 	["$FindBin::Bin/core/wump_core.c", "$source/wump_core.c"],
 	["$FindBin::Bin/core/wump_local.c", "$source/wump_local.c"],

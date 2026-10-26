@@ -110,6 +110,7 @@ make perl-example               # Perl tasks return 1, 4, 9, 16
 make perl-regex-example         # yielding tasks retain separate regex captures
 make perl-local-example         # spawned tasks inherit separate local bindings
 make perl-elements-example      # tasks localize individual shared hash elements
+make perl-pocket-example        # native pocket keyword keeps a binding in this act
 make perl-test                  # task behavior, failures, shutdown
 make perl-upstream-test         # upstream regex, aggregate and interpreter regressions
 make perl-memcheck              # task suite with registered C stacks and full Perl teardown
@@ -228,7 +229,35 @@ paths explicit while their isolation is developed.
 Native code that accesses AV/HV storage directly or uses stock element
 save-stack APIs still needs adaptation to the task's views.
 
-This prototype does not implement `sel`, `scope`, `lock`, `pocket`, safe-point
+`use Wump` also enables the native `pocket` keyword in that lexical scope.
+It has `local`'s syntax, precedence, empty initial values and dynamic lookup:
+
+```perl
+local  $Request::ID = 'inherited context';
+pocket $Request::ID = 'this act only';
+act { report() };  # sees 'inherited context'
+report();         # sees 'this act only', even if report was defined elsewhere
+```
+
+A pocket binding belongs to the current act and ends when its enclosing block
+exits. Called functions see it; spawned acts skip it and inherit the nearest
+ordinary `local` binding, or use the global slot when there is none. Nested
+pockets are skipped, and an explicit ordinary `local` inside a pocket scope
+makes that new binding inheritable again. Whole-array/hash snapshots also
+exclude pocketed elements, keys, deletion masks and array extent. References
+retain their ordinary shared identities, including explicitly captured references
+to pocket values. Lexical `my` variables keep their usual closure-capture rules.
+
+Pockets currently support the same plain package variables, elements and slices
+as task-local `local`, with the restrictions described above. Executing `pocket`
+requires a running `run`/`act`; lexical scalar targets remain invalid, as with
+`local`. `no Wump` disables the keyword within its lexical scope. Qualified
+names, method names and hash keys retain normal lookup. The keyword is an
+experimental part of the private fork, not a stock Perl feature.
+`B::Deparse` preserves pocket declarations so recompiling its output keeps
+their inheritance policy.
+
+This prototype does not implement `sel`, `scope`, `lock`, safe-point
 preemption, or automatic Perl I/O/XS handoff. Ordinary blocking Perl operations
 still occupy the single slot. Compilation/mutation of existing subs while
 tasks are suspended and debugger/general multicall integration are not supported

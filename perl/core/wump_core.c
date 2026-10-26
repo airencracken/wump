@@ -104,7 +104,7 @@ HV *Perl_wump_regex_names(pTHX_ HV *original) {
 
 HV **Perl_wump_gv_hv(GV *gv) {
 	dTHX;
-	wump_local *binding = wump_local_find(aTHX_ gv, 'h');
+	wump_local *binding = wump_local_find(aTHX_ gv, 'h', FALSE);
 	if (binding != NULL) return (HV **)&binding->value;
 	HV **original = &GvGP(gv)->gp_hv;
 	if (PL_wump_task == NULL || *original == NULL || !SvMAGICAL(*original)) return original;
@@ -191,7 +191,7 @@ void Perl_wump_cv_prepare(pTHX_ CV *cv) {
 
 SV **Perl_wump_gv_sv(GV *gv) {
 	dTHX;
-	wump_local *binding = wump_local_find(aTHX_ gv, 's');
+	wump_local *binding = wump_local_find(aTHX_ gv, 's', FALSE);
 	if (binding != NULL) return &binding->value;
 	if (PL_wump_task != NULL) {
 		if (gv == aTHX->Idefgv) gv = PL_defgv;
@@ -203,7 +203,7 @@ SV **Perl_wump_gv_sv(GV *gv) {
 
 AV **Perl_wump_gv_av(GV *gv) {
 	dTHX;
-	wump_local *binding = wump_local_find(aTHX_ gv, 'a');
+	wump_local *binding = wump_local_find(aTHX_ gv, 'a', FALSE);
 	if (binding != NULL) return (AV **)&binding->value;
 	if (PL_wump_task != NULL && gv == aTHX->Idefgv) gv = PL_defgv;
 	return &GvGP(gv)->gp_av;
