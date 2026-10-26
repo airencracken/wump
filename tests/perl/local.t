@@ -229,7 +229,7 @@ our (@guard_array, %guard_hash);
 my @forms = (
 	sub { delete local $guard_hash{root} },
 	sub { local *guard_array },
-	sub { local $/ = 'separator' },
+	sub { local $^I = '.backup' },
 	sub { local %ENV },
 );
 run {
@@ -241,7 +241,7 @@ run {
 like($_, qr/Wump: .*localization in a task is not supported yet/, 'unsupported local form fails explicitly') for @errors;
 is_deeply(\@guard_array, ['root'], 'rejected forms leave the global array intact');
 is_deeply(\%guard_hash, {root => 1}, 'rejected forms leave the global hash intact');
-is($/, "\n", 'rejected magic localization leaves the interpreter value intact');
+is($^I, undef, 'rejected magic localization leaves the interpreter value intact');
 
 my ($tied_error, $fetches) = ('', 0);
 {

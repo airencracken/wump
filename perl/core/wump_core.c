@@ -5,6 +5,7 @@
 #include <math.h>
 #include "wump_local.c"
 #include "wump_elements.c"
+#include "wump_magic.c"
 
 typedef struct wump_cv_slot {
 	CV *cv;

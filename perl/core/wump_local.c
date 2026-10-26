@@ -3,6 +3,7 @@ typedef struct wump_local {
 	GV *origin, *anchor;
 	SV *value;
 	char kind;
+	char magic;
 	bool pocket;
 	struct wump_local *next;
 } wump_local;
@@ -17,8 +18,11 @@ static GV *wump_local_origin(pTHX_ GV *gv) {
 static wump_local *wump_local_find(pTHX_ GV *gv, char kind, bool inherit) {
 	if (PL_wump_task == NULL) return NULL;
 	gv = wump_local_origin(aTHX_ gv);
+	GP *gp = GvGP(gv);
+	char magic = kind == 's' && gp ? Perl_wump_magic_kind(aTHX_ gp->gp_sv) : 0;
 	for (wump_local *slot = PL_wump_task->locals; slot; slot = slot->next) {
 		if (inherit && slot->pocket) continue;
+		if (kind == 's' && magic && slot->magic == magic) return slot;
 		if (slot->kind == kind && GvGP(slot->anchor) == GvGP(gv)) return slot;
 	}
 	return NULL;
@@ -69,6 +73,7 @@ static wump_local *wump_local_add(pTHX_ struct wump_perl_task *task,
 static void wump_local_check(pTHX_ SV *value, char kind) {
 	if (value == NULL) return;
 	bool unsafe = SvGMAGICAL(value) || SvSMAGICAL(value);
+	if (kind == 's' && Perl_wump_magic_kind(aTHX_ value)) unsafe = FALSE;
 	if (kind != 's' && SvMAGICAL(value)) {
 		for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic) {
 			if (mg->mg_type != PERL_MAGIC_backref && mg->mg_type != PERL_MAGIC_arylen_p
@@ -91,9 +96,12 @@ void Perl_wump_save_defsv(pTHX) {
 SV *Perl_wump_localize(pTHX_ GV *gv, char kind) {
 	SV *old = kind == 's' ? GvSV(gv) : kind == 'a' ? (SV *)GvAV(gv) : (SV *)GvHV(gv);
 	wump_local_check(aTHX_ old, kind);
-	SV *value = kind == 's' ? newSV(0) : kind == 'a' ? (SV *)newAV() : (SV *)newHV();
+	char magic = kind == 's' ? Perl_wump_magic_kind(aTHX_ old) : 0;
+	SV *value = magic ? Perl_wump_magic_new(aTHX_ magic, NULL)
+		: kind == 's' ? newSV(0) : kind == 'a' ? (SV *)newAV() : (SV *)newHV();
 	wump_local *slot = wump_local_add(aTHX_ PL_wump_task,
 		wump_local_origin(aTHX_ gv), kind, value);
+	slot->magic = magic;
 	slot->pocket = PL_op && PL_op->op_wump_pocket;
 	SAVEDESTRUCTOR_X(wump_local_pop, slot);
 	return value;
@@ -120,10 +128,11 @@ static void wump_local_snapshot(pTHX_ struct wump_perl_task *task) {
 		if (wump_local_find(aTHX_ slot->origin, slot->kind, TRUE) != slot) continue;
 		SV *copy;
 		if (slot->value == NULL) copy = NULL;
-		else if (slot->kind == 's') copy = newSVsv(slot->value);
+		else if (slot->kind == 's') copy = Perl_wump_magic_copy(aTHX_ slot->value);
 		else if (slot->kind == 'h') copy = (SV *)Perl_wump_snapshot_hv(aTHX_ (HV *)slot->value);
 		else copy = (SV *)Perl_wump_snapshot_av(aTHX_ (AV *)slot->value);
-		wump_local_add(aTHX_ task, slot->origin, slot->kind, copy);
+		wump_local *inherited = wump_local_add(aTHX_ task, slot->origin, slot->kind, copy);
+		inherited->magic = slot->magic;
 	}
 	Perl_wump_elements_snapshot(aTHX_ task);
 }

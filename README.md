@@ -111,6 +111,7 @@ make perl-regex-example         # yielding tasks retain separate regex captures
 make perl-local-example         # spawned tasks inherit separate local bindings
 make perl-elements-example      # tasks localize individual shared hash elements
 make perl-pocket-example        # native pocket keyword keeps a binding in this act
+make perl-separators-example    # readline/chomp use each act's record separator
 make perl-test                  # task behavior, failures, shutdown
 make perl-upstream-test         # upstream regex, aggregate and interpreter regressions
 make perl-memcheck              # task suite with registered C stacks and full Perl teardown
@@ -217,11 +218,31 @@ is supported: deleting a localized key masks it in that task without deleting th
 base key. Hash iteration uses a merged view; mutating a hash during iteration can
 restart that view. Iterator views are released at scope exit and task cleanup.
 
-`delete local`, typeglob/reference-alias localization, and localization of magic
-variables (including tied values and interpreter settings such as `$/`) raise
+`local` and `pocket` also support the input record separator `$/` and output
+record separator `$\`, including English aliases. Each binding owns both its
+Perl value and the cache used by `readline`, `chomp`, and `print`. String,
+Unicode, slurp, paragraph, and positive fixed-record-length reference modes
+retain their ordinary meanings. Invalid input-separator assignments leave the
+previous value and cache intact. Ordinary assignments without a binding remain
+global; `local` snapshots propagate to children and `pocket` snapshots are skipped.
+Modules that initialize these operations using unsupported magic settings,
+such as signal hooks during encoding-layer loading, still need that initialization
+outside acts.
+Perl's temporary internal separator overrides, such as tied `say`'s newline,
+remain within the current act and are excluded from child inheritance.
+
+References to separator cells retain their own cache after scope or task exit.
+Writing through a reference to a base cell changes the base setting, while a
+reference to a localized cell stays private. This deliberately avoids stock
+Perl's interpreter-wide cache behavior for references to localized magic
+scalars: an escaped `$\` reference in this fork retains its localized value
+instead of consulting the current global output cache.
+
+`delete local`, typeglob/reference-alias localization, and localization of other
+magic variables (including tied values, `%ENV`, `%SIG`, and `$^I`) raise
 errors inside tasks. Restricted hashes and symbol-table elements are also rejected.
 Aggregates must remain nonmagical throughout a binding's lifetime.
-Spawn rejects magic values inside inherited bindings before invoking any `FETCH`
+Spawn rejects unsupported magic values inside inherited bindings before invoking any `FETCH`
 hooks. Localizing a whole plain aggregate
 and then assigning its elements is supported. Symbol-table replacement while a
 binding is active is not supported. These limits keep the remaining shared-state
@@ -248,7 +269,7 @@ exclude pocketed elements, keys, deletion masks and array extent. References
 retain their ordinary shared identities, including explicitly captured references
 to pocket values. Lexical `my` variables keep their usual closure-capture rules.
 
-Pockets currently support the same plain package variables, elements and slices
+Pockets currently support the same package variables, elements and slices
 as task-local `local`, with the restrictions described above. Executing `pocket`
 requires a running `run`/`act`; lexical scalar targets remain invalid, as with
 `local`. `no Wump` disables the keyword within its lexical scope. Qualified

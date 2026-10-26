@@ -314,7 +314,7 @@ ok(!exists $options{owned}, 'abandoned pocket elements leave the global aggregat
 
 my @unsupported;
 run {
-	for my $form (sub { pocket $/ = 'bad' }, sub { pocket *mode }) {
+	for my $form (sub { pocket $^I = '.backup' }, sub { pocket *mode }) {
 		eval { $form->() };
 		push @unsupported, $@;
 	}

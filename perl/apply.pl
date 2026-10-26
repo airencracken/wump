@@ -85,6 +85,13 @@ HV *Perl_wump_hv_clone(pTHX_ HV *hv);
 void Perl_wump_snapshot_check(pTHX_ SV *value, char kind);
 AV *Perl_wump_snapshot_av(pTHX_ AV *source);
 HV *Perl_wump_snapshot_hv(pTHX_ HV *source);
+char Perl_wump_magic_kind(pTHX_ SV *value);
+SV *Perl_wump_magic_new(pTHX_ char kind, SV *initial);
+SV *Perl_wump_magic_copy(pTHX_ SV *value);
+SV **Perl_wump_magic_owned(pTHX_ SV *value, char kind);
+SV **Perl_wump_magic_target(pTHX_ SV *value, char kind);
+SV **Perl_wump_magic_cache(pTHX_ char kind);
+void Perl_wump_magic_scope(pTHX_ char kind);
 C
 write_file("$source/wump_task_types.h", $header);
 edit('perl.h', "struct interpreter {\n#  include \"intrpvar.h\"\n};",
@@ -95,6 +102,13 @@ for my $name (@vars) {
 	$vars .= "#undef PL_$name\n#define PL_$name (*(PL_wump_task ? &PL_wump_task->I$name : &aTHX->I$name))\n";
 }
 $vars .= "#endif\n";
+my $magic_cache_macros = <<'C';
+#undef PL_rs
+#define PL_rs (*(PL_wump_task ? Perl_wump_magic_cache(aTHX_ '/') : &aTHX->Irs))
+#undef PL_ors_sv
+#define PL_ors_sv (*(PL_wump_task ? Perl_wump_magic_cache(aTHX_ '\\') : &aTHX->Iors_sv))
+C
+$vars =~ s/#endif\n\z/$magic_cache_macros#endif\n/;
 write_file("$source/wump_task_embed.h", $vars);
 my $embed = read_file("$source/embedvar.h");
 $embed =~ s/\n\/\* Wump execution state:.*\z//s;
@@ -201,10 +215,13 @@ require "$FindBin::Bin/elements.pl";
 apply_elements($source);
 require "$FindBin::Bin/pocket.pl";
 apply_pocket($source);
+require "$FindBin::Bin/magic.pl";
+apply_magic($source);
 for my $pair (
 	["$FindBin::Bin/core/wump_core.c", "$source/wump_core.c"],
 	["$FindBin::Bin/core/wump_local.c", "$source/wump_local.c"],
 	["$FindBin::Bin/core/wump_elements.c", "$source/wump_elements.c"],
+	["$FindBin::Bin/core/wump_magic.c", "$source/wump_magic.c"],
 	["$FindBin::Bin/../runtime/include/wump.h", "$source/wump.h"],
 	["$FindBin::Bin/../runtime/src/internal.h", "$source/wump_runtime_internal.h"],
 ) {
