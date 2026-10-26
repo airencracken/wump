@@ -107,8 +107,9 @@ The build does not install or replace system Perl.
 make perl-fetch                 # downloads, verifies SHA512/size, and unpacks
 make perl-build                 # task-aware MULTIPLICITY + USE_ITHREADS build
 make perl-example               # Perl tasks return 1, 4, 9, 16
+make perl-regex-example         # yielding tasks retain separate regex captures
 make perl-test                  # task behavior, failures, shutdown
-make perl-upstream-test         # selected upstream interpreter regressions
+make perl-upstream-test         # upstream regex suites and selected interpreter regressions
 make perl-memcheck              # task suite with registered C stacks and full Perl teardown
 make perl-source-test           # offline source acquisition failure tests
 ```
@@ -163,15 +164,33 @@ trees belong to one interpreter; tasks do not clone interpreters. The original
 interpreter fields remain as the root context outside `run`; the design's full
 `aTHX`/per-task/per-P/process-global split remains future work.
 
+Regex match state is task-local. Numbered and named captures, capture offsets,
+`/p` values, `$^R`, named-capture hash iterators, match-once flags, and `/o`
+caches survive yields without taking another task's results. Runtime `/o`
+patterns compile on their first evaluation in each task. Regex code blocks
+and substitution replacements can yield; `qr` values retain their captured
+lexicals when sent to another task or retained after a run. An empty pattern
+still uses the calling task's previous pattern, and tied match inputs still
+receive their normal magic callbacks.
+
+Instances are created lazily from the compiled pattern. Each PMOP has a unique
+identity so a recycled Perl regex-pad offset cannot retrieve an old task's
+instance. Tasks own mutable match data and named-capture iteration state;
+compiled pattern storage can be retained through Perl's regexp copy support.
+The cache currently retains every distinct pattern used until its task ends.
+Shutdown releases these references and regex callback frames while their Perl
+and C stacks are still available. `pos()` remains a property of the scalar
+being matched: using one shared string also shares its position.
+
 Parallel Perl additionally needs the shared-value, reference-counting, and
 pad-pooling changes described in [the design](DESIGN.md).
 Enabling `USE_ITHREADS` prepares Perl's op-sharing infrastructure; it does
 not add `threads.pm` compatibility or implement task isolation by itself.
 This prototype does not implement `sel`, `scope`, `lock`, `pocket`, package
-`local` overlays/inheritance, task-specific regex instances, safe-point
+`local` overlays/inheritance, safe-point
 preemption, or automatic Perl I/O/XS handoff. Ordinary blocking Perl operations
 still occupy the single slot. Compilation/mutation of existing subs while
-tasks are suspended, debugger/multicall integration, and yielding destructors
+tasks are suspended, debugger/general multicall integration, and yielding destructors
 are not supported yet. Task teardown releases abandoned Perl frames and their
 owned values while their C stacks are still mapped; it is not cancellation
 that resumes the task's ordinary code.

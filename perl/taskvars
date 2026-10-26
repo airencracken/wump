@@ -43,6 +43,7 @@ start_env
 sortcop
 sortstash
 errgv
+replgv
 eval_root
 eval_start
 curcopdb

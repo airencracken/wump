@@ -38,7 +38,7 @@ while ($intrp =~ /PERLVAR(?:I|IC)?\(\s*I,\s*(\w+),\s*([^,\)]+)(?:,[^\)]*)?\)/g) 
 	$types{$name} = $type;
 }
 my $header = "/* Generated from Perl's intrpvar.h by perl/apply.pl. */\n";
-$header .= "struct wump_cv_slot;\nstruct wump_perl_task {\n";
+$header .= "struct wump_cv_slot;\nstruct wump_regex_slot;\nstruct wump_perl_task {\n";
 for my $name (@vars) {
 	exists $types{$name} or die "Missing upstream interpreter field: $name\n";
 	$header .= "\t$types{$name} I$name;\n";
@@ -47,6 +47,7 @@ $header .= <<'C';
 	PerlInterpreter *interp;
 	CV *entry;
 	struct wump_cv_slot *cvs;
+	struct wump_regex_slot *regexes;
 	UV id;
 	int initialized, finished;
 };
@@ -56,6 +57,12 @@ void Perl_wump_cv_prepare(pTHX_ CV *cv);
 void Perl_wump_boot(pTHX);
 SV **Perl_wump_gv_sv(GV *gv);
 AV **Perl_wump_gv_av(GV *gv);
+void Perl_wump_pm_stamp(pTHX_ PMOP *pm);
+SV **Perl_wump_pm_slot(pTHX_ PMOP *pm);
+REGEXP *Perl_wump_pm_get(pTHX_ PMOP *pm);
+bool Perl_wump_pm_native(pTHX_ PMOP *pm, REGEXP *rx);
+HV *Perl_wump_regex_names(pTHX_ HV *original);
+HV **Perl_wump_gv_hv(GV *gv);
 C
 write_file("$source/wump_task_types.h", $header);
 edit('perl.h', "struct interpreter {\n#  include \"intrpvar.h\"\n};",
@@ -81,17 +88,72 @@ edit('gv.h', "#define GvSV(gv)\t(GvGP(gv)->gp_sv)",
 	"#define GvSV(gv)\t(*Perl_wump_gv_sv((GV *)(gv)))");
 edit('gv.h', "#define GvAV(gv)\t(GvGP(gv)->gp_av)",
 	"#define GvAV(gv)\t(*Perl_wump_gv_av((GV *)(gv)))");
+edit('gv.h', "#define GvHV(gv)\t((GvGP(gv))->gp_hv)",
+	"#define GvHV(gv)\t(*Perl_wump_gv_hv((GV *)(gv)))");
 my $gv = read_file("$source/gv.h");
 $gv =~ s/\QGvGP(gv)->gp_sv ?\E/GvSV(gv) ?/g;
 $gv =~ s/\Q&(GvGP(gv)->gp_sv) :\E/\&GvSV(gv) :/g;
 $gv =~ s/\QGvGP(gv)->gp_av ?\E/GvAV(gv) ?/g;
 $gv =~ s/\QGvGP(gv)->gp_av :\E/GvAV(gv) :/g;
+$gv =~ s/\QGvGP(gv)->gp_hv ?\E/GvHV(gv) ?/g;
+$gv =~ s/\QGvGP(gv)->gp_hv :\E/GvHV(gv) :/g;
+$gv =~ s/\QGvGP(gv_HVadd(gv))->gp_hv\E/GvHV(gv_HVadd(gv))/g;
 write_file("$source/gv.h", $gv);
 edit('run.c', '#define PERL_IN_RUN_C', "#define PERL_IN_RUN_C\n/* Wump core implementation is built into both perl and miniperl. */");
 my $run = read_file("$source/run.c");
 my $include = "\n#include \"wump_core.c\"\n";
 write_file("$source/run.c", $run . $include) unless index($run, $include) >= 0;
 edit('perl.c', 'boot_core_UNIVERSAL();', "boot_core_UNIVERSAL();\n    Perl_wump_boot(aTHX);");
+edit('op.h', "    OP *\top_code_list;\t/* list of (?{}) code blocks */",
+	"    OP *\top_code_list;\t/* list of (?{}) code blocks */\n    U64 op_wump_id;\n    U8 op_wump_runtime;");
+edit('op.h', "#define PM_GETRE_raw(o)\t(REGEXP*)(PL_regex_pad[(o)->op_pmoffset])",
+	"#define PM_GETRE_raw(o)\t(REGEXP*)(PL_regex_pad[(o)->op_pmoffset])\n/* Wump keeps compiler ownership in op.c and isolates execution below. */");
+my $op = read_file("$source/op.h");
+my $macros = <<'C';
+/* Wump regex execution slots; op.c always owns the original templates. */
+#if defined(USE_ITHREADS) && !defined(PERL_IN_OP_C)
+#undef PM_GETRE_raw
+#undef PM_GETRE
+#undef PM_SETRE_raw
+#undef PM_SETRE
+#define PM_GETRE_raw(o) ((REGEXP *)*Perl_wump_pm_slot(aTHX_ (PMOP *)(o)))
+#define PM_GETRE(o) Perl_wump_pm_get(aTHX_ (PMOP *)(o))
+#define PM_SETRE_raw(o,r) STMT_START { \
+    *Perl_wump_pm_slot(aTHX_ (PMOP *)(o)) = MUTABLE_SV(r); \
+} STMT_END
+#define PM_SETRE(o,r) STMT_START { \
+    REGEXP *const _wump_rx = (r); \
+    assert(_wump_rx); \
+    PM_SETRE_raw(o, _wump_rx); \
+} STMT_END
+#endif
+C
+my $anchor = '/* Currently these PMf flags occupy a single 32-bit word.';
+unless (index($op, $macros) >= 0) {
+	$op =~ s/\Q$anchor\E/$macros\n$anchor/ or die "op.h: missing PM flag anchor\n";
+	write_file("$source/op.h", $op);
+}
+edit('op.c', 'NewOp(1101, pmop, 1, PMOP);',
+	"NewOp(1101, pmop, 1, PMOP);\n    Perl_wump_pm_stamp(aTHX_ pmop);");
+edit('op.c', '/* runtime pattern: build chain of regcomp etc ops */',
+	"/* runtime pattern: build chain of regcomp etc ops */\n        pm->op_wump_runtime = 1;");
+edit('regexec.c', 'Newxz(PL_reg_curpm, 1, PMOP);',
+	"Newxz(PL_reg_curpm, 1, PMOP);\n        Perl_wump_pm_stamp(aTHX_ PL_reg_curpm);");
+my $exec = read_file("$source/regexec.c");
+$exec =~ s/hv_iterinit\(RXp_PAREN_NAMES\((prog|rx)\)\)/hv_iterinit(Perl_wump_regex_names(aTHX_ RXp_PAREN_NAMES($1)))/g;
+$exec =~ s/HV \*hv\s*= RXp_PAREN_NAMES\(rx\);/HV *hv = Perl_wump_regex_names(aTHX_ RXp_PAREN_NAMES(rx));/g;
+write_file("$source/regexec.c", $exec);
+edit('regexec.c', 'U8 flags = (CXp_SUB_RE |',
+	"Perl_wump_cv_prepare(aTHX_ newcv);\n                    U8 flags = (CXp_SUB_RE |");
+edit('pp_hot.c', 'truebase = prog->mother_re',
+	'truebase = (prog->mother_re && !Perl_wump_pm_native(aTHX_ pm, rx))');
+my $hot = read_file("$source/pp_hot.c");
+$hot =~ s/!RX_PRELEN\(rx\) && PL_curpm && !prog->mother_re/!RX_PRELEN(rx) \&\& PL_curpm \&\& (!prog->mother_re || Perl_wump_pm_native(aTHX_ pm, rx))/g;
+$hot =~ s/\QPL_regex_pad[pm->op_pmoffset]\E/*Perl_wump_pm_slot(aTHX_ pm)/g;
+$hot =~ s/\QPL_regex_pad[dynpm->op_pmoffset]\E/*Perl_wump_pm_slot(aTHX_ dynpm)/g;
+write_file("$source/pp_hot.c", $hot);
+edit('sv.c', 'SvREADONLY_off(PL_regex_pad[(*pmp)->op_pmoffset]);',
+	'SvREADONLY_off(*Perl_wump_pm_slot(aTHX_ *pmp));');
 for my $pair (
 	["$FindBin::Bin/core/wump_core.c", "$source/wump_core.c"],
 	["$FindBin::Bin/../runtime/include/wump.h", "$source/wump.h"],

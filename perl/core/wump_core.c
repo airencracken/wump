@@ -11,6 +11,110 @@ typedef struct wump_cv_slot {
 	struct wump_cv_slot *next;
 } wump_cv_slot;
 
+enum wump_regex_kind { WUMP_REGEX_PM, WUMP_REGEX_NAMES, WUMP_REGEX_HASH };
+typedef struct wump_regex_slot {
+	uint64_t id;
+	enum wump_regex_kind kind;
+	SV *value;
+	HV *origin;
+	REGEXP *native_copy;
+	struct wump_regex_slot *next;
+} wump_regex_slot;
+
+static _Atomic uint64_t wump_regex_sequence;
+
+void Perl_wump_pm_stamp(pTHX_ PMOP *pm) {
+	uint64_t previous = atomic_load_explicit(&wump_regex_sequence, memory_order_relaxed);
+	for (;;) {
+		if (previous == UINT64_MAX) croak("Wump: regex identity space exhausted");
+		if (atomic_compare_exchange_weak_explicit(&wump_regex_sequence, &previous,
+			previous + 1, memory_order_relaxed, memory_order_relaxed)) break;
+	}
+	pm->op_wump_id = previous + 1;
+	pm->op_wump_runtime = 0;
+}
+
+static wump_regex_slot *wump_regex_find(pTHX_ PMOP *pm) {
+	for (wump_regex_slot *slot = PL_wump_task->regexes; slot != NULL; slot = slot->next) {
+		if (slot->kind == WUMP_REGEX_PM && slot->id == pm->op_wump_id) return slot;
+	}
+	return NULL;
+}
+
+SV **Perl_wump_pm_slot(pTHX_ PMOP *pm) {
+	if (PL_wump_task == NULL) return &PL_regex_pad[pm->op_pmoffset];
+	assert(pm->op_wump_id != 0);
+	wump_regex_slot *slot = wump_regex_find(aTHX_ pm);
+	if (slot != NULL) return &slot->value;
+	Newxz(slot, 1, wump_regex_slot);
+	slot->id = pm->op_wump_id;
+	SV *original = PL_regex_pad[pm->op_pmoffset];
+	if (!pm->op_wump_runtime && original != NULL && SvTYPE(original) == SVt_REGEXP) {
+		slot->value = (SV *)reg_temp_copy(NULL, (REGEXP *)original);
+		if (!ReANY((REGEXP *)original)->mother_re) slot->native_copy = (REGEXP *)slot->value;
+	} else {
+		/* Each task starts its own runtime /o and ordinary pattern cache. */
+		slot->value = &PL_sv_undef;
+	}
+	slot->next = PL_wump_task->regexes;
+	PL_wump_task->regexes = slot;
+	return &slot->value;
+}
+
+REGEXP *Perl_wump_pm_get(pTHX_ PMOP *pm) {
+	SV *value = *Perl_wump_pm_slot(aTHX_ pm);
+	return value != NULL && SvTYPE(value) == SVt_REGEXP ? (REGEXP *)value : NULL;
+}
+
+bool Perl_wump_pm_native(pTHX_ PMOP *pm, REGEXP *rx) {
+	if (PL_wump_task == NULL) return FALSE;
+	wump_regex_slot *slot = wump_regex_find(aTHX_ pm);
+	return slot != NULL && slot->native_copy == rx;
+}
+
+static wump_regex_slot *wump_regex_hash(pTHX_ HV *original,
+	enum wump_regex_kind kind, MAGIC *tied) {
+	for (wump_regex_slot *slot = PL_wump_task->regexes; slot != NULL; slot = slot->next) {
+		if (slot->kind == kind && slot->origin == original) return slot;
+	}
+	wump_regex_slot *slot;
+	Newxz(slot, 1, wump_regex_slot);
+	HV *copy;
+	if (tied != NULL) {
+		copy = newHV();
+		sv_magicext((SV *)copy, tied->mg_obj, PERL_MAGIC_tied, tied->mg_virtual, NULL, 0);
+	} else {
+		/* newHVhv preserves the source iterator and copies its metadata. */
+		copy = newHVhv(original);
+	}
+	slot->kind = kind;
+	slot->origin = (HV *)SvREFCNT_inc(original);
+	slot->value = (SV *)copy;
+	slot->next = PL_wump_task->regexes;
+	PL_wump_task->regexes = slot;
+	return slot;
+}
+
+HV *Perl_wump_regex_names(pTHX_ HV *original) {
+	if (PL_wump_task == NULL || original == NULL) return original;
+	return (HV *)wump_regex_hash(aTHX_ original, WUMP_REGEX_NAMES, NULL)->value;
+}
+
+HV **Perl_wump_gv_hv(GV *gv) {
+	dTHX;
+	HV **original = &GvGP(gv)->gp_hv;
+	if (PL_wump_task == NULL || *original == NULL || !SvMAGICAL(*original)) return original;
+	MAGIC *tied = mg_find((SV *)*original, PERL_MAGIC_tied);
+	if (tied == NULL || tied->mg_obj == NULL || !SvROK(tied->mg_obj)) return original;
+	SV *object = SvRV(tied->mg_obj);
+	if (!SvOBJECT(object)) return original;
+	const char *name = HvNAME(SvSTASH(object));
+	if (name == NULL || strNE(name, "Tie::Hash::NamedCapture")) return original;
+	/* The builtin tie object only stores immutable API flags. The hash
+	 * itself owns each() state, so %+ / %- and aliases need private HVs. */
+	return (HV **)&wump_regex_hash(aTHX_ *original, WUMP_REGEX_HASH, tied)->value;
+}
+
 typedef struct wump_perl_message {
 	SV *value;
 	struct wump_perl_message *next, *previous;
@@ -86,6 +190,7 @@ SV **Perl_wump_gv_sv(GV *gv) {
 	if (PL_wump_task != NULL) {
 		if (gv == aTHX->Idefgv) gv = PL_defgv;
 		else if (gv == aTHX->Ierrgv) gv = PL_errgv;
+		else if (gv == aTHX->Ireplgv) gv = PL_replgv;
 	}
 	return &GvGP(gv)->gp_sv;
 }
@@ -154,10 +259,36 @@ static void wump_perl_task_free(void *arg) {
 		task->entry = NULL;
 		GV *defgv = PL_defgv;
 		GV *errgv = PL_errgv;
+		GV *replgv = PL_replgv;
 		PL_defgv = aTHX->Idefgv;
 		PL_errgv = aTHX->Ierrgv;
+		PL_replgv = aTHX->Ireplgv;
 		SvREFCNT_dec(defgv);
 		SvREFCNT_dec(errgv);
+		SvREFCNT_dec(replgv);
+		/* Free while Perl stacks still exist: a regex can own a CV whose
+		 * captured values have destructors. Drain any caches they create. */
+		while (task->regexes != NULL) {
+			wump_regex_slot *slot = task->regexes;
+			task->regexes = slot->next;
+			SV *value = slot->value;
+			HV *origin = slot->origin;
+			Safefree(slot);
+			SvREFCNT_dec(value);
+			SvREFCNT_dec(origin);
+		}
+		if (PL_reg_curpm != NULL) {
+			IV offset = PL_reg_curpm->op_pmoffset;
+			/* The fake PMOP was allocated by regexec, not newPMOP. Its
+			 * template is undef; return the global offset to Perl's pool. */
+			SvREFCNT_dec(PL_regex_pad[offset]);
+			PL_regex_pad[offset] = &PL_sv_undef;
+			sv_catpvn_nomg(PL_regex_pad[0], (const char *)&offset, sizeof(offset));
+			if (PL_curpm == PL_reg_curpm) PL_curpm = NULL;
+			if (PL_curpm_under == PL_reg_curpm) PL_curpm_under = NULL;
+			Safefree(PL_reg_curpm);
+			PL_reg_curpm = NULL;
+		}
 		while (PL_curstackinfo->si_next != NULL) PL_curstackinfo = PL_curstackinfo->si_next;
 		while (PL_curstackinfo != NULL) {
 			PERL_SI *previous = PL_curstackinfo->si_prev;
@@ -173,7 +304,6 @@ static void wump_perl_task_free(void *arg) {
 		Safefree(PL_scopestack_name);
 #endif
 		Safefree(PL_savestack);
-		Safefree(PL_reg_curpm);
 		regmatch_slab *slab = PL_regmatch_slab;
 		while (slab != NULL) {
 			regmatch_slab *next = slab->next;
@@ -216,6 +346,9 @@ static void wump_perl_task_start(void *arg) {
 	PL_errgv = (GV *)newSV_type(SVt_PVGV);
 	gv_init(PL_errgv, PL_defstash, "@", 1, 0);
 	if (GvSV(PL_errgv) == NULL) GvSV(PL_errgv) = newSVpvs("");
+	PL_replgv = (GV *)newSV_type(SVt_PVGV);
+	gv_init(PL_replgv, PL_defstash, "\022", 1, 0);
+	if (GvSV(PL_replgv) == NULL) GvSV(PL_replgv) = newSV(0);
 	{
 		dSP;
 		ENTER;
