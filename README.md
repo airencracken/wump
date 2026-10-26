@@ -109,8 +109,9 @@ make perl-build                 # task-aware MULTIPLICITY + USE_ITHREADS build
 make perl-example               # Perl tasks return 1, 4, 9, 16
 make perl-regex-example         # yielding tasks retain separate regex captures
 make perl-local-example         # spawned tasks inherit separate local bindings
+make perl-elements-example      # tasks localize individual shared hash elements
 make perl-test                  # task behavior, failures, shutdown
-make perl-upstream-test         # upstream regex suites and selected interpreter regressions
+make perl-upstream-test         # upstream regex, aggregate and interpreter regressions
 make perl-memcheck              # task suite with registered C stacks and full Perl teardown
 make perl-source-test           # offline source acquisition failure tests
 ```
@@ -197,13 +198,35 @@ elements are copied shallowly, so referenced objects remain shared. Parent scope
 exit and later assignments do not change the child's inherited slots. Bindings
 localized outside `run` retain ordinary Perl behavior; they are not task snapshots.
 
-Element/slice localization, `delete local`, typeglob/reference-alias localization,
-and localization of magic variables (including tied values and interpreter
-settings such as `$/`) raise errors inside tasks. Spawn also rejects magic values inside inherited
-bindings before invoking any `FETCH` hooks. Localizing a whole plain aggregate
+Ordinary array/hash elements and slices also support task-local `local`.
+Their bindings follow the aggregate's identity, including through references
+and glob aliases. Missing entries, hash-key deletion masks, array extent and
+negative indices are part of the task's view. Whole-container reads, `exists`,
+`keys`, `values`, and hash iteration see this view. Writes to unlocalized cells
+remain shared. Child tasks inherit shallow snapshots of visible element bindings;
+hidden outer bindings are not retained. The base aggregate keeps its own scalar
+cells, so a reference obtained before localization still addresses the base value.
+
+Structural mutation in a task with active element bindings currently raises an
+error. This includes whole-container assignment/clear, array resizing,
+push/pop/shift/unshift, splice, in-place sort/reverse, and array-element deletion.
+Another task without those bindings can mutate the plain base aggregate; later lookups
+in the localized task observe changes to its unlocalized cells. Hash-key deletion
+is supported: deleting a localized key masks it in that task without deleting the
+base key. Hash iteration uses a merged view; mutating a hash during iteration can
+restart that view. Iterator views are released at scope exit and task cleanup.
+
+`delete local`, typeglob/reference-alias localization, and localization of magic
+variables (including tied values and interpreter settings such as `$/`) raise
+errors inside tasks. Restricted hashes and symbol-table elements are also rejected.
+Aggregates must remain nonmagical throughout a binding's lifetime.
+Spawn rejects magic values inside inherited bindings before invoking any `FETCH`
+hooks. Localizing a whole plain aggregate
 and then assigning its elements is supported. Symbol-table replacement while a
 binding is active is not supported. These limits keep the remaining shared-state
 paths explicit while their isolation is developed.
+Native code that accesses AV/HV storage directly or uses stock element
+save-stack APIs still needs adaptation to the task's views.
 
 This prototype does not implement `sel`, `scope`, `lock`, `pocket`, safe-point
 preemption, or automatic Perl I/O/XS handoff. Ordinary blocking Perl operations

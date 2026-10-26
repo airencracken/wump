@@ -41,6 +41,7 @@ static void wump_local_pop(pTHX_ void *arg) {
 }
 
 static void wump_local_clear(pTHX_ struct wump_perl_task *task) {
+	Perl_wump_elements_clear(aTHX_ task);
 	I32 mark = PL_savestack_ix;
 	while (task->locals != NULL) wump_local_drop(aTHX_ &task->locals);
 	LEAVE_SCOPE(mark);
@@ -68,7 +69,8 @@ static void wump_local_check(pTHX_ SV *value, char kind) {
 	bool unsafe = SvGMAGICAL(value) || SvSMAGICAL(value);
 	if (kind != 's' && SvMAGICAL(value)) {
 		for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic) {
-			if (mg->mg_type != PERL_MAGIC_backref && mg->mg_type != PERL_MAGIC_arylen_p)
+			if (mg->mg_type != PERL_MAGIC_backref && mg->mg_type != PERL_MAGIC_arylen_p
+				&& !Perl_wump_element_magic(mg))
 				unsafe = TRUE;
 		}
 	}
@@ -95,8 +97,9 @@ SV *Perl_wump_localize(pTHX_ GV *gv, char kind) {
 }
 
 void Perl_wump_local_elements_check(pTHX) {
-	if (PL_wump_task && (PL_op->op_private & OPpLVAL_INTRO)) {
-		croak("Wump: element localization in a task is not supported yet");
+	if (PL_wump_task && (PL_op->op_private & OPpLVAL_INTRO)
+		&& PL_op->op_type == OP_DELETE) {
+		croak("Wump: delete localization in a task is not supported yet");
 	}
 }
 
@@ -146,4 +149,5 @@ static void wump_local_snapshot(pTHX_ struct wump_perl_task *task) {
 		}
 		wump_local_add(aTHX_ task, slot->origin, slot->kind, copy);
 	}
+	Perl_wump_elements_snapshot(aTHX_ task);
 }

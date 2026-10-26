@@ -38,7 +38,7 @@ while ($intrp =~ /PERLVAR(?:I|IC)?\(\s*I,\s*(\w+),\s*([^,\)]+)(?:,[^\)]*)?\)/g) 
 	$types{$name} = $type;
 }
 my $header = "/* Generated from Perl's intrpvar.h by perl/apply.pl. */\n";
-$header .= "struct wump_cv_slot;\nstruct wump_regex_slot;\nstruct wump_local;\nstruct wump_perl_task {\n";
+$header .= "struct wump_cv_slot;\nstruct wump_regex_slot;\nstruct wump_local;\nstruct wump_element;\nstruct wump_element_iter;\nstruct wump_perl_task {\n";
 for my $name (@vars) {
 	exists $types{$name} or die "Missing upstream interpreter field: $name\n";
 	$header .= "\t$types{$name} I$name;\n";
@@ -49,6 +49,8 @@ $header .= <<'C';
 	struct wump_cv_slot *cvs;
 	struct wump_regex_slot *regexes;
 	struct wump_local *locals;
+	struct wump_element *elements;
+	struct wump_element_iter *element_iters;
 	UV id;
 	int initialized, finished;
 };
@@ -67,6 +69,19 @@ HV **Perl_wump_gv_hv(GV *gv);
 SV *Perl_wump_localize(pTHX_ GV *gv, char kind);
 void Perl_wump_local_elements_check(pTHX);
 void Perl_wump_save_defsv(pTHX);
+bool Perl_wump_element_magic(const MAGIC *mg);
+SV **Perl_wump_local_av(pTHX_ AV *av, SSize_t index);
+HE *Perl_wump_local_hv(pTHX_ HV *hv, SV *key);
+SV **Perl_wump_av_slot(pTHX_ AV *av, SSize_t *index, bool lval, bool *handled);
+SSize_t Perl_wump_av_fill(AV *av);
+void Perl_wump_element_structure(pTHX_ SV *aggregate);
+bool Perl_wump_hv_slot(pTHX_ HV *hv, const char *key, STRLEN len, int flags,
+	int action, SV *value, U32 hash, void **result);
+HV *Perl_wump_hv_iteration(pTHX_ HV *hv, bool reset);
+STRLEN Perl_wump_hv_used(HV *hv);
+void Perl_wump_elements_clear(pTHX_ struct wump_perl_task *task);
+void Perl_wump_elements_snapshot(pTHX_ struct wump_perl_task *task);
+HV *Perl_wump_hv_clone(pTHX_ HV *hv);
 C
 write_file("$source/wump_task_types.h", $header);
 edit('perl.h', "struct interpreter {\n#  include \"intrpvar.h\"\n};",
@@ -179,9 +194,12 @@ $hot =~ s/\QPL_regex_pad[dynpm->op_pmoffset]\E/*Perl_wump_pm_slot(aTHX_ dynpm)/g
 write_file("$source/pp_hot.c", $hot);
 edit('sv.c', 'SvREADONLY_off(PL_regex_pad[(*pmp)->op_pmoffset]);',
 	'SvREADONLY_off(*Perl_wump_pm_slot(aTHX_ *pmp));');
+require "$FindBin::Bin/elements.pl";
+apply_elements($source);
 for my $pair (
 	["$FindBin::Bin/core/wump_core.c", "$source/wump_core.c"],
 	["$FindBin::Bin/core/wump_local.c", "$source/wump_local.c"],
+	["$FindBin::Bin/core/wump_elements.c", "$source/wump_elements.c"],
 	["$FindBin::Bin/../runtime/include/wump.h", "$source/wump.h"],
 	["$FindBin::Bin/../runtime/src/internal.h", "$source/wump_runtime_internal.h"],
 ) {
