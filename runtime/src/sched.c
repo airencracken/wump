@@ -8,6 +8,24 @@
 
 #include "internal.h"
 
+/* M owns an OS thread/context; P (wump_worker) owns queues and caches.
+ * A blocking M keeps its coroutine stack but hands its P to another M. */
+typedef struct wump_machine {
+	wump_runtime *rt;
+	wump_worker *p;
+	pthread_t thread;
+	pthread_cond_t wake;
+	struct wump_machine *next, *spare_next;
+	void *sched_sp;
+	wump_g *cur;
+	int in_syscall;
+	void (*park_fn)(void *);
+	void *park_arg;
+#ifdef WUMP_TSAN
+	void *tsan_sched_fiber;
+#endif
+} wump_machine;
+
 struct wump_runtime {
 	pthread_mutex_t mu;
 	pthread_cond_t work;
@@ -25,9 +43,18 @@ struct wump_runtime {
 	size_t ntimers, timer_cap;
 	wump_poller *poller;
 	size_t io_waiters;
+	size_t syscalls;
+	wump_machine *machines, *spare;
 };
 
-static _Thread_local wump_worker *current;
+static _Thread_local wump_machine *current;
+
+static __attribute__((noinline)) wump_machine *current_machine(void) {
+	/* A task can resume on another M. Never cache a native TLS address
+	 * or its value across a context switch in a calling function. */
+	__asm__ volatile("" ::: "memory");
+	return current;
+}
 
 static void notify(wump_runtime *rt) {
 	pthread_mutex_lock(&rt->mu);
@@ -36,13 +63,24 @@ static void notify(wump_runtime *rt) {
 	pthread_mutex_unlock(&rt->mu);
 }
 
-static void stop(wump_runtime *rt, int error) {
-	pthread_mutex_lock(&rt->mu);
+static void stop_locked(wump_runtime *rt, int error) {
 	if (!atomic_load_explicit(&rt->stopping, memory_order_relaxed)) {
 		rt->error = error;
 		atomic_store_explicit(&rt->stopping, 1, memory_order_release);
+	} else if (rt->error == 0 && error != 0) {
+		/* A native call can reveal a protocol error while shutdown is
+		 * waiting for it. Preserve that error in the final run result. */
+		rt->error = error;
 	}
 	pthread_cond_broadcast(&rt->work);
+	for (wump_machine *m = rt->machines; m != NULL; m = m->next) {
+		pthread_cond_signal(&m->wake);
+	}
+}
+
+static void stop(wump_runtime *rt, int error) {
+	pthread_mutex_lock(&rt->mu);
+	stop_locked(rt, error);
 	pthread_mutex_unlock(&rt->mu);
 }
 
@@ -65,11 +103,12 @@ static void global_push(wump_runtime *rt, wump_g *g) {
 }
 
 wump_runtime *wump_current_runtime(void) {
-	return current != NULL ? current->rt : NULL;
+	wump_machine *m = current_machine();
+	return m != NULL ? m->rt : NULL;
 }
 
 wump_poller *wump_netpoll(void) {
-	wump_runtime *rt = current->rt;
+	wump_runtime *rt = current_machine()->rt;
 	pthread_mutex_lock(&rt->mu);
 	if (rt->poller == NULL) {
 		rt->poller = wump_poller_create(rt);
@@ -153,7 +192,7 @@ static void timer_remove(wump_runtime *rt, wump_timer *timer) {
 }
 
 int wump_timer_add(wump_timer *timer) {
-	wump_runtime *rt = current->rt;
+	wump_runtime *rt = current_machine()->rt;
 	timer->rt = rt;
 	pthread_mutex_lock(&rt->mu);
 	if (rt->ntimers == rt->timer_cap) {
@@ -213,11 +252,12 @@ static void timers_expire_locked(wump_runtime *rt) {
 }
 
 uint64_t wump_random(void) {
-	uint64_t x = current->rng;
+	wump_worker *p = current_machine()->p;
+	uint64_t x = p->rng;
 	x ^= x << 13;
 	x ^= x >> 7;
 	x ^= x << 17;
-	current->rng = x;
+	p->rng = x;
 	return x;
 }
 
@@ -336,43 +376,75 @@ static void recycle(wump_worker *w, wump_g *g) {
 	}
 }
 
+static void *machine_entry(void *arg);
+
+/* rt->mu is held until the donor has committed the P handoff. A newly
+ * created thread cannot start using its P before that unlock. */
+static wump_machine *new_machine_locked(wump_runtime *rt, wump_worker *p) {
+	wump_machine *m = calloc(1, sizeof(*m));
+	if (m == NULL) {
+		return NULL;
+	}
+	m->rt = rt;
+	m->p = p;
+	int error = pthread_cond_init(&m->wake, NULL);
+	if (error != 0) {
+		free(m);
+		wump_set_errno(error);
+		return NULL;
+	}
+	error = pthread_create(&m->thread, NULL, machine_entry, m);
+	if (error != 0) {
+		pthread_cond_destroy(&m->wake);
+		free(m);
+		wump_set_errno(error);
+		return NULL;
+	}
+	m->next = rt->machines;
+	rt->machines = m;
+	return m;
+}
+
 static void switch_out(void) {
-	/* Do not use a cached worker/TLS address after switching: a task
-	 * can resume on another OS thread. The scheduler restores errno. */
-	wump_worker *w = current;
-	wump_g *g = w->cur;
-	g->saved_errno = errno;
+	wump_machine *m = current_machine();
+	wump_g *g = m->cur;
+	g->saved_errno = wump_errno();
 #ifdef WUMP_TSAN
-	__tsan_switch_to_fiber(w->tsan_sched_fiber, 0);
+	__tsan_switch_to_fiber(m->tsan_sched_fiber, 0);
 #endif
-	wump_ctx_switch(&g->sp, w->sched_sp);
+	wump_ctx_switch(&g->sp, m->sched_sp);
+	/* A resumed task may be on another M. No cached TLS/M access here. */
 }
 
 static void task_entry(void *arg) {
 	wump_g *g = arg;
 	g->fn(g->arg);
+	wump_machine *m = current_machine();
+	if (m->in_syscall) {
+		stop(m->rt, EPROTO);
+	}
 	g->state = G_DEAD;
 	switch_out();
 	abort();
 }
 
-static wump_g *new_task(wump_worker *w, wump_fn fn, void *arg, size_t stack_size) {
-	wump_g *g = w->gcache;
+static wump_g *new_task(wump_worker *p, wump_fn fn, void *arg, size_t stack_size) {
+	wump_g *g = p->gcache;
 	if (g != NULL) {
-		w->gcache = g->next;
-		w->ngcache--;
+		p->gcache = g->next;
+		p->ngcache--;
 	} else {
 		g = wump_stack_new(stack_size);
 		if (g == NULL) {
 			return NULL;
 		}
-		pthread_mutex_lock(&w->rt->mu);
-		g->all_next = w->rt->all;
+		pthread_mutex_lock(&p->rt->mu);
+		g->all_next = p->rt->all;
 		if (g->all_next != NULL) {
 			g->all_next->all_prev = g;
 		}
-		w->rt->all = g;
-		pthread_mutex_unlock(&w->rt->mu);
+		p->rt->all = g;
+		pthread_mutex_unlock(&p->rt->mu);
 	}
 	g->fn = fn;
 	g->arg = arg;
@@ -388,29 +460,35 @@ static wump_g *new_task(wump_worker *w, wump_fn fn, void *arg, size_t stack_size
 	return g;
 }
 
-static void schedule(wump_worker *w) {
-	wump_runtime *rt = w->rt;
-	current = w;
+static void schedule(wump_machine *m) {
+	wump_runtime *rt = m->rt;
+	current = m;
 #ifdef WUMP_TSAN
-	w->tsan_sched_fiber = __tsan_get_current_fiber();
+	m->tsan_sched_fiber = __tsan_get_current_fiber();
 #endif
-	while (!atomic_load_explicit(&rt->stopping, memory_order_acquire)) {
-		/* Pair the work scan with an epoch under the sleep mutex.
-		 * Every enqueue changes it, preventing a lost wakeup. */
+	for (;;) {
 		pthread_mutex_lock(&rt->mu);
+		while (!atomic_load_explicit(&rt->stopping, memory_order_relaxed) &&
+			(!rt->started || m->p == NULL)) {
+			pthread_cond_wait(&m->wake, &rt->mu);
+		}
+		if (atomic_load_explicit(&rt->stopping, memory_order_relaxed)) {
+			pthread_mutex_unlock(&rt->mu);
+			break;
+		}
+		wump_worker *p = m->p;
 		timers_expire_locked(rt);
 		uint64_t epoch = rt->epoch;
 		pthread_mutex_unlock(&rt->mu);
-		wump_g *g = find_work(w);
+		wump_g *g = find_work(p);
 		if (g == NULL) {
 			pthread_mutex_lock(&rt->mu);
 			if (epoch == rt->epoch &&
 				!atomic_load_explicit(&rt->stopping, memory_order_relaxed)) {
 				rt->idle++;
-				if (rt->idle == rt->nprocs && rt->ntimers == 0 && rt->io_waiters == 0) {
-					rt->error = EDEADLK;
-					atomic_store_explicit(&rt->stopping, 1, memory_order_release);
-					pthread_cond_broadcast(&rt->work);
+				if (rt->idle == rt->nprocs && rt->ntimers == 0 &&
+					rt->io_waiters == 0 && rt->syscalls == 0) {
+					stop_locked(rt, EDEADLK);
 				} else if (rt->ntimers != 0) {
 					int64_t deadline = rt->timers[0]->deadline;
 					struct timespec until = {
@@ -429,124 +507,203 @@ static void schedule(wump_worker *w) {
 			pthread_mutex_unlock(&rt->mu);
 			continue;
 		}
-		w->cur = g;
+		m->cur = g;
 		g->state = G_RUNNING;
-		errno = g->saved_errno;
+		wump_set_errno(g->saved_errno);
 #ifdef WUMP_TSAN
 		__tsan_switch_to_fiber(g->tsan_fiber, 0);
 #endif
-		wump_ctx_switch(&w->sched_sp, g->sp);
-		/* A waker can run and even free g as soon as the park hook
-		 * unlocks its channel. Finish every access to g first. */
+		wump_ctx_switch(&m->sched_sp, g->sp);
 		assert(*g->stack_lo == WUMP_STACK_CANARY);
 		enum wump_gstate state = g->state;
-		w->cur = NULL;
-		if (state == G_WAITING) {
-			void (*unlock)(void *) = w->park_fn;
-			void *unlock_arg = w->park_arg;
-			w->park_fn = NULL;
-			w->park_arg = NULL;
+		m->cur = NULL;
+		if (m->in_syscall) {
+			/* This M no longer owns p. Finish saving g before publishing
+			 * it, and atomically remove the native-call liveness count. */
+			assert(m->p == NULL && (state == G_RUNNABLE || state == G_DEAD));
+			pthread_mutex_lock(&rt->mu);
+			assert(rt->syscalls != 0);
+			rt->syscalls--;
+			m->in_syscall = 0;
+			if (!atomic_load_explicit(&rt->stopping, memory_order_relaxed)) {
+				assert(state == G_RUNNABLE);
+				m->spare_next = rt->spare;
+				rt->spare = m;
+				global_push_locked(rt, g);
+			}
+			pthread_mutex_unlock(&rt->mu);
+		} else if (state == G_WAITING) {
+			/* A waker can reclaim g after the hook's final unlock. */
+			void (*unlock)(void *) = m->park_fn;
+			void *unlock_arg = m->park_arg;
+			m->park_fn = NULL;
+			m->park_arg = NULL;
 			unlock(unlock_arg);
 		} else if (state == G_RUNNABLE) {
-			local_push(w, g);
+			local_push(p, g);
 		} else {
 			assert(state == G_DEAD);
 			if (g == rt->main_g) {
 				stop(rt, 0);
 			} else {
-				recycle(w, g);
+				recycle(p, g);
 			}
 		}
 	}
 	current = NULL;
 }
 
-static void *worker_entry(void *arg) {
-	wump_worker *w = arg;
-	pthread_mutex_lock(&w->rt->mu);
-	while (!w->rt->started) {
-		pthread_cond_wait(&w->rt->work, &w->rt->mu);
-	}
-	pthread_mutex_unlock(&w->rt->mu);
-	schedule(w);
+static void *machine_entry(void *arg) {
+	schedule(arg);
 	return NULL;
 }
 
 wump_g *wump_self(void) {
-	return current != NULL ? current->cur : NULL;
+	wump_machine *m = current_machine();
+	return m != NULL && m->p != NULL && !m->in_syscall ? m->cur : NULL;
 }
 
 void wump_park(void (*unlock)(void *), void *arg) {
-	wump_worker *w = current;
-	assert(w != NULL && w->cur != NULL && unlock != NULL);
-	w->park_fn = unlock;
-	w->park_arg = arg;
-	w->cur->state = G_WAITING;
+	wump_machine *m = current_machine();
+	assert(wump_self() != NULL && unlock != NULL);
+	m->park_fn = unlock;
+	m->park_arg = arg;
+	m->cur->state = G_WAITING;
 	switch_out();
 }
 
 void wump_ready(wump_g *g) {
 	g->state = G_RUNNABLE;
-	local_push(current, g);
+	local_push(current_machine()->p, g);
 }
 
 void wump_yield(void) {
-	if (current != NULL && current->cur != NULL) {
-		current->cur->state = G_RUNNABLE;
+	wump_g *g = wump_self();
+	if (g != NULL) {
+		g->state = G_RUNNABLE;
 		switch_out();
 	}
 }
 
 int wump_go(wump_fn fn, void *arg) {
 	if (wump_self() == NULL || fn == NULL) {
-		errno = EINVAL;
+		wump_set_errno(EINVAL);
 		return -1;
 	}
-	wump_g *g = new_task(current, fn, arg, WUMP_STACK_SIZE);
+	wump_worker *p = current_machine()->p;
+	wump_g *g = new_task(p, fn, arg, WUMP_STACK_SIZE);
 	if (g == NULL) {
 		return -1;
 	}
-	local_push(current, g);
+	local_push(p, g);
 	return 0;
 }
 
 int wump_nprocs(void) {
-	return current != NULL ? current->rt->nprocs : 0;
+	wump_machine *m = current_machine();
+	return m != NULL ? m->rt->nprocs : 0;
 }
 
 int wump_worker_id(void) {
-	return current != NULL ? current->id : -1;
+	wump_machine *m = current_machine();
+	return m != NULL && m->p != NULL ? m->p->id : -1;
+}
+
+int wump_syscall_enter(void) {
+	int saved_errno = wump_errno();
+	wump_machine *m = current_machine();
+	if (m != NULL && m->in_syscall) {
+		wump_set_errno(EBUSY);
+		return -1;
+	}
+	if (wump_self() == NULL) {
+		wump_set_errno(EINVAL);
+		return -1;
+	}
+	wump_runtime *rt = m->rt;
+	pthread_mutex_lock(&rt->mu);
+	if (atomic_load_explicit(&rt->stopping, memory_order_relaxed)) {
+		pthread_mutex_unlock(&rt->mu);
+		wump_set_errno(ECANCELED);
+		return -1;
+	}
+	wump_machine *replacement = rt->spare;
+	if (replacement != NULL) {
+		rt->spare = replacement->spare_next;
+		replacement->spare_next = NULL;
+		replacement->p = m->p;
+	} else {
+		replacement = new_machine_locked(rt, m->p);
+		if (replacement == NULL) {
+			int error = wump_errno();
+			pthread_mutex_unlock(&rt->mu);
+			wump_set_errno(error);
+			return -1;
+		}
+	}
+	m->cur->state = G_SYSCALL;
+	m->in_syscall = 1;
+	m->p = NULL;
+	rt->syscalls++;
+	pthread_cond_signal(&replacement->wake);
+	pthread_mutex_unlock(&rt->mu);
+	wump_set_errno(saved_errno);
+	return 0;
+}
+
+int wump_syscall_exit(void) {
+	wump_machine *m = current_machine();
+	if (m == NULL || !m->in_syscall) {
+		wump_set_errno(EINVAL);
+		return -1;
+	}
+	m->cur->state = G_RUNNABLE;
+	switch_out();
+	return 0;
+}
+
+int wump_blocking(wump_fn fn, void *arg) {
+	if (fn == NULL) {
+		wump_set_errno(EINVAL);
+		return -1;
+	}
+	if (wump_syscall_enter() != 0) {
+		return -1;
+	}
+	fn(arg);
+	return wump_syscall_exit();
 }
 
 int wump_run(wump_fn main_fn, void *arg, int nprocs) {
-	if (current != NULL) {
-		errno = EBUSY;
+	if (current_machine() != NULL) {
+		wump_set_errno(EBUSY);
 		return -1;
 	}
 	if (main_fn == NULL || nprocs < 0) {
-		errno = EINVAL;
+		wump_set_errno(EINVAL);
 		return -1;
 	}
 	if (nprocs == 0) {
 		long cpus = sysconf(_SC_NPROCESSORS_ONLN);
 		if (cpus <= 0 || cpus > INT_MAX) {
-			errno = EINVAL;
+			wump_set_errno(EINVAL);
 			return -1;
 		}
 		nprocs = (int)cpus;
 	}
 	wump_runtime rt = { .nprocs = nprocs };
+	wump_machine root = { .rt = &rt };
 	atomic_init(&rt.stopping, 0);
 	int error = pthread_mutex_init(&rt.mu, NULL);
 	if (error != 0) {
-		errno = error;
+		wump_set_errno(error);
 		return -1;
 	}
 	pthread_condattr_t attr;
 	error = pthread_condattr_init(&attr);
 	if (error != 0) {
 		pthread_mutex_destroy(&rt.mu);
-		errno = error;
+		wump_set_errno(error);
 		return -1;
 	}
 	error = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
@@ -556,9 +713,14 @@ int wump_run(wump_fn main_fn, void *arg, int nprocs) {
 	pthread_condattr_destroy(&attr);
 	if (error != 0) {
 		pthread_mutex_destroy(&rt.mu);
-		errno = error;
+		wump_set_errno(error);
 		return -1;
 	}
+	error = pthread_cond_init(&root.wake, NULL);
+	if (error != 0) {
+		goto destroy_runtime;
+	}
+	rt.machines = &root;
 	if ((size_t)nprocs > SIZE_MAX / sizeof(*rt.workers)) {
 		error = ENOMEM;
 		goto destroy_runtime;
@@ -570,54 +732,53 @@ int wump_run(wump_fn main_fn, void *arg, int nprocs) {
 	}
 	int initialized = 0;
 	for (int i = 0; i < nprocs; i++) {
-		wump_worker *w = &rt.workers[i];
-		*w = (wump_worker){ .rt = &rt, .id = i, .steal_start = (unsigned)i + 1 };
-		w->rng = ((uintptr_t)&rt ^ ((uint64_t)i + 1) * UINT64_C(0x9e3779b97f4a7c15)) | 1;
-		error = pthread_mutex_init(&w->q_mu, NULL);
+		wump_worker *p = &rt.workers[i];
+		*p = (wump_worker){ .rt = &rt, .id = i, .steal_start = (unsigned)i + 1 };
+		p->rng = ((uintptr_t)&rt ^ ((uint64_t)i + 1) * UINT64_C(0x9e3779b97f4a7c15)) | 1;
+		error = pthread_mutex_init(&p->q_mu, NULL);
 		if (error != 0) {
 			goto destroy_workers;
 		}
 		initialized++;
 	}
-	rt.main_g = new_task(&rt.workers[0], main_fn, arg, WUMP_MAIN_STACK_SIZE);
+	root.p = &rt.workers[0];
+	rt.main_g = new_task(root.p, main_fn, arg, WUMP_MAIN_STACK_SIZE);
 	if (rt.main_g == NULL) {
-		error = errno;
+		error = wump_errno();
 		goto destroy_workers;
 	}
 	global_push(&rt, rt.main_g);
-	int created = 0;
+	pthread_mutex_lock(&rt.mu);
 	for (int i = 1; i < nprocs; i++) {
-		error = pthread_create(&rt.workers[i].thread, NULL, worker_entry,
-			&rt.workers[i]);
-		if (error != 0) {
-			stop(&rt, error);
+		if (new_machine_locked(&rt, &rt.workers[i]) == NULL) {
+			error = wump_errno();
 			break;
 		}
-		created++;
+	}
+	pthread_mutex_unlock(&rt.mu);
+	if (error != 0) {
+		stop(&rt, error);
 	}
 	pthread_mutex_lock(&rt.mu);
 	rt.started = 1;
-	pthread_cond_broadcast(&rt.work);
+	for (wump_machine *m = rt.machines; m != NULL; m = m->next) {
+		pthread_cond_signal(&m->wake);
+	}
 	pthread_mutex_unlock(&rt.mu);
 	if (error == 0) {
-		schedule(&rt.workers[0]);
+		schedule(&root);
 	}
-	for (int i = 1; i <= created; i++) {
-		int joined = pthread_join(rt.workers[i].thread, NULL);
-		/* With owned, joinable threads this signals an internal bug. */
-		if (joined != 0) {
+	/* Stop prevents new handoffs, so this list is stable. Native calls
+	 * must return before their threads/stacks can be reclaimed. */
+	for (wump_machine *m = rt.machines; m != NULL; m = m->next) {
+		if (m != &root && pthread_join(m->thread, NULL) != 0) {
 			abort();
 		}
 	}
 	error = rt.error;
 
 destroy_workers:
-	/* Stop external wakeups before touching parked stacks. The poller
-	 * stays allocated until cancellation hooks detach all I/O waits. */
 	wump_poller_stop(rt.poller);
-	/* No worker can touch a channel or a coroutine now. Unlink parked
-	 * stack-resident waiters before unmapping their stacks, so channels
-	 * owned by the caller remain reusable after early exit/deadlock. */
 	for (wump_g *g = rt.all; g != NULL; g = g->all_next) {
 		if (g->cancel_fn != NULL) {
 			g->cancel_fn(g->cancel_arg);
@@ -639,11 +800,19 @@ destroy_workers:
 	}
 	free(rt.workers);
 destroy_runtime:
+	while (rt.machines != NULL) {
+		wump_machine *m = rt.machines;
+		rt.machines = m->next;
+		pthread_cond_destroy(&m->wake);
+		if (m != &root) {
+			free(m);
+		}
+	}
 	free(rt.timers);
 	pthread_cond_destroy(&rt.work);
 	pthread_mutex_destroy(&rt.mu);
 	if (error != 0) {
-		errno = error;
+		wump_set_errno(error);
 		return -1;
 	}
 	return 0;

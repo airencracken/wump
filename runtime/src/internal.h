@@ -29,7 +29,7 @@
 #include <valgrind/valgrind.h>
 #endif
 
-enum wump_gstate { G_RUNNABLE, G_RUNNING, G_WAITING, G_DEAD };
+enum wump_gstate { G_RUNNABLE, G_RUNNING, G_WAITING, G_DEAD, G_SYSCALL };
 
 /* A coroutine lives at the top of its stack mapping. Queue/cache links
  * and the runtime's mapping registry must remain independent. */
@@ -71,22 +71,15 @@ typedef struct wump_timer {
 	size_t index;
 } wump_timer;
 
+/* P: one M owns the slot and its caches; other Ms may steal under q_mu. */
 typedef struct wump_worker {
 	wump_runtime *rt;
 	int id;
-	pthread_t thread;
-	void *sched_sp;
-	wump_g *cur;
 	unsigned tick;
 	unsigned steal_start;
 	uint64_t rng;
-	void (*park_fn)(void *);
-	void *park_arg;
 	wump_g *gcache;
 	int ngcache;
-#ifdef WUMP_TSAN
-	void *tsan_sched_fiber;
-#endif
 	_Alignas(WUMP_CACHELINE) pthread_mutex_t q_mu;
 	unsigned qhead, qtail;
 	wump_g *q[WUMP_LOCALQ];

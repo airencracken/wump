@@ -211,6 +211,44 @@ func number(value string) int {
 	return n
 }
 
+func blockingBench() {
+	var fds [2]int
+	if err := syscall.Pipe(fds[:]); err != nil {
+		panic(err)
+	}
+	defer syscall.Close(fds[0])
+	defer syscall.Close(fds[1])
+	iterations := (count + 999) / 1000
+	requests, done := make(chan struct{}), make(chan struct{})
+	started := time.Now()
+	go func() {
+		for i := 0; i < iterations; i++ {
+			<-requests
+			runtime.Gosched()
+			if n, err := syscall.Write(fds[1], []byte{'b'}); err != nil || n != 1 {
+				panic("blocking pipe write failed")
+			}
+		}
+		done <- struct{}{}
+	}()
+	var value [1]byte
+	for i := 0; i < iterations; i++ {
+		requests <- struct{}{}
+		for {
+			n, err := syscall.Read(fds[0], value[:])
+			if err == syscall.EINTR {
+				continue
+			}
+			if err != nil || n != 1 || value[0] != 'b' {
+				panic("blocking pipe read failed")
+			}
+			break
+		}
+	}
+	<-done
+	report("blocking", uint64(iterations), started)
+}
+
 func main() {
 	if len(os.Args) > 3 {
 		panic("usage: runtime [iterations [workers]]")
@@ -224,7 +262,7 @@ func main() {
 	}
 	runtime.GOMAXPROCS(workers)
 	fmt.Println("implementation,workload,workers,operations,seconds,ns_per_op")
-	for _, benchmark := range []func(){spawnBench, yieldBench, pingBench, mpmcBench, selectBench, sleepBench, echoBench, cpuBench} {
+	for _, benchmark := range []func(){spawnBench, yieldBench, pingBench, mpmcBench, selectBench, sleepBench, echoBench, blockingBench, cpuBench} {
 		benchmark()
 	}
 }

@@ -12,6 +12,9 @@ Implemented:
   a protected guard page below each, and a bounded cache of retired stacks.
 - Parallel workers with local FIFO queues, global overflow, half-queue work
   stealing, periodic global-queue polling, and condition-variable sleeping.
+- Execution slots separated from OS threads, with explicit blocking-call
+  handoff, replacement-thread reuse, and slot reacquisition before a task
+  returns to normal runtime code.
 - Buffered and unbuffered channels with byte-copy values, FIFO waiters,
   close/drain semantics, and wakeups after the parked task's stack is saved.
 - Channel selection with randomized polling, duplicate/disabled cases,
@@ -26,8 +29,7 @@ Implemented:
 - GCC and Clang builds, concurrency and failure-injection tests, sanitizer
   checks, and equivalent C/Go benchmarks.
 
-The next parts of milestone 0 are syscall handoff, sysmon, and
-scheduling/performance work. Perl
+The next parts of milestone 0 are sysmon and scheduling/performance work. Perl
 integration and deployment tooling remain later milestones. The design's
 million-task and within-2x-of-Go targets have not been achieved or validated.
 
@@ -42,6 +44,7 @@ make
 ./build/hello
 ./build/select
 ./build/echo
+./build/blocking
 make test
 make stress
 make ubsan
@@ -50,8 +53,8 @@ make memcheck # optional: requires Valgrind and its development headers
 make BUILD=build/clang CC=clang test
 ```
 
-`make` produces `build/libwump.a` and channel, timeout, and socketpair echo
-examples. The public API is
+`make` produces `build/libwump.a` and channel, timeout, socketpair echo, and
+blocking pipe examples. The public API is
 [runtime/include/wump.h](runtime/include/wump.h).
 
 ```c
@@ -86,9 +89,10 @@ int main(void) {
 ```
 
 Compile a caller with `cc -std=c11 -pthread -Iruntime/include program.c
-build/libwump.a -o program`. `wump_run` uses the requested number of workers;
+build/libwump.a -o program`. `wump_run` uses the requested number of execution slots;
 0 selects the online CPU count. The caller participates as worker 0, and
-its main task may be stolen and run by another worker. `WUMPPROCS` is not
+its main task may be stolen and run by another worker. Slot IDs are stable
+indices, not OS thread IDs. `WUMPPROCS` is not
 implemented yet.
 
 ## Channel selection and timers
@@ -135,6 +139,68 @@ workers use a
 Timers register on the scheduler stack after the task context is saved.
 Channel and timer wakeups compete through the same atomic winner; the
 resumed task removes losing waiters and cancels its timer before returning.
+
+## Blocking native calls
+
+Use `wump_blocking(fn, arg)` around a known blocking C callback, or bracket
+a native call with `wump_syscall_enter()` and `wump_syscall_exit()`. Check
+enter's result before making the call: replacement allocation, condition
+initialization, or thread creation can fail. Failure leaves the task on its
+original execution slot and does not invoke the callback.
+
+```c
+if (wump_syscall_enter() != 0) {
+	/* Report setup failure without making the blocking call. */
+	return;
+}
+ssize_t result = read(fd, buffer, size);
+/* Native errno remains on this OS thread until exit saves it. */
+if (wump_syscall_exit() != 0) {
+	/* Invalid/unmatched exit; correctly paired exit succeeds. */
+	return;
+}
+/* Back on an execution slot; the task may have moved OS threads.
+ * Inspect result and read errno via a TLS-safe accessor on failure. */
+```
+
+The callback/marked call stays on the caller's coroutine stack and OS
+thread. Enter hands its execution slot (P) to an idle or newly created OS
+thread (M), which runs that slot's existing queue and caches. The blocked
+thread keeps the task until exit; exit saves its context on the scheduler
+stack and enqueues it before releasing the native-call liveness count.
+Normal code resumes only after a thread with a P dispatches it, preserving
+the `wump_nprocs` execution limit. Native calls themselves can overlap beyond
+that limit. This implements the explicit known-blocking path described by
+[Go's syscall handoff](https://go.dev/src/runtime/proc.go), without automatic
+sysmon detection yet.
+
+`wump_blocking` returns 0 when the callback was invoked and returned through
+a valid exit, or -1 on setup/API failure. The callback reports its own
+result through `arg`; its errno is preserved across exit. Both markers also
+preserve errno on success, along with the normal task context and floating
+point state. [examples/blocking.c](examples/blocking.c) demonstrates a
+blocking pipe read whose writer and timer progress with just one slot.
+
+During the marked region `wump_worker_id()` is -1 and `wump_nprocs()` still
+reports the configured slot count. Calls requiring a running task
+(spawn, channel send/receive/close, selection, sleep, and I/O) fail with
+EINVAL; yield does nothing. Allocation/free and queries valid outside a
+runtime remain valid. Nested enter reports EBUSY; unmatched exit reports
+EINVAL. Returning from a task without its matching exit reports EPROTO.
+The convenience callback must return normally and must not call the
+markers itself, schedule runtime work, call pthread_exit, or longjmp out.
+Release native thread-owned locks before exit, which can migrate the task.
+
+Idle native threads are reused until `wump_run` returns. The OS thread count
+can therefore grow with the peak number of simultaneous blocking calls,
+in addition to execution-slot threads and the optional netpoller. Shutdown
+rejects new handoffs with ECANCELED, waits for entered native calls to
+return, joins all runtime threads, and only then reclaims stacks. Native
+calls cannot be forcibly canceled or bounded by a wump timer; use a native
+timeout where needed. Task code after exit may be abandoned during shutdown,
+so clean up non-runtime-owned resources inside the callback or in its owner
+outside the run. Fork, signal/Perl/XS callback reentry, unmarked blocking-call
+detection, and deferred syscall retaking remain future work.
 
 ## Socket and pipe I/O
 
@@ -184,7 +250,7 @@ cannot be closed/reused between lookup and the syscall. Linux
 
 This is an initial implementation: the poller uses a shared mutex and a
 separate thread, and the echo benchmark exposes a large latency gap versus
-Go. Generic blocking syscall handoff, DNS, PerlIO integration, fork/signal
+Go. Automatic DNS/regular-file wrappers, PerlIO integration, fork/signal
 integration, and mixing I/O cases directly into `wump_sel` remain future
 work. I/O calls currently take their own timeout argument.
 
@@ -192,9 +258,10 @@ work. I/O calls currently take their own timeout argument.
 
 Scheduling is cooperative. Tasks must return, call `wump_yield`, or park in
 a channel operation, sleep, or I/O wait to let their worker run something
-else. An operation
-that succeeds immediately need not yield. Native blocking calls block the
-worker; a task that never yields can delay shutdown indefinitely.
+else, or enter a marked native call. An operation
+that succeeds immediately need not yield. Unmarked native blocking calls
+still occupy their execution slot; a task that never yields or a native
+call that never returns can delay shutdown indefinitely.
 
 Tasks may migrate. Do not retain native TLS addresses, including cached
 `&errno` pointers, or hold native thread-owned locks across scheduling
@@ -220,9 +287,10 @@ supported; shutdown removes abandoned waiters and timers before unmapping
 their stacks. Shutdown does not close or free channels or run abandoned
 tasks' cleanup code.
 
-All parked tasks with no runnable work, pending timers, or active I/O waits
-produce `wump_run == -1` and `errno == EDEADLK`. An open handle without an
-active wait does not prevent deadlock reporting. Timers cannot interrupt a running task
+All parked tasks with no runnable work, pending timers, active I/O waits,
+or entered native calls produce `wump_run == -1` and `errno == EDEADLK`.
+An open handle without an active wait does not prevent deadlock reporting.
+Timers cannot interrupt a running task
 that does not yield. Invalid API calls
 report EINVAL; nested runs report EBUSY; send/close on an already closed
 channel report EPIPE. A receive on a closed, drained channel returns 0 and
@@ -249,7 +317,7 @@ outputs, and abandoned selections. The I/O suite covers external pipe
 wakeups while workers are idle, simultaneous read/write waits, parallel
 socketpair echo, timeout/close races, descriptor reuse, EOF/half-close,
 loopback TCP, runtime ownership, and leak-free shutdown. `make stress`
-repeats all three behavior suites ten
+repeats all four behavior suites ten
 times, including timeout races at 1/4/16 workers.
 
 The failure suite injects allocation, mutex/condition initialization,
@@ -266,6 +334,15 @@ and close EINTR. It checks fd counts and rollback, preserves libc's
 fortified entry points in the fault harness, and deliberately delays an
 old epoll event until after descriptor/slot reuse to test generation checks.
 These syscall fixtures complement the real network integration tests.
+
+The handoff suite checks one-slot pipe progress, callback stack/thread
+identity, timer/I/O progress during a native call, overlapping native calls,
+bounded normal execution after exit, errno/FP/stack preservation, unbalanced
+markers, shutdown, and independent runtimes. Its fault suite checks atomic
+replacement-setup failure, callback suppression, deadlock detection after
+failed enter, thread/condition cleanup, idle thread reuse, and rejection of
+new handoffs once shutdown has published its stop flag. Startup failure
+coverage includes partially constructed machine lists.
 
 `make ubsan` fails immediately on undefined behavior. `make tsan` uses the
 [ThreadSanitizer fiber API](https://github.com/llvm/llvm-project/blob/main/compiler-rt/include/sanitizer/tsan_interface.h)
@@ -306,7 +383,8 @@ make bench-compare ITERATIONS=1000000
 
 CSV output reports spawn/completion, voluntary yield, unbuffered round trips,
 a buffered 4-producer/4-consumer channel, ready two-channel selection,
-one-microsecond sleeps, socketpair echo, and four compute tasks at 1 and 4
+one-microsecond sleeps, socketpair echo, blocking pipe handoff, and four
+compute tasks at 1 and 4
 workers. Both implementations check message counts/checksums and use the
 same work sizes and buffer capacities. Spawn uses batches of at most 1024
 tasks, so it does not measure a million simultaneously live tasks. The
@@ -318,6 +396,12 @@ is one sleep, including scheduler and OS wakeup latency.
 Echo runs ceil(ITERATIONS / 10) round trips of an eight-byte sequence value
 over a nonblocking Unix socketpair. Both implementations verify replies;
 Go uses pollable `os.File` handles. Connection/poller setup is excluded.
+The `blocking` case runs ceil(ITERATIONS / 1000) native blocking pipe reads,
+with channel requests and a yielding writer. C uses explicit handoff and
+Go uses raw `syscall.Read`; the timing includes the native calls and
+scheduling, including C's first replacement setup. The runtimes use
+different handoff policies, so these figures are not a general comparison
+of syscall cost.
 
 The Go comparison builds locally with networking and telemetry disabled,
 and keeps its build cache under `build/`. Treat measurements as local
@@ -330,5 +414,8 @@ Linux amd64). It shows compute scaling while exposing substantial remaining
 spawn overhead. [select-timers.csv](bench/select-timers.csv) records the
 expanded suite on 2026-10-24 with the same toolchain, including selection
 and sleep. [netpoller.csv](bench/netpoller.csv) adds the Unix socketpair echo
-baseline; it does not measure TCP networking. The machine reports 16 online CPUs; these figures do not
-establish behavior on other hardware or long-running workloads.
+baseline; it does not measure TCP networking.
+[syscall-handoff.csv](bench/syscall-handoff.csv) adds the blocking pipe case
+on 2026-10-25 with the same toolchain. The machine reports 16 online CPUs;
+these figures do not establish behavior on other hardware or long-running
+workloads.

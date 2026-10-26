@@ -216,6 +216,8 @@ int main(void) {
 	} cases[] = {
 		{ MUTEX, 1, ENOMEM }, { MUTEX, 2, ENOMEM }, { MUTEX, 4, ENOMEM },
 		{ COND, 1, ENOMEM }, { ALIGNED, 1, ENOMEM }, { MAP, 1, ENOMEM },
+		{ COND, 2, ENOMEM }, { COND, 3, ENOMEM }, { COND, 4, ENOMEM },
+		{ CALLOC, 1, ENOMEM }, { CALLOC, 2, ENOMEM },
 		{ ATTR, 1, ENOMEM }, { CLOCK, 1, EINVAL },
 		{ PROTECT, 1, EACCES }, { THREAD, 1, EAGAIN }, { THREAD, 2, EAGAIN }
 	};

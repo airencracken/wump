@@ -11,9 +11,10 @@ RUNTIME = stack sched chan io error
 OBJECTS = $(addprefix $(BUILD)/,$(addsuffix .o,$(RUNTIME))) $(BUILD)/ctx_x86_64.o
 WRAPPED = pthread_mutex_init pthread_cond_init pthread_condattr_init pthread_condattr_setclock posix_memalign mmap munmap mprotect pthread_create pthread_join malloc calloc realloc
 IO_WRAPPED = calloc realloc pthread_mutex_init pthread_create epoll_create1 eventfd epoll_ctl epoll_wait fcntl poll __poll_chk read __read_chk write close accept4 connect getsockopt getpeername
+SYSCALL_WRAPPED = calloc pthread_cond_init pthread_cond_destroy pthread_cond_broadcast pthread_create pthread_join
 
 .PHONY: all test stress ubsan tsan tsan-control memcheck bench bench-compare clean
-all: $(BUILD)/libwump.a $(BUILD)/hello $(BUILD)/select $(BUILD)/echo
+all: $(BUILD)/libwump.a $(BUILD)/hello $(BUILD)/select $(BUILD)/echo $(BUILD)/blocking
 
 $(BUILD):
 	mkdir -p $@
@@ -36,6 +37,9 @@ $(BUILD)/select: examples/select.c $(BUILD)/libwump.a
 $(BUILD)/echo: examples/echo.c $(BUILD)/libwump.a
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) -o $@
 
+$(BUILD)/blocking: examples/blocking.c $(BUILD)/libwump.a
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) -o $@
+
 $(BUILD)/test_runtime: tests/test_runtime.c tests/errno_probe.c tests/context_probe.S $(BUILD)/libwump.a
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_runtime.c tests/errno_probe.c tests/context_probe.S $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) -o $@
 
@@ -50,19 +54,28 @@ $(BUILD)/test_select: tests/test_select.c tests/errno_probe.c $(BUILD)/libwump.a
 $(BUILD)/test_io: tests/test_io.c tests/errno_probe.c $(BUILD)/libwump.a
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_io.c tests/errno_probe.c $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) -o $@
 
+$(BUILD)/test_syscall: tests/test_syscall.c tests/errno_probe.c $(BUILD)/libwump.a
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_syscall.c tests/errno_probe.c $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) -o $@
+
+$(BUILD)/test_syscall_failures: tests/test_syscall_failures.c tests/errno_probe.c $(BUILD)/libwump.a
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_syscall_failures.c tests/errno_probe.c $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) $(addprefix -Wl$(comma)--wrap=,$(SYSCALL_WRAPPED)) -o $@
+
 $(BUILD)/test_io_failures: tests/test_io_failures.c tests/errno_probe.c $(BUILD)/libwump.a
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_io_failures.c tests/errno_probe.c $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) $(addprefix -Wl$(comma)--wrap=,$(IO_WRAPPED)) -o $@
 
-test: $(BUILD)/test_runtime $(BUILD)/test_select $(BUILD)/test_io $(BUILD)/test_failures $(BUILD)/test_io_failures
+test: $(BUILD)/test_runtime $(BUILD)/test_select $(BUILD)/test_io $(BUILD)/test_syscall $(BUILD)/test_failures $(BUILD)/test_io_failures $(BUILD)/test_syscall_failures
 	timeout 60s $(BUILD)/test_runtime
 	timeout 60s $(BUILD)/test_select
+	timeout 60s $(BUILD)/test_syscall
+	timeout 90s $(BUILD)/test_syscall_failures
 	timeout 60s $(BUILD)/test_io
 	timeout 30s $(BUILD)/test_failures
 	timeout 90s $(BUILD)/test_io_failures
 
-stress: $(BUILD)/test_runtime $(BUILD)/test_select $(BUILD)/test_io
+stress: $(BUILD)/test_runtime $(BUILD)/test_select $(BUILD)/test_io $(BUILD)/test_syscall
 	timeout 180s $(BUILD)/test_runtime --stress
 	timeout 180s $(BUILD)/test_select --stress
+	timeout 180s $(BUILD)/test_syscall --stress
 	timeout 180s $(BUILD)/test_io --stress
 
 ubsan:
@@ -72,9 +85,11 @@ tsan:
 	$(MAKE) BUILD=build/tsan CFLAGS='$(CFLAGS) -fsanitize=thread' LDFLAGS='$(LDFLAGS) -fsanitize=thread' test tsan-control
 
 memcheck:
-	$(MAKE) BUILD=build/valgrind CPPFLAGS='$(CPPFLAGS) -DWUMP_VALGRIND' build/valgrind/test_runtime build/valgrind/test_select build/valgrind/test_io build/valgrind/test_failures build/valgrind/test_io_failures
+	$(MAKE) BUILD=build/valgrind CPPFLAGS='$(CPPFLAGS) -DWUMP_VALGRIND' build/valgrind/test_runtime build/valgrind/test_select build/valgrind/test_io build/valgrind/test_syscall build/valgrind/test_syscall_failures build/valgrind/test_failures build/valgrind/test_io_failures
 	timeout 300s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --log-file=build/valgrind/runtime.%p.log build/valgrind/test_runtime
 	timeout 300s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --log-file=build/valgrind/select.%p.log build/valgrind/test_select
+	timeout 300s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --log-file=build/valgrind/syscall.%p.log build/valgrind/test_syscall
+	timeout 180s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --log-file=build/valgrind/syscall-failures.%p.log build/valgrind/test_syscall_failures
 	timeout 300s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --log-file=build/valgrind/io.%p.log build/valgrind/test_io
 	timeout 120s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --log-file=build/valgrind/failures.%p.log build/valgrind/test_failures
 	timeout 180s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --log-file=build/valgrind/io-failures.%p.log build/valgrind/test_io_failures

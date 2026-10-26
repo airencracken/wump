@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "wump.h"
 
@@ -282,6 +283,52 @@ static int number(const char *value) {
 	return (int)n;
 }
 
+typedef struct blocking_arg {
+	int fd[2], iterations;
+	wump_chan *requests, *done;
+	ssize_t result;
+	char byte;
+} blocking_arg;
+
+static void native_pipe_read(void *arg) {
+	blocking_arg *ctx = arg;
+	do {
+		ctx->result = read(ctx->fd[0], &ctx->byte, 1);
+	} while (ctx->result < 0 && errno == EINTR);
+}
+
+static void blocking_writer(void *arg) {
+	blocking_arg *ctx = arg;
+	for (int i = 0; i < ctx->iterations; i++) {
+		REQUIRE(wump_chan_recv(ctx->requests, NULL) == 1);
+		/* Give the reader a chance to enter its native blocking call. */
+		wump_yield();
+		REQUIRE(write(ctx->fd[1], "b", 1) == 1);
+	}
+	REQUIRE(wump_chan_send(ctx->done, NULL) == 0);
+}
+
+static void blocking_bench(void *arg) {
+	(void)arg;
+	blocking_arg ctx = {
+		.iterations = (count + 999) / 1000,
+		.requests = wump_chan_make(0, 0), .done = wump_chan_make(0, 0)
+	};
+	REQUIRE(ctx.requests != NULL && ctx.done != NULL && pipe(ctx.fd) == 0);
+	double started = now();
+	REQUIRE(wump_go(blocking_writer, &ctx) == 0);
+	for (int i = 0; i < ctx.iterations; i++) {
+		REQUIRE(wump_chan_send(ctx.requests, NULL) == 0);
+		REQUIRE(wump_blocking(native_pipe_read, &ctx) == 0);
+		REQUIRE(ctx.result == 1 && ctx.byte == 'b');
+	}
+	REQUIRE(wump_chan_recv(ctx.done, NULL) == 1);
+	report("blocking", (uint64_t)ctx.iterations, started);
+	REQUIRE(close(ctx.fd[0]) == 0 && close(ctx.fd[1]) == 0);
+	wump_chan_free(ctx.requests);
+	wump_chan_free(ctx.done);
+}
+
 int main(int argc, char **argv) {
 	if (argc > 3) {
 		fprintf(stderr, "usage: %s [iterations [workers]]\n", argv[0]);
@@ -291,7 +338,7 @@ int main(int argc, char **argv) {
 		count = number(argv[1]);
 	}
 	int workers = argc > 2 ? number(argv[2]) : 1;
-	wump_fn cases[] = { spawn_bench, yield_bench, ping_bench, mpmc_bench, select_bench, sleep_bench, echo_bench, cpu_bench };
+	wump_fn cases[] = { spawn_bench, yield_bench, ping_bench, mpmc_bench, select_bench, sleep_bench, echo_bench, blocking_bench, cpu_bench };
 	puts("implementation,workload,workers,operations,seconds,ns_per_op");
 	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
 		REQUIRE(wump_run(cases[i], NULL, workers) == 0);

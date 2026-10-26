@@ -13,11 +13,12 @@ extern "C" {
 
 typedef void (*wump_fn)(void *arg);
 
-/* Start the runtime with `nprocs` worker threads (0 = number of CPUs),
- * run `main_fn(arg)` as a coroutine, and return once it returns.
- * The calling thread becomes worker 0. Coroutines still alive when
+/* Start the runtime with `nprocs` execution slots (0 = number of CPUs),
+ * initially one OS thread per slot, and run main_fn(arg) as a coroutine.
+ * The calling thread initially owns slot 0. Coroutines still alive when
  * main_fn returns are abandoned, as in Go. Shutdown is cooperative: each
- * running task must return, yield, or park in a channel/selection/sleep.
+ * running task must return, yield, or park in a channel/selection/sleep/I/O.
+ * Outstanding entered native calls must return before cleanup completes.
  * Returns 0, or -1 with errno set (including EDEADLK when all tasks park).
  * Nested runs on a worker fail with EBUSY; independent callers may run
  * separate runtimes, but must not share channels between active runtimes. */
@@ -31,10 +32,34 @@ int wump_go(wump_fn fn, void *arg);
  * mutexes across scheduling points. A no-op outside a runtime. */
 void wump_yield(void);
 
-/* Number of worker threads (0 outside a runtime).
- * Index of the worker running the caller (-1 outside a runtime). */
+/* Number of execution slots (0 outside a runtime).
+ * Current slot index (-1 outside a runtime or during a native call).
+ * A slot can move between OS threads after syscall handoff. */
 int wump_nprocs(void);
 int wump_worker_id(void);
+
+/* Bracket a known blocking native call. Enter hands this task's execution
+ * slot to another OS thread; the native call continues on the same thread
+ * and stack. Exit reschedules the task, possibly on another thread/slot.
+ * Both return 0 on success, preserving errno; failures return -1 with
+ * errno set. Failed enter retains the slot: do not block after failure.
+ * Enter may fail on replacement-thread setup, EBUSY for nesting, or
+ * ECANCELED during shutdown. Invalid context/unmatched exit is EINVAL.
+ * Between enter/exit, worker_id is -1. Calls requiring a running task
+ * (spawn/send/recv/selection/sleep/I/O) are invalid; yield is a no-op.
+ * Outside-runtime-safe allocation/free and metadata queries remain valid.
+ * Release native thread-owned locks before exit. Returning from a task
+ * without exit terminates the runtime with EPROTO. Shutdown waits for
+ * outstanding native calls to return; they cannot be forcibly canceled. */
+int wump_syscall_enter(void);
+int wump_syscall_exit(void);
+
+/* Bracket a normally returning native callback. The callback runs on the
+ * caller's OS thread/stack and can report results through arg and errno.
+ * It must not invoke scheduling APIs, exit/enter markers, pthread_exit,
+ * or longjmp out of the callback. Returns 0 or -1; setup failure does not
+ * invoke fn. NULL fn is EINVAL. */
+int wump_blocking(wump_fn fn, void *arg);
 
 /* Channels. Elements are fixed-size and copied by value.
  * cap == 0 makes an unbuffered (rendezvous) channel.
