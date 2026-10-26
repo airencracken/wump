@@ -244,6 +244,15 @@ other SVs that task owns.
   turned off (§5.4), deferred freeing and write-conflict detection
   (§5.3). **No implicit locks.**
 
+The current prototype establishes a conservative atomic SV-head counter
+baseline for all core SVs, plus scoped `lock` inside acts. It does not yet
+distinguish owned/shared counters or implement escape barriers, no-cache reads,
+or deferred reclamation. Those remain prerequisites for multi-core Perl;
+the interpreter bridge still runs with one execution slot. Native counter
+stress is deliberately restricted to a rooted SV without concurrent allocation,
+data mutation, or final destruction. C++ XS standard refcount helpers use atomics;
+direct legacy lvalue access remains subject to XS serialization.
+
 An SV becomes shared when it escapes. The **escape barrier** runs at:
 1. `act` closure creation: captured lexicals escape.
 2. Storing a reference into a shared SV/AV/HV: the referent graph

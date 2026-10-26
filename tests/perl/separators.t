@@ -101,8 +101,7 @@ is_deeply($modes[2], [3, ['abc', 'def', 'g']], 'scalar-reference input separator
 my ($unicode, $unlocalized);
 my $unicode_text = "a\x{3a9}b\x{3a9}";
 utf8::encode($unicode_text);
-# Loading an encoding can localize signal hooks, which are still unsupported
-# inside acts. Initialize that layer here; exercise decoding inside the act.
+# Initialize this layer before the run; hooks.t also exercises loading inside.
 open my $unicode_fh, '<:encoding(UTF-8)', \$unicode_text or die "encoded input: $!";
 run {
 	{

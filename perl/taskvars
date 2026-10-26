@@ -47,3 +47,5 @@ replgv
 eval_root
 eval_start
 curcopdb
+in_diehook
+in_warnhook

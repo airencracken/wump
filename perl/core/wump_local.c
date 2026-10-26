@@ -4,6 +4,7 @@ typedef struct wump_local {
 	SV *value;
 	char kind;
 	char magic;
+	UV sequence;
 	bool pocket;
 	struct wump_local *next;
 } wump_local;
@@ -65,6 +66,7 @@ static wump_local *wump_local_add(pTHX_ struct wump_perl_task *task,
 	GvGP_set(slot->anchor, gp_ref(GvGP(gv)));
 	slot->kind = kind;
 	slot->value = value;
+	slot->sequence = ++task->next_binding;
 	slot->next = task->locals;
 	task->locals = slot;
 	return slot;
@@ -84,6 +86,18 @@ static void wump_local_check(pTHX_ SV *value, char kind) {
 	if (unsafe) {
 		croak("Wump: magic variable localization in a task is not supported yet");
 	}
+}
+
+void Perl_wump_save_capture(pTHX_ GV *gv) {
+	/* Internal save_re_context isolates numeric capture cells. Their magic
+	 * reads the task's current match; it must remain attached in callbacks.
+	 * These transient bindings are excluded from spawn snapshots. */
+	SV *old = GvSV(gv);
+	SV *value = newSV(0);
+	if (SvTYPE(old) >= SVt_PVMG && SvMAGIC(old)) mg_localize(old, value, FALSE);
+	wump_local *slot = wump_local_add(aTHX_ PL_wump_task, gv, 's', value);
+	slot->pocket = TRUE;
+	SAVEDESTRUCTOR_X(wump_local_pop, slot);
 }
 
 void Perl_wump_save_defsv(pTHX) {
@@ -133,6 +147,8 @@ static void wump_local_snapshot(pTHX_ struct wump_perl_task *task) {
 		else copy = (SV *)Perl_wump_snapshot_av(aTHX_ (AV *)slot->value);
 		wump_local *inherited = wump_local_add(aTHX_ task, slot->origin, slot->kind, copy);
 		inherited->magic = slot->magic;
+		inherited->sequence = slot->sequence;
+		if (task->next_binding < slot->sequence) task->next_binding = slot->sequence;
 	}
 	Perl_wump_elements_snapshot(aTHX_ task);
 }

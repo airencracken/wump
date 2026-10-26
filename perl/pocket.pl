@@ -41,11 +41,6 @@ C
 		"            mderef = newUNOP_AUX(OP_MULTIDEREF, 0, NULL, arg_buf);\n            mderef->op_wump_pocket = index_skip == -1 ? o->op_wump_pocket : 0;");
 	edit('peep.c', '                    op_null(o->op_next);' . "\n" . '                    o->op_private |= o->op_next->op_private & (OPpLVAL_INTRO',
 		'                    op_null(o->op_next);' . "\n" . '                    o->op_wump_pocket = o->op_next->op_wump_pocket;' . "\n" . '                    o->op_private |= o->op_next->op_private & (OPpLVAL_INTRO');
-	for my $spec ([scalar => 'GV *gv'], [ary => 'GV *gv'], [hash => 'GV *gv'], [gp => 'GV *gv, I32 empty']) {
-		my ($name, $args) = @$spec;
-		my $start = "Perl_save_$name(pTHX_ $args)\n{";
-		edit('scope.c', $start, "$start\n    if (!PL_wump_task && PL_op && PL_op->op_wump_pocket)\n        croak(\"Wump: pocket requires a running task\");");
-	}
 	edit('ext/B/B.xs', "MODULE = B\tPACKAGE = B::OP\n", <<'XS');
 MODULE = B	PACKAGE = B::OP
 

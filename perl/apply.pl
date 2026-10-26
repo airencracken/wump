@@ -51,6 +51,7 @@ $header .= <<'C';
 	struct wump_local *locals;
 	struct wump_element *elements;
 	struct wump_element_iter *element_iters;
+	UV next_binding;
 	UV id;
 	int initialized, finished;
 };
@@ -92,6 +93,14 @@ SV **Perl_wump_magic_owned(pTHX_ SV *value, char kind);
 SV **Perl_wump_magic_target(pTHX_ SV *value, char kind);
 SV **Perl_wump_magic_cache(pTHX_ char kind);
 void Perl_wump_magic_scope(pTHX_ char kind);
+SV **Perl_wump_hook_cache(pTHX_ char kind);
+char Perl_wump_hook_kind(pTHX_ HV *hv, SV *key);
+U8 *Perl_wump_warning_owned(pTHX_ SV *value);
+U8 *Perl_wump_warning_target(pTHX_ SV *value);
+U8 *Perl_wump_warning_cache(pTHX);
+void Perl_wump_lock(pTHX_ SV *value);
+void Perl_wump_save_capture(pTHX_ GV *gv);
+void Perl_wump_hook_store(pTHX_ SV *value, char kind);
 C
 write_file("$source/wump_task_types.h", $header);
 edit('perl.h', "struct interpreter {\n#  include \"intrpvar.h\"\n};",
@@ -107,6 +116,12 @@ my $magic_cache_macros = <<'C';
 #define PL_rs (*(PL_wump_task ? Perl_wump_magic_cache(aTHX_ '/') : &aTHX->Irs))
 #undef PL_ors_sv
 #define PL_ors_sv (*(PL_wump_task ? Perl_wump_magic_cache(aTHX_ '\\') : &aTHX->Iors_sv))
+#undef PL_diehook
+#define PL_diehook (*(PL_wump_task ? Perl_wump_hook_cache(aTHX_ 'D') : &aTHX->Idiehook))
+#undef PL_warnhook
+#define PL_warnhook (*(PL_wump_task ? Perl_wump_hook_cache(aTHX_ 'W') : &aTHX->Iwarnhook))
+#undef PL_dowarn
+#define PL_dowarn (*(PL_wump_task ? Perl_wump_warning_cache(aTHX) : &aTHX->Idowarn))
 C
 $vars =~ s/#endif\n\z/$magic_cache_macros#endif\n/;
 write_file("$source/wump_task_embed.h", $vars);
@@ -137,13 +152,21 @@ $gv =~ s/\QGvGP(gv_HVadd(gv))->gp_hv\E/GvHV(gv_HVadd(gv))/g;
 $gv =~ s/\Q&(GvGP(gv_SVadd(gv))->gp_sv)\E/\&GvSV(gv_SVadd(gv))/g;
 $gv =~ s/\QGvGP(gv_AVadd(gv))->gp_av\E/GvAV(gv_AVadd(gv))/g;
 write_file("$source/gv.h", $gv);
-for my $spec ([scalar => 'SV', 's'], [ary => 'AV', 'a'], [hash => 'HV', 'h']) {
+# Normalize earlier generated prologues before applying the combined gate.
+# Keeping the gate and task redirection together makes reapplication stable.
+my $scope = read_file("$source/scope.c");
+my $gate = "\n    if (!PL_wump_task && PL_op && PL_op->op_wump_pocket)\n        croak(\"Wump: pocket requires a running task\");";
+for my $spec ([scalar => 'SV', 's'], [ary => 'AV', 'a'], [hash => 'HV', 'h'], [gp => '', '']) {
 	my ($name, $type, $kind) = @$spec;
-	my $start = "Perl_save_$name(pTHX_ GV *gv)\n{";
-	edit('scope.c', $start, "$start\n    if (PL_wump_task) return ($type *)Perl_wump_localize(aTHX_ gv, '$kind');");
+	my $args = $kind ? 'GV *gv' : 'GV *gv, I32 empty';
+	my $start = "Perl_save_$name(pTHX_ $args)\n{";
+	my $redirect = $kind
+		? "\n    if (PL_wump_task) return ($type *)Perl_wump_localize(aTHX_ gv, '$kind');"
+		: "\n    if (PL_wump_task) croak(\"Wump: typeglob localization in a task is not supported yet\");";
+	my $count = $scope =~ s/\Q$start\E(?:\Q$gate\E|\Q$redirect\E)*/$start$gate$redirect/g;
+	$count == 1 or die "scope.c: expected one $name prologue, found $count\n";
 }
-edit('scope.c', "Perl_save_gp(pTHX_ GV *gv, I32 empty)\n{",
-	"Perl_save_gp(pTHX_ GV *gv, I32 empty)\n{\n    if (PL_wump_task) croak(\"Wump: typeglob localization in a task is not supported yet\");");
+write_file("$source/scope.c", $scope);
 edit('perl.h', "# define SAVE_DEFSV                \\\n", "# define SAVE_DEFSV (PL_wump_task ? Perl_wump_save_defsv(aTHX) : (void)WUMP_ROOT_SAVE_DEFSV)\n# define WUMP_ROOT_SAVE_DEFSV       \\\n");
 edit('pp.c', "S_localise_gv_slot(pTHX_ GV *gv, U8 type)\n{",
 	"S_localise_gv_slot(pTHX_ GV *gv, U8 type)\n{\n    if (PL_wump_task) croak(\"Wump: reference alias localization in a task is not supported yet\");");
@@ -217,11 +240,17 @@ require "$FindBin::Bin/pocket.pl";
 apply_pocket($source);
 require "$FindBin::Bin/magic.pl";
 apply_magic($source);
+require "$FindBin::Bin/hooks.pl";
+apply_hooks($source);
+require "$FindBin::Bin/refcount.pl";
+apply_refcount($source);
+edit('pp.c', '    SvLOCK(sv);', '    if (PL_wump_task) Perl_wump_lock(aTHX_ sv); else SvLOCK(sv);');
 for my $pair (
 	["$FindBin::Bin/core/wump_core.c", "$source/wump_core.c"],
 	["$FindBin::Bin/core/wump_local.c", "$source/wump_local.c"],
 	["$FindBin::Bin/core/wump_elements.c", "$source/wump_elements.c"],
 	["$FindBin::Bin/core/wump_magic.c", "$source/wump_magic.c"],
+	["$FindBin::Bin/core/wump_lock.c", "$source/wump_lock.c"],
 	["$FindBin::Bin/../runtime/include/wump.h", "$source/wump.h"],
 	["$FindBin::Bin/../runtime/src/internal.h", "$source/wump_runtime_internal.h"],
 ) {

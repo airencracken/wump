@@ -134,6 +134,7 @@ typedef struct wump_perl_channel {
 typedef struct wump_perl_run {
 	wump_perl_channel *channels;
 	wump_perl_message *messages;
+	struct wump_perl_lock *locks;
 	SV *panic;
 	UV panic_task, next_task;
 	int started;
@@ -141,6 +142,8 @@ typedef struct wump_perl_run {
 
 static wump_perl_run *wump_perl_active;
 static UV wump_channel_id;
+
+#include "wump_lock.c"
 
 static wump_cv_slot *wump_cv_find(pTHX_ const CV *cv) {
 	if (PL_wump_task != NULL) {

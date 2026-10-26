@@ -186,7 +186,7 @@ Shutdown releases these references and regex callback frames while their Perl
 and C stacks are still available. `pos()` remains a property of the scalar
 being matched: using one shared string also shares its position.
 
-Parallel Perl additionally needs the shared-value, reference-counting, and
+Parallel Perl additionally needs the remaining shared-value and
 pad-pooling changes described in [the design](DESIGN.md).
 Enabling `USE_ITHREADS` prepares Perl's op-sharing infrastructure; it does
 not add `threads.pm` compatibility or implement task isolation by itself.
@@ -225,9 +225,6 @@ Unicode, slurp, paragraph, and positive fixed-record-length reference modes
 retain their ordinary meanings. Invalid input-separator assignments leave the
 previous value and cache intact. Ordinary assignments without a binding remain
 global; `local` snapshots propagate to children and `pocket` snapshots are skipped.
-Modules that initialize these operations using unsupported magic settings,
-such as signal hooks during encoding-layer loading, still need that initialization
-outside acts.
 Perl's temporary internal separator overrides, such as tied `say`'s newline,
 remain within the current act and are excluded from child inheritance.
 
@@ -238,10 +235,21 @@ Perl's interpreter-wide cache behavior for references to localized magic
 scalars: an escaped `$\` reference in this fork retains its localized value
 instead of consulting the current global output cache.
 
+`local` and `pocket` support `$SIG{__DIE__}`, `$SIG{__WARN__}`, and `$^W`
+(including `$English::WARNING`). Hook callbacks and their recursion guards
+remain private across yields. Ordinary local hooks/flags are snapshotted at
+spawn; pocket bindings are skipped. Native warning generation uses the private
+`$^W` cache, while explicit lexical `use warnings`/`no warnings` retain their
+usual precedence. Encoding layers can initialize inside acts. PerlIO's temporary
+loading hook stays within the current act and is excluded from inheritance.
+Hook and warning-cell references retain their private cache after scope exit,
+with the same identity rules as separator references. Process signal handlers,
+whole `%SIG` localization, and `${^WARNING_BITS}` localization remain unsupported.
+
 `delete local`, typeglob/reference-alias localization, and localization of other
-magic variables (including tied values, `%ENV`, `%SIG`, and `$^I`) raise
+magic variables (including tied values, `%ENV`, and `$^I`) raise
 errors inside tasks. Restricted hashes and symbol-table elements are also rejected.
-Aggregates must remain nonmagical throughout a binding's lifetime.
+Plain aggregates must not acquire unsupported magic during a binding's lifetime.
 Spawn rejects unsupported magic values inside inherited bindings before invoking any `FETCH`
 hooks. Localizing a whole plain aggregate
 and then assigning its elements is supported. Symbol-table replacement while a
@@ -278,7 +286,34 @@ experimental part of the private fork, not a stock Perl feature.
 `B::Deparse` preserves pocket declarations so recompiling its output keeps
 their inheritance policy.
 
-This prototype does not implement `sel`, `scope`, `lock`, safe-point
+Perl's existing `lock VAR` now acquires an explicit scoped mutex inside acts.
+It parks contending acts cooperatively, so the holder can yield while keeping
+the lock. References lock their referent; `lock %hash` and a reference to that
+hash address the same mutex. Locks are released on scope exit, exception unwind,
+and abandoned-task cleanup. Acquisition is not reentrant: locking the same
+identity twice in one act raises an error. Locks are not inherited at spawn.
+The lock retains its target while holders or waiters exist, then releases it
+immediately. Code outside a run keeps upstream Perl's lock behavior.
+See [examples/safety.pl](examples/safety.pl), or run `make perl-safety-example`.
+
+The private core now uses atomic SV-head reference counts as a conservative
+baseline, including the normal C/C++ reference-count helpers. This currently
+adds overhead to owned values too; the proposed owned/shared fast path and
+escape barriers are still pending. The native stress fixture exercises eight
+OS threads performing 9.6 million increments/decrements on a rooted SV, in
+both C and C++, without concurrent allocation or value mutation. Run it with
+`make perl-refcount-test`, or `make perl-refcount-tsan` to instrument the native
+counter fixture with ThreadSanitizer. C++ XS keeps the original head layout;
+direct legacy XS manipulation of the refcount lvalue still needs serialization.
+
+Perl execution still uses one slot. Atomic counters and explicit locks do not
+make concurrent Perl allocation, destruction, read caching, compiler state,
+or XS safe. Per-worker allocators, deferred reclamation, ownership/publication
+barriers, and the remaining interpreter/XS state split must precede multi-core
+Perl execution. Channel messages copy the outer scalar and retain reference
+identity; pending messages own their references until receive or run cleanup.
+
+This prototype does not implement `sel`, `scope`, safe-point
 preemption, or automatic Perl I/O/XS handoff. Ordinary blocking Perl operations
 still occupy the single slot. Compilation/mutation of existing subs while
 tasks are suspended and debugger/general multicall integration are not supported

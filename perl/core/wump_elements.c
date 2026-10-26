@@ -7,6 +7,8 @@ typedef struct wump_element {
 	SSize_t index;
 	bool present;
 	bool pocket;
+	char hook;
+	UV sequence;
 	struct wump_element *next;
 } wump_element;
 
@@ -129,6 +131,7 @@ static wump_element *wump_element_add(pTHX_ struct wump_perl_task *task, SV *ori
 	Newxz(slot, 1, wump_element);
 	slot->origin = SvREFCNT_inc(origin);
 	slot->present = TRUE;
+	slot->sequence = ++task->next_binding;
 	slot->next = task->elements;
 	task->elements = slot;
 	return slot;
@@ -152,20 +155,23 @@ SV **Perl_wump_local_av(pTHX_ AV *av, SSize_t index) {
 }
 
 HE *Perl_wump_local_hv(pTHX_ HV *hv, SV *key) {
-	wump_local_check(aTHX_ (SV *)hv, 'h');
 	if (SvREADONLY(hv) || HvNAME_HEK(hv))
 		croak("Wump: cannot localize an element of a restricted hash or symbol table");
 	/* Canonicalize once, including overloaded/magical key conversion. */
 	STRLEN len;
 	const char *bytes = SvPV_const(key, len);
 	SV *name = sv_2mortal(newSVpvn_flags(bytes, len, SvUTF8(key) ? SVf_UTF8 : 0));
+	char hook = Perl_wump_hook_kind(aTHX_ hv, name);
+	if (!hook) wump_local_check(aTHX_ (SV *)hv, 'h');
 	HE *old = hv_fetch_ent(hv, name, 0, 0);
 	if (old) wump_local_check(aTHX_ HeVAL(old), 's');
 	wump_element_mark(aTHX_ (SV *)hv);
 	wump_element *slot = wump_element_add(aTHX_ PL_wump_task, (SV *)hv);
 	slot->pocket = PL_op->op_wump_pocket;
+	slot->hook = hook;
 	slot->cell = newHV();
-	HE *entry = hv_store_ent(slot->cell, name, newSV(0), 0);
+	HE *entry = hv_store_ent(slot->cell, name,
+		hook ? Perl_wump_magic_new(aTHX_ hook, NULL) : newSV(0), 0);
 	SAVEDESTRUCTOR_X(wump_element_pop, slot);
 	return entry;
 }
@@ -181,7 +187,7 @@ bool Perl_wump_hv_slot(pTHX_ HV *hv, const char *key, STRLEN len, int flags,
 		HE *he = hv_iternext(slot->cell); /* single immutable key */
 		SV *old = HeVAL(he);
 		bool existed = slot->present;
-		HeVAL(he) = newSV(0);
+		HeVAL(he) = slot->hook ? Perl_wump_magic_new(aTHX_ slot->hook, NULL) : newSV(0);
 		slot->present = FALSE;
 		if (flags & HVhek_FREEKEY) Safefree(key);
 		if (existed && !(action & G_DISCARD)) *result = sv_2mortal(old);
@@ -193,6 +199,10 @@ bool Perl_wump_hv_slot(pTHX_ HV *hv, const char *key, STRLEN len, int flags,
 		if (flags & HVhek_FREEKEY) Safefree(key);
 		*result = NULL;
 		return TRUE;
+	}
+	if (slot->hook && (action & HV_FETCH_ISSTORE)) {
+		if (!value) croak("Wump: null hook-cell replacement is unsupported");
+		Perl_wump_hook_store(aTHX_ value, slot->hook);
 	}
 	if (writing) slot->present = TRUE;
 	*result = hv_common(slot->cell, NULL, key, len, flags, action, value, hash);
@@ -351,7 +361,15 @@ void Perl_wump_elements_snapshot(pTHX_ struct wump_perl_task *task) {
 		wump_element *copy = wump_element_add(aTHX_ task, slot->origin);
 		copy->index = slot->index;
 		copy->present = slot->present;
-		if (slot->cell) copy->cell = newHVhv(slot->cell);
+		copy->hook = slot->hook;
+		copy->sequence = slot->sequence;
+		if (task->next_binding < slot->sequence) task->next_binding = slot->sequence;
+		if (slot->hook) {
+			hv_iterinit(slot->cell);
+			HE *he = hv_iternext(slot->cell);
+			copy->cell = newHV();
+			hv_store_ent(copy->cell, hv_iterkeysv(he), Perl_wump_magic_copy(aTHX_ HeVAL(he)), 0);
+		} else if (slot->cell) copy->cell = newHVhv(slot->cell);
 		else copy->value = slot->value ? newSVsv(slot->value) : NULL;
 	}
 	/* Keep the parent's precedence order without retaining hidden scopes. */
