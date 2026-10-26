@@ -115,6 +115,8 @@ make perl-separators-example    # readline/chomp use each act's record separator
 make perl-test                  # task behavior, failures, shutdown
 make perl-upstream-test         # upstream regex, aggregate and interpreter regressions
 make perl-memcheck              # task suite with registered C stacks and full Perl teardown
+make perl-asan                  # separate instrumented Perl, runtime, and XS fixtures
+make perl-lsan                  # same instrumented suites with leak checks and full teardown
 make perl-source-test           # offline source acquisition failure tests
 ```
 
@@ -612,7 +614,30 @@ from task to scheduler on the same OS thread. The target also requires a
 separate, deliberately racy program to produce a TSan report; sanitizer
 failures in the real suite are never suppressed. The intentional guard
 fault restores SIGSEGV's default disposition in its isolated child.
-AddressSanitizer fiber integration is not implemented yet.
+`make asan` uses the
+[AddressSanitizer fiber API](https://github.com/llvm/llvm-project/blob/main/compiler-rt/include/sanitizer/common_interface_defs.h)
+to preserve each coroutine's fake stack across migration and native-call
+handoff. Completed and abandoned tasks retire those stacks, and recycled
+stack mappings have their shadow state cleared. Stack-use-after-return
+detection stays enabled. Positive controls verify private fake stacks;
+negative controls must detect deliberate heap-use-after-free, stack overflow,
+and use-after-return on coroutine stacks.
+
+`make lsan` runs the ASan runtime suites with leak detection enabled and
+requires a deliberate leaked allocation to produce a LeakSanitizer report.
+Leak checks are separate from `make asan`, which sets `detect_leaks=0`.
+Linux LSan needs tracer access to stop and inspect threads. Restricted
+environments can fail even on a clean program with a fatal LSan/ptrace
+diagnostic; the leak targets report that failure without suppressing it.
+Local TCP and socket half-close tests also require their system calls to be
+permitted by the environment; a denied call remains a test failure.
+
+`make perl-asan` builds a separate private interpreter and runtime under
+`build/perl-asan/`, instruments compiled XS fixtures, and runs the project
+suites with full Perl teardown. `make perl-lsan` repeats those suites with
+leak detection enabled. A normal build directory cannot be silently reused
+as an ASan build or vice versa. Both targets accept `PERL_TARBALL` for the
+pinned archive already on disk. TSan remains a separate build.
 
 `make memcheck` builds a separate variant with
 [Valgrind stack registrations](https://valgrind.org/docs/manual/manual-core-adv.html)

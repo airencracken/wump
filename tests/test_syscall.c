@@ -71,9 +71,12 @@ typedef struct pipe_arg {
 
 static void native_read(void *arg) {
 	pipe_arg *ctx = arg;
-	int local;
+	/* ASan may move C locals to a fake stack. Inspect the actual stack
+	 * pointer to retain the callback's mapped-stack identity check. */
+	uintptr_t sp;
+	__asm__ volatile("mov %%rsp, %0" : "=r"(sp));
 	CHECK(pthread_equal(ctx->original, pthread_self()));
-	CHECK((uintptr_t)&local > ctx->lo && (uintptr_t)&local < ctx->hi);
+	CHECK(sp > ctx->lo && sp < ctx->hi);
 	CHECK(wump_worker_id() == -1);
 	ctx->result = read(ctx->fd[0], &ctx->byte, 1);
 }

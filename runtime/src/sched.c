@@ -24,6 +24,11 @@ typedef struct wump_machine {
 #ifdef WUMP_TSAN
 	void *tsan_sched_fiber;
 #endif
+#ifdef WUMP_ASAN
+	void *asan_fake_stack;
+	const void *asan_stack_bottom;
+	size_t asan_stack_size;
+#endif
 } wump_machine;
 
 struct wump_runtime {
@@ -373,6 +378,10 @@ static void recycle(wump_worker *w, wump_g *g) {
 	__tsan_destroy_fiber(g->tsan_fiber);
 	g->tsan_fiber = NULL;
 #endif
+#ifdef WUMP_ASAN
+	__asan_unpoison_memory_region(g->stack_lo + 1,
+		(size_t)((char *)g - (char *)(g->stack_lo + 1)));
+#endif
 	if (w->ngcache < WUMP_STACK_CACHE) {
 		g->next = w->gcache;
 		w->gcache = g;
@@ -393,6 +402,39 @@ static void context_free(wump_g *g) {
 		cleanup(arg);
 	}
 }
+
+#ifdef WUMP_ASAN
+typedef struct wump_asan_retire {
+	wump_g *g;
+	void *sp, *fake_stack;
+	const void *bottom;
+	size_t size;
+} wump_asan_retire;
+
+/* Abandoned tasks cannot unwind their application frames. After context
+ * cleanup, briefly re-enter a fresh trampoline on their mapped stack solely
+ * to retire ASan's suspended fake stack through its public fiber API. */
+static __attribute__((no_sanitize_address)) void asan_retire_entry(void *arg) {
+	wump_asan_retire *retire = arg;
+	wump_g *g = retire->g;
+	__sanitizer_finish_switch_fiber(g->asan_fake_stack, &retire->bottom, &retire->size);
+	g->asan_fake_stack = NULL;
+	__sanitizer_start_switch_fiber(NULL, retire->bottom, retire->size);
+	wump_ctx_switch(&g->sp, retire->sp);
+	abort();
+}
+
+static void asan_retire(wump_g *g) {
+	if (g->asan_fake_stack == NULL) return;
+	wump_asan_retire retire = {.g = g};
+	size_t size = (size_t)((char *)g - (char *)(g->stack_lo + 1));
+	__asan_unpoison_memory_region(g->stack_lo + 1, size);
+	void *sp = wump_ctx_init(g, asan_retire_entry, &retire);
+	__sanitizer_start_switch_fiber(&retire.fake_stack, g->stack_lo + 1, size);
+	wump_ctx_switch(&retire.sp, sp);
+	__sanitizer_finish_switch_fiber(retire.fake_stack, NULL, NULL);
+}
+#endif
 
 static void *machine_entry(void *arg);
 
@@ -430,12 +472,28 @@ static void switch_out(void) {
 #ifdef WUMP_TSAN
 	__tsan_switch_to_fiber(m->tsan_sched_fiber, 0);
 #endif
+#ifdef WUMP_ASAN
+	/* A completed task never resumes; let ASan release its fake stack. */
+	__sanitizer_start_switch_fiber(g->state == G_DEAD ? NULL : &g->asan_fake_stack,
+		m->asan_stack_bottom, m->asan_stack_size);
+	if (g->state == G_DEAD) g->asan_fake_stack = NULL;
+#endif
 	wump_ctx_switch(&g->sp, m->sched_sp);
 	/* A resumed task may be on another M. No cached TLS/M access here. */
+#ifdef WUMP_ASAN
+	m = current_machine();
+	__sanitizer_finish_switch_fiber(g->asan_fake_stack,
+		&m->asan_stack_bottom, &m->asan_stack_size);
+#endif
 }
 
 static void task_entry(void *arg) {
 	wump_g *g = arg;
+#ifdef WUMP_ASAN
+	wump_machine *initial = current_machine();
+	__sanitizer_finish_switch_fiber(g->asan_fake_stack,
+		&initial->asan_stack_bottom, &initial->asan_stack_size);
+#endif
 	g->fn(g->arg);
 	wump_machine *m = current_machine();
 	if (m->in_syscall) {
@@ -537,7 +595,14 @@ static void schedule(wump_machine *m) {
 #ifdef WUMP_TSAN
 		__tsan_switch_to_fiber(g->tsan_fiber, 0);
 #endif
+#ifdef WUMP_ASAN
+		__sanitizer_start_switch_fiber(&m->asan_fake_stack, g->stack_lo + 1,
+			(size_t)((char *)g - (char *)(g->stack_lo + 1)));
+#endif
 		wump_ctx_switch(&m->sched_sp, g->sp);
+#ifdef WUMP_ASAN
+		__sanitizer_finish_switch_fiber(m->asan_fake_stack, NULL, NULL);
+#endif
 		assert(*g->stack_lo == WUMP_STACK_CANARY);
 		enum wump_gstate state = g->state;
 		m->cur = NULL;
@@ -843,6 +908,9 @@ destroy_workers:
 		if (g->tsan_fiber != NULL) {
 			__tsan_destroy_fiber(g->tsan_fiber);
 		}
+#endif
+#ifdef WUMP_ASAN
+		asan_retire(g);
 #endif
 		wump_stack_free(g);
 	}

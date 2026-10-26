@@ -25,6 +25,17 @@
 #ifdef WUMP_TSAN
 #include <sanitizer/tsan_interface.h>
 #endif
+#if defined(__SANITIZE_ADDRESS__)
+#define WUMP_ASAN 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define WUMP_ASAN 1
+#endif
+#endif
+#ifdef WUMP_ASAN
+#include <sanitizer/asan_interface.h>
+#include <sanitizer/common_interface_defs.h>
+#endif
 #ifdef WUMP_VALGRIND
 #include <valgrind/valgrind.h>
 #endif
@@ -54,6 +65,9 @@ typedef struct wump_g {
 #endif
 #ifdef WUMP_TSAN
 	void *tsan_fiber;
+#endif
+#ifdef WUMP_ASAN
+	void *asan_fake_stack;
 #endif
 } wump_g;
 

@@ -61,5 +61,9 @@ void wump_stack_free(wump_g *g) {
 #ifdef WUMP_VALGRIND
 	VALGRIND_STACK_DEREGISTER(g->valgrind_stack);
 #endif
+#ifdef WUMP_ASAN
+	__asan_unpoison_memory_region(g->stack_lo + 1,
+		(size_t)((char *)g - (char *)(g->stack_lo + 1)));
+#endif
 	munmap(g->map, g->map_len);
 }

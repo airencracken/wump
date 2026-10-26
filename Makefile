@@ -7,6 +7,7 @@ CPPFLAGS = -Iruntime/include -Iruntime/src
 CFLAGS = -O2 -g -std=c11 -Wall -Wextra -Werror -pthread
 LDFLAGS = -pthread
 LDLIBS = -lm
+PERL_SUITES = tasks regex local elements pocket pocket-deparse separators hooks locks shared publication hidden-roots
 
 RUNTIME = stack sched chan io error
 OBJECTS = $(addprefix $(BUILD)/,$(addsuffix .o,$(RUNTIME))) $(BUILD)/ctx_x86_64.o
@@ -14,7 +15,7 @@ WRAPPED = pthread_mutex_init pthread_cond_init pthread_condattr_init pthread_con
 IO_WRAPPED = calloc realloc pthread_mutex_init pthread_create epoll_create1 eventfd epoll_ctl epoll_wait fcntl poll __poll_chk read __read_chk write close accept4 connect getsockopt getpeername
 SYSCALL_WRAPPED = calloc pthread_cond_init pthread_cond_destroy pthread_cond_broadcast pthread_create pthread_join
 
-.PHONY: all test stress ubsan tsan tsan-control memcheck bench bench-compare clean perl-source perl-fetch perl-build perl-source-test perl-test perl-example perl-regex-example perl-local-example perl-elements-example perl-pocket-example perl-separators-example perl-safety-example perl-publication-example perl-refcount-test perl-refcount-tsan perl-memcheck perl-upstream-test
+.PHONY: all test stress ubsan asan lsan asan-control lsan-control tsan tsan-control memcheck bench bench-compare clean perl-source perl-fetch perl-build perl-source-test perl-test perl-asan perl-lsan perl-leak-test perl-example perl-regex-example perl-local-example perl-elements-example perl-pocket-example perl-separators-example perl-safety-example perl-publication-example perl-refcount-test perl-refcount-tsan perl-memcheck perl-upstream-test
 all: $(BUILD)/libwump.a $(BUILD)/hello $(BUILD)/select $(BUILD)/echo $(BUILD)/blocking
 
 perl-source:
@@ -51,6 +52,19 @@ perl-refcount-test: perl-build
 
 perl-refcount-tsan: perl-build
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/refcount.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)' --tsan
+
+perl-asan:
+	ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=1 PERL_DESTRUCT_LEVEL=2 PERL_SANITIZER=address $(MAKE) BUILD='$(BUILD)/perl-asan' PERL_TARBALL='$(abspath $(PERL_TARBALL))' CFLAGS='$(CFLAGS) -O1 -fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls' LDFLAGS='$(LDFLAGS) -fsanitize=address' perl-test
+
+perl-lsan: perl-asan
+	ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 PERL_DESTRUCT_LEVEL=2 $(MAKE) BUILD='$(BUILD)/perl-asan' perl-leak-test
+
+perl-leak-test:
+	@for suite in $(PERL_SUITES); do \
+		printf 'LSan Perl suite: %s\n' "$$suite"; \
+		timeout 120s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) "tests/perl/$$suite.t"; result=$$?; \
+		if [ "$$result" -ne 0 ]; then exit "$$result"; fi; \
+	done
 
 perl-example: perl-build
 	timeout 30s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib examples/tasks.pl
@@ -165,6 +179,22 @@ stress: $(BUILD)/test_runtime $(BUILD)/test_select $(BUILD)/test_io $(BUILD)/tes
 
 ubsan:
 	$(MAKE) BUILD=build/ubsan CFLAGS='$(CFLAGS) -fsanitize=undefined -fno-sanitize-recover=all' LDFLAGS='$(LDFLAGS) -fsanitize=undefined' test
+
+asan:
+	ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=1 $(MAKE) BUILD='$(BUILD)/asan' CFLAGS='$(CFLAGS) -O1 -fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls' LDFLAGS='$(LDFLAGS) -fsanitize=address' test asan-control
+
+lsan:
+	ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 $(MAKE) BUILD='$(BUILD)/asan' CFLAGS='$(CFLAGS) -O1 -fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls' LDFLAGS='$(LDFLAGS) -fsanitize=address' test lsan-control
+
+$(BUILD)/sanitizer_control: tests/sanitizer_control.c $(BUILD)/libwump.a
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) -o $@
+
+asan-control: $(BUILD)/sanitizer_control
+	ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=1 timeout 60s $(BUILD)/sanitizer_control
+	bash tests/sanitizers.sh '$(BUILD)' asan
+
+lsan-control: $(BUILD)/sanitizer_control
+	bash tests/sanitizers.sh '$(BUILD)' lsan
 
 tsan:
 	$(MAKE) BUILD=build/tsan CFLAGS='$(CFLAGS) -fsanitize=thread' LDFLAGS='$(LDFLAGS) -fsanitize=thread' test tsan-control
