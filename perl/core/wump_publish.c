@@ -35,6 +35,8 @@ static MAGIC *wump_publish_marker(const SV *value) {
 bool Perl_wump_is_shared(pTHX_ const SV *value) {
 	if (!value) return FALSE;
 	if (SvIMMORTAL(value)) return TRUE;
+	/* Native inversion lists contain no SV edges and cannot carry magic. */
+	if (SvTYPE(value) == SVt_INVLIST) return TRUE;
 	if ((SvTYPE(value) == SVt_PVHV && HvNAME_HEK((HV *)value))
 		|| isGV_with_GP(value)) return TRUE;
 	MAGIC *mg = wump_publish_marker(value);
@@ -43,6 +45,7 @@ bool Perl_wump_is_shared(pTHX_ const SV *value) {
 
 static void wump_publish_queue(pTHX_ wump_publish_work *work, SV *value) {
 	if (!value || SvIS_FREED(value) || SvIMMORTAL(value)) return;
+	if (SvTYPE(value) == SVt_INVLIST) return;
 	/* Stash entry types encode compiler state (NULL versus a forward
 	 * declaration). Never upgrade them merely to attach metadata. Package
 	 * value slots are published separately through the GV accessors. */
@@ -65,6 +68,10 @@ static void wump_publish_queue(pTHX_ wump_publish_work *work, SV *value) {
 	mg->mg_private = WUMP_PUBLISH_PENDING;
 }
 
+static void wump_publish_visit(pTHX_ SV *value, void *arg) {
+	wump_publish_queue(aTHX_ (wump_publish_work *)arg, value);
+}
+
 static void wump_publish_edges(pTHX_ wump_publish_work *work, SV *value) {
 	if (SvROK(value)) wump_publish_queue(aTHX_ work, SvRV(value));
 	if (SvTYPE(value) == SVt_PVAV) {
@@ -80,9 +87,18 @@ static void wump_publish_edges(pTHX_ wump_publish_work *work, SV *value) {
 					wump_publish_queue(aTHX_ work, HeVAL(he));
 			}
 		}
-	} else if (SvTYPE(value) == SVt_PVCV && !CvISXSUB((CV *)value)) {
+	} else if (SvTYPE(value) == SVt_PVOBJ) {
+		for (SSize_t i = 0; i <= ObjectMAXFIELD(value); i++)
+			wump_publish_queue(aTHX_ work, ObjectFIELDS(value)[i]);
+	} else if (SvTYPE(value) == SVt_PVCV && CvISXSUB((CV *)value)) {
+		/* Only these flags certify that the ANY union contains an owned SV.
+		 * Other XSUB payloads may be arbitrary pointers or integers. */
+		CV *cv = (CV *)value;
+		if (CvCONST(cv)) wump_publish_queue(aTHX_ work, (SV *)CvXSUBANY(cv).any_ptr);
+		else if (CvREFCOUNTED_ANYSV(cv)) wump_publish_queue(aTHX_ work, CvXSUBANY(cv).any_sv);
+	} else if (SvTYPE(value) == SVt_PVCV) {
 		/* Use the original pad, rather than an act's private call frame.
-		 * Only captured/state cells are shared; ordinary local pads are not. */
+		 * Captured/state and constant cells are shared; ordinary locals are not. */
 		PADLIST *pads = ((XPVCV *)SvANY(value))->xcv_padlist_u.xcv_padlist;
 		if (pads && PadlistMAX(pads) >= 1 && PadlistARRAY(pads)[1]) {
 			PAD *pad = PadlistARRAY(pads)[1];
@@ -90,12 +106,15 @@ static void wump_publish_edges(pTHX_ wump_publish_work *work, SV *value) {
 			for (SSize_t i = 1; i <= AvFILLp(pad); i++) {
 				PADNAME *name = i <= PadnamelistMAX(names) ? PadnamelistARRAY(names)[i] : NULL;
 				SV *cell = AvARRAY(pad)[i];
-				if ((name && (PadnameOUTER(name) || PadnameIsSTATE(name)))
+				if ((name && (PadnameOUTER(name) || PadnameIsSTATE(name)
+					|| (!PadnameLEN(name) && PadnamePV(name))))
 					|| (cell && SvTYPE(cell) == SVt_PVCV))
 					wump_publish_queue(aTHX_ work, cell);
 			}
 		}
 	}
+	if (isREGEXP(value))
+		Perl_wump_regex_roots(aTHX_ (REGEXP *)value, wump_publish_visit, work);
 	/* A tie object or native cache is reachable through its owner even if
 	 * its contents are hidden from ordinary AV/HV storage. */
 	if (SvTYPE(value) >= SVt_PVMG) {

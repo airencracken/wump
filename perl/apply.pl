@@ -108,6 +108,8 @@ void Perl_wump_publish_store(pTHX_ SV *owner, SV *value);
 void Perl_wump_publish_reference(pTHX_ SV *owner, SV *value);
 void Perl_wump_publish_snapshot(pTHX_ SV *value);
 void Perl_wump_publish_refresh(pTHX_ SV *value);
+void Perl_wump_regex_roots(pTHX_ REGEXP *rx,
+	void (*visit)(pTHX_ SV *, void *), void *arg);
 C
 write_file("$source/wump_task_types.h", $header);
 if (index(read_file("$source/perl.h"), '#include "wump_task_types.h"') < 0) {
@@ -257,6 +259,12 @@ require "$FindBin::Bin/refcount.pl";
 apply_refcount($source);
 require "$FindBin::Bin/publication.pl";
 apply_publication($source);
+edit('regcomp.c', '#include "regcomp_internal.h"',
+	"#include \"regcomp_internal.h\"\n#include \"wump_regex_roots.c\"");
+edit('class.c', '    fields[fieldix] = val;',
+	"    Perl_wump_publish_store(aTHX_ instance, val);\n    fields[fieldix] = val;");
+edit('pp_hot.c', '    if (!(CvISXSUB(cv))) {',
+	"    if (PL_wump_task && CvISXSUB(cv)) Perl_wump_publish(aTHX_ (SV *)cv);\n    if (!(CvISXSUB(cv))) {");
 edit('pp.c', '    SvLOCK(sv);', '    if (PL_wump_task) Perl_wump_lock(aTHX_ sv); else SvLOCK(sv);');
 for my $pair (
 	["$FindBin::Bin/core/wump_core.c", "$source/wump_core.c"],
@@ -265,6 +273,7 @@ for my $pair (
 	["$FindBin::Bin/core/wump_magic.c", "$source/wump_magic.c"],
 	["$FindBin::Bin/core/wump_lock.c", "$source/wump_lock.c"],
 	["$FindBin::Bin/core/wump_publish.c", "$source/wump_publish.c"],
+	["$FindBin::Bin/core/wump_regex_roots.c", "$source/wump_regex_roots.c"],
 	["$FindBin::Bin/../runtime/include/wump.h", "$source/wump.h"],
 	["$FindBin::Bin/../runtime/src/internal.h", "$source/wump_runtime_internal.h"],
 ) {

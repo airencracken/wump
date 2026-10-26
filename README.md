@@ -316,7 +316,11 @@ identity; pending messages own their references until receive or run cleanup.
 The first publication barriers now mark generic Perl value graphs when they
 escape through act captures, inherited references, channels, package-variable
 access, or stores into already published values. The walk follows references,
-array/hash storage, captured/state pad cells, and refcounted magic objects.
+array/hash storage, captured/state and shared constant pad cells, refcounted
+magic objects, native class fields, constant-sub values, and flagged
+refcounted XSUB payloads. Native regex roots include callback closures,
+embedded regexes, and SV-backed engine tables; custom engines contribute
+their common Perl roots while their private pointers remain opaque.
 It handles cycles and deep graphs without recursive descent, and invokes no
 `FETCH`, overloaded conversion, or hash-iteration callbacks. Temporary work
 roots are released before the barrier returns; metadata itself owns no values.
@@ -324,13 +328,17 @@ Stores made outside a run still propagate into previously published values.
 Stores made by destructors during abandoned-task cleanup also propagate.
 Fresh local bindings and shallow snapshot cells stay independent; their
 referents are published when shared with a child. New closure instances are
-classified after capture, independently of their prototypes.
+classified after capture, independently of their prototypes. Fields initialized
+after a class instance escapes also propagate publication. Native inversion
+lists cannot carry extension magic and are treated as shared leaves; that
+classification does not make regex read caches safe for concurrent use.
 
 `Wump::is_shared($reference)` inspects this experimental publication metadata.
 An unmarked value is **unclassified**, not proven exclusive to one act.
-Native code that writes raw AV/HV storage, opaque regex/class/IO internals,
-and other XS-held roots still need a publication audit before these markers
-can select non-atomic counters or enable parallel execution. This stage adds
+Native code that writes raw AV/HV storage, IO internals, private custom-regex
+storage, unflagged XS payloads, and other hidden roots still need a publication
+audit before these markers can select non-atomic counters or enable parallel
+execution. This stage adds
 metadata and magic-path overhead; it does not claim a speed improvement.
 The marker uses extension magic and preserves the SV-head layout. Its
 callbacks preserve native magic, localization, and weak-reference lifetimes.

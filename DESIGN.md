@@ -248,10 +248,12 @@ The current prototype establishes a conservative atomic SV-head counter
 baseline for all core SVs, plus scoped `lock` inside acts. Initial publication
 barriers now track generic references through captures, channels, package
 variables, inherited references, and stores into marked values. They use
-extension magic, leave SV-head layout unchanged, and do not yet prove ownership
-for unmarked values: raw XS storage and opaque native roots remain an audit
-boundary. Owned/shared counter specialization, no-cache reads, and deferred
-reclamation remain prerequisites for multi-core Perl;
+extension magic and leave SV-head layout unchanged. The walk also follows
+native class fields, shared pad constants, flagged XSUB payloads, and core
+regex SV roots without executing callbacks. It does not yet prove ownership
+for unmarked values: raw XS storage, IO internals, and custom regex-engine
+private pointers remain audit boundaries. Owned/shared counter specialization,
+no-cache reads, and deferred reclamation remain prerequisites for multi-core Perl;
 the interpreter bridge still runs with one execution slot. Native counter
 stress is deliberately restricted to a rooted SV without concurrent allocation,
 data mutation, or final destruction. C++ XS standard refcount helpers use atomics;
