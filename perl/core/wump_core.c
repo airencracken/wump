@@ -3,6 +3,7 @@
 #include "XSUB.h"
 #include "wump_runtime_internal.h"
 #include <math.h>
+#include "wump_local.c"
 
 typedef struct wump_cv_slot {
 	CV *cv;
@@ -102,6 +103,8 @@ HV *Perl_wump_regex_names(pTHX_ HV *original) {
 
 HV **Perl_wump_gv_hv(GV *gv) {
 	dTHX;
+	wump_local *binding = wump_local_find(aTHX_ gv, 'h');
+	if (binding != NULL) return (HV **)&binding->value;
 	HV **original = &GvGP(gv)->gp_hv;
 	if (PL_wump_task == NULL || *original == NULL || !SvMAGICAL(*original)) return original;
 	MAGIC *tied = mg_find((SV *)*original, PERL_MAGIC_tied);
@@ -187,6 +190,8 @@ void Perl_wump_cv_prepare(pTHX_ CV *cv) {
 
 SV **Perl_wump_gv_sv(GV *gv) {
 	dTHX;
+	wump_local *binding = wump_local_find(aTHX_ gv, 's');
+	if (binding != NULL) return &binding->value;
 	if (PL_wump_task != NULL) {
 		if (gv == aTHX->Idefgv) gv = PL_defgv;
 		else if (gv == aTHX->Ierrgv) gv = PL_errgv;
@@ -197,6 +202,8 @@ SV **Perl_wump_gv_sv(GV *gv) {
 
 AV **Perl_wump_gv_av(GV *gv) {
 	dTHX;
+	wump_local *binding = wump_local_find(aTHX_ gv, 'a');
+	if (binding != NULL) return (AV **)&binding->value;
 	if (PL_wump_task != NULL && gv == aTHX->Idefgv) gv = PL_defgv;
 	return &GvGP(gv)->gp_av;
 }
@@ -210,14 +217,15 @@ static void wump_perl_enter(void *arg) {
 static void wump_perl_task_free(void *arg) {
 	struct wump_perl_task *task = arg;
 	dTHXa(task->interp);
-	wump_perl_enter(task);
 	if (!task->initialized) {
 		/* A queued task has no Perl stacks on which to free its CV. */
 		PL_wump_task = NULL;
+		wump_local_clear(aTHX_ task);
 		SvREFCNT_dec(task->entry);
 		Safefree(task);
 		return;
 	}
+	wump_perl_enter(task);
 	int abandoned = !task->finished;
 	/* Destructors may call Perl, but cannot schedule during teardown.
 	 * Use ordinary recursive pads for new calls instead of creating
@@ -257,6 +265,7 @@ static void wump_perl_task_free(void *arg) {
 		}
 		SvREFCNT_dec(task->entry);
 		task->entry = NULL;
+		wump_local_clear(aTHX_ task);
 		GV *defgv = PL_defgv;
 		GV *errgv = PL_errgv;
 		GV *replgv = PL_replgv;
@@ -315,6 +324,14 @@ static void wump_perl_task_free(void *arg) {
 	Safefree(task);
 }
 
+static void wump_perl_new_abort(pTHX_ void *arg) {
+	struct wump_perl_task *task = arg;
+	if (task->id != 0) return;
+	wump_local_clear(aTHX_ task);
+	SvREFCNT_dec(task->entry);
+	Safefree(task);
+}
+
 static struct wump_perl_task *wump_perl_task_new(pTHX_ SV *callback) {
 	if (!SvROK(callback) || SvTYPE(SvRV(callback)) != SVt_PVCV) croak("Wump: expected a code reference");
 	struct wump_perl_task *task;
@@ -324,7 +341,11 @@ static struct wump_perl_task *wump_perl_task_new(pTHX_ SV *callback) {
 	task->Icurcop = PL_curcop;
 	task->Icurstash = PL_curstash;
 	task->Idefoutgv = PL_defoutgv;
+	I32 mark = PL_savestack_ix;
+	SAVEDESTRUCTOR_X(wump_perl_new_abort, task);
+	wump_local_snapshot(aTHX_ task);
 	task->id = ++wump_perl_active->next_task;
+	LEAVE_SCOPE(mark);
 	return task;
 }
 
@@ -341,14 +362,14 @@ static void wump_perl_task_start(void *arg) {
 	task->initialized = 1;
 	PL_defgv = (GV *)newSV_type(SVt_PVGV);
 	gv_init(PL_defgv, PL_defstash, "_", 1, 0);
-	if (GvSV(PL_defgv) == NULL) GvSV(PL_defgv) = newSV(0);
-	GvAV(PL_defgv) = newAV();
+	if (GvGP(PL_defgv)->gp_sv == NULL) GvGP(PL_defgv)->gp_sv = newSV(0);
+	GvGP(PL_defgv)->gp_av = newAV();
 	PL_errgv = (GV *)newSV_type(SVt_PVGV);
 	gv_init(PL_errgv, PL_defstash, "@", 1, 0);
-	if (GvSV(PL_errgv) == NULL) GvSV(PL_errgv) = newSVpvs("");
+	if (GvGP(PL_errgv)->gp_sv == NULL) GvGP(PL_errgv)->gp_sv = newSVpvs("");
 	PL_replgv = (GV *)newSV_type(SVt_PVGV);
 	gv_init(PL_replgv, PL_defstash, "\022", 1, 0);
-	if (GvSV(PL_replgv) == NULL) GvSV(PL_replgv) = newSV(0);
+	if (GvGP(PL_replgv)->gp_sv == NULL) GvGP(PL_replgv)->gp_sv = newSV(0);
 	{
 		dSP;
 		ENTER;
@@ -386,6 +407,7 @@ static void xs_wump_run(pTHX_ CV *cv) {
 	PL_wump_task = NULL;
 	/* Startup can fail before the task has attached its cleanup hook. */
 	if (!run.started) {
+		wump_local_clear(aTHX_ task);
 		SvREFCNT_dec(task->entry);
 		Safefree(task);
 	}
@@ -417,6 +439,7 @@ static void xs_wump_act(pTHX_ CV *cv) {
 	if (items != 1 || wump_self() == NULL || PL_wump_task == NULL) croak("Wump: act requires a running task and a code reference");
 	struct wump_perl_task *task = wump_perl_task_new(aTHX_ ST(0));
 	if (wump_go_context(wump_perl_task_start, task, wump_perl_enter, wump_perl_task_free) != 0) {
+		wump_local_clear(aTHX_ task);
 		SvREFCNT_dec(task->entry);
 		Safefree(task);
 		croak("Wump: spawn failed");

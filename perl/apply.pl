@@ -38,7 +38,7 @@ while ($intrp =~ /PERLVAR(?:I|IC)?\(\s*I,\s*(\w+),\s*([^,\)]+)(?:,[^\)]*)?\)/g) 
 	$types{$name} = $type;
 }
 my $header = "/* Generated from Perl's intrpvar.h by perl/apply.pl. */\n";
-$header .= "struct wump_cv_slot;\nstruct wump_regex_slot;\nstruct wump_perl_task {\n";
+$header .= "struct wump_cv_slot;\nstruct wump_regex_slot;\nstruct wump_local;\nstruct wump_perl_task {\n";
 for my $name (@vars) {
 	exists $types{$name} or die "Missing upstream interpreter field: $name\n";
 	$header .= "\t$types{$name} I$name;\n";
@@ -48,6 +48,7 @@ $header .= <<'C';
 	CV *entry;
 	struct wump_cv_slot *cvs;
 	struct wump_regex_slot *regexes;
+	struct wump_local *locals;
 	UV id;
 	int initialized, finished;
 };
@@ -63,6 +64,9 @@ REGEXP *Perl_wump_pm_get(pTHX_ PMOP *pm);
 bool Perl_wump_pm_native(pTHX_ PMOP *pm, REGEXP *rx);
 HV *Perl_wump_regex_names(pTHX_ HV *original);
 HV **Perl_wump_gv_hv(GV *gv);
+SV *Perl_wump_localize(pTHX_ GV *gv, char kind);
+void Perl_wump_local_elements_check(pTHX);
+void Perl_wump_save_defsv(pTHX);
 C
 write_file("$source/wump_task_types.h", $header);
 edit('perl.h', "struct interpreter {\n#  include \"intrpvar.h\"\n};",
@@ -98,7 +102,28 @@ $gv =~ s/\QGvGP(gv)->gp_av :\E/GvAV(gv) :/g;
 $gv =~ s/\QGvGP(gv)->gp_hv ?\E/GvHV(gv) ?/g;
 $gv =~ s/\QGvGP(gv)->gp_hv :\E/GvHV(gv) :/g;
 $gv =~ s/\QGvGP(gv_HVadd(gv))->gp_hv\E/GvHV(gv_HVadd(gv))/g;
+$gv =~ s/\Q&(GvGP(gv_SVadd(gv))->gp_sv)\E/\&GvSV(gv_SVadd(gv))/g;
+$gv =~ s/\QGvGP(gv_AVadd(gv))->gp_av\E/GvAV(gv_AVadd(gv))/g;
 write_file("$source/gv.h", $gv);
+for my $spec ([scalar => 'SV', 's'], [ary => 'AV', 'a'], [hash => 'HV', 'h']) {
+	my ($name, $type, $kind) = @$spec;
+	my $start = "Perl_save_$name(pTHX_ GV *gv)\n{";
+	edit('scope.c', $start, "$start\n    if (PL_wump_task) return ($type *)Perl_wump_localize(aTHX_ gv, '$kind');");
+}
+edit('scope.c', "Perl_save_gp(pTHX_ GV *gv, I32 empty)\n{",
+	"Perl_save_gp(pTHX_ GV *gv, I32 empty)\n{\n    if (PL_wump_task) croak(\"Wump: typeglob localization in a task is not supported yet\");");
+edit('perl.h', "# define SAVE_DEFSV                \\\n", "# define SAVE_DEFSV (PL_wump_task ? Perl_wump_save_defsv(aTHX) : (void)WUMP_ROOT_SAVE_DEFSV)\n# define WUMP_ROOT_SAVE_DEFSV       \\\n");
+edit('pp.c', "S_localise_gv_slot(pTHX_ GV *gv, U8 type)\n{",
+	"S_localise_gv_slot(pTHX_ GV *gv, U8 type)\n{\n    if (PL_wump_task) croak(\"Wump: reference alias localization in a task is not supported yet\");");
+for my $file ('pp.c', 'pp_hot.c') {
+	my @ops = $file eq 'pp.c' ? qw(aslice hslice) : qw(aelem helem multideref);
+	for my $op (@ops) {
+		my $start = "PP(pp_$op)\n{";
+		edit($file, $start, "$start\n    Perl_wump_local_elements_check(aTHX);");
+	}
+}
+edit('pp.c', "S_do_delete_local(pTHX)\n{",
+	"S_do_delete_local(pTHX)\n{\n    Perl_wump_local_elements_check(aTHX);");
 edit('run.c', '#define PERL_IN_RUN_C', "#define PERL_IN_RUN_C\n/* Wump core implementation is built into both perl and miniperl. */");
 my $run = read_file("$source/run.c");
 my $include = "\n#include \"wump_core.c\"\n";
@@ -156,6 +181,7 @@ edit('sv.c', 'SvREADONLY_off(PL_regex_pad[(*pmp)->op_pmoffset]);',
 	'SvREADONLY_off(*Perl_wump_pm_slot(aTHX_ *pmp));');
 for my $pair (
 	["$FindBin::Bin/core/wump_core.c", "$source/wump_core.c"],
+	["$FindBin::Bin/core/wump_local.c", "$source/wump_local.c"],
 	["$FindBin::Bin/../runtime/include/wump.h", "$source/wump.h"],
 	["$FindBin::Bin/../runtime/src/internal.h", "$source/wump_runtime_internal.h"],
 ) {

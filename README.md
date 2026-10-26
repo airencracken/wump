@@ -108,6 +108,7 @@ make perl-fetch                 # downloads, verifies SHA512/size, and unpacks
 make perl-build                 # task-aware MULTIPLICITY + USE_ITHREADS build
 make perl-example               # Perl tasks return 1, 4, 9, 16
 make perl-regex-example         # yielding tasks retain separate regex captures
+make perl-local-example         # spawned tasks inherit separate local bindings
 make perl-test                  # task behavior, failures, shutdown
 make perl-upstream-test         # upstream regex suites and selected interpreter regressions
 make perl-memcheck              # task suite with registered C stacks and full Perl teardown
@@ -186,13 +187,33 @@ Parallel Perl additionally needs the shared-value, reference-counting, and
 pad-pooling changes described in [the design](DESIGN.md).
 Enabling `USE_ITHREADS` prepares Perl's op-sharing infrastructure; it does
 not add `threads.pm` compatibility or implement task isolation by itself.
-This prototype does not implement `sel`, `scope`, `lock`, `pocket`, package
-`local` overlays/inheritance, safe-point
+
+Ordinary package scalar, whole-array, and whole-hash `local` bindings belong
+to the calling task. They survive yields, unwind on return or caught exceptions,
+and leave the global slots intact. Glob aliases see the same binding; references
+taken before localization retain the original value's identity. A spawned task
+inherits a snapshot of its parent's visible bindings. Scalar values and aggregate
+elements are copied shallowly, so referenced objects remain shared. Parent scope
+exit and later assignments do not change the child's inherited slots. Bindings
+localized outside `run` retain ordinary Perl behavior; they are not task snapshots.
+
+Element/slice localization, `delete local`, typeglob/reference-alias localization,
+and localization of magic variables (including tied values and interpreter
+settings such as `$/`) raise errors inside tasks. Spawn also rejects magic values inside inherited
+bindings before invoking any `FETCH` hooks. Localizing a whole plain aggregate
+and then assigning its elements is supported. Symbol-table replacement while a
+binding is active is not supported. These limits keep the remaining shared-state
+paths explicit while their isolation is developed.
+
+This prototype does not implement `sel`, `scope`, `lock`, `pocket`, safe-point
 preemption, or automatic Perl I/O/XS handoff. Ordinary blocking Perl operations
 still occupy the single slot. Compilation/mutation of existing subs while
-tasks are suspended, debugger/general multicall integration, and yielding destructors
-are not supported yet. Task teardown releases abandoned Perl frames and their
-owned values while their C stacks are still mapped; it is not cancellation
+tasks are suspended and debugger/general multicall integration are not supported
+yet. Scope-exit destructors see the enclosing binding and can spawn tasks.
+Abandoning a task suspended inside a destructor remains unsupported, and
+destructors invoked during task teardown cannot schedule. Task teardown
+releases abandoned Perl frames and their owned values while their C stacks
+are still mapped; it is not cancellation
 that resumes the task's ordinary code.
 
 ## Channel selection and timers
