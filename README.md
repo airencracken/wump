@@ -177,7 +177,7 @@ Instances are created lazily from the compiled pattern. Each PMOP has a unique
 identity so a recycled Perl regex-pad offset cannot retrieve an old task's
 instance. Tasks own mutable match data and named-capture iteration state;
 compiled pattern storage can be retained through Perl's regexp copy support.
-The cache currently retains every distinct pattern used until its task ends.
+Entries for retired regex operations remain cached until the task ends.
 Shutdown releases these references and regex callback frames while their Perl
 and C stacks are still available. `pos()` remains a property of the scalar
 being matched: using one shared string also shares its position.
