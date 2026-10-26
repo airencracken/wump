@@ -181,7 +181,10 @@ bool Perl_wump_hv_slot(pTHX_ HV *hv, const char *key, STRLEN len, int flags,
 	if (PL_wump_task && (action & (HV_FETCH_ISSTORE | HV_DELETE)))
 		wump_element_invalidate(aTHX_ PL_wump_task, (SV *)hv);
 	wump_element *slot = wump_element_hv(aTHX_ hv, key, len, flags, FALSE);
-	if (!slot) return FALSE;
+	if (!slot) {
+		if (action & HV_FETCH_ISSTORE) Perl_wump_publish_store(aTHX_ (SV *)hv, value);
+		return FALSE;
+	}
 	if (action & HV_DELETE) {
 		hv_iterinit(slot->cell);
 		HE *he = hv_iternext(slot->cell); /* single immutable key */

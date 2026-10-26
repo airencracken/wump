@@ -298,8 +298,8 @@ See [examples/safety.pl](examples/safety.pl), or run `make perl-safety-example`.
 
 The private core now uses atomic SV-head reference counts as a conservative
 baseline, including the normal C/C++ reference-count helpers. This currently
-adds overhead to owned values too; the proposed owned/shared fast path and
-escape barriers are still pending. The native stress fixture exercises eight
+adds overhead to owned values too; the proposed owned/shared fast path is
+still pending. The native stress fixture exercises eight
 OS threads performing 9.6 million increments/decrements on a rooted SV, in
 both C and C++, without concurrent allocation or value mutation. Run it with
 `make perl-refcount-test`, or `make perl-refcount-tsan` to instrument the native
@@ -312,6 +312,30 @@ or XS safe. Per-worker allocators, deferred reclamation, ownership/publication
 barriers, and the remaining interpreter/XS state split must precede multi-core
 Perl execution. Channel messages copy the outer scalar and retain reference
 identity; pending messages own their references until receive or run cleanup.
+
+The first publication barriers now mark generic Perl value graphs when they
+escape through act captures, inherited references, channels, package-variable
+access, or stores into already published values. The walk follows references,
+array/hash storage, captured/state pad cells, and refcounted magic objects.
+It handles cycles and deep graphs without recursive descent, and invokes no
+`FETCH`, overloaded conversion, or hash-iteration callbacks. Temporary work
+roots are released before the barrier returns; metadata itself owns no values.
+Stores made outside a run still propagate into previously published values.
+Stores made by destructors during abandoned-task cleanup also propagate.
+Fresh local bindings and shallow snapshot cells stay independent; their
+referents are published when shared with a child. New closure instances are
+classified after capture, independently of their prototypes.
+
+`Wump::is_shared($reference)` inspects this experimental publication metadata.
+An unmarked value is **unclassified**, not proven exclusive to one act.
+Native code that writes raw AV/HV storage, opaque regex/class/IO internals,
+and other XS-held roots still need a publication audit before these markers
+can select non-atomic counters or enable parallel execution. This stage adds
+metadata and magic-path overhead; it does not claim a speed improvement.
+The marker uses extension magic and preserves the SV-head layout. Its
+callbacks preserve native magic, localization, and weak-reference lifetimes.
+Run `make perl-publication-example` to see publication through a channel and
+an act capture while retaining the original shared object.
 
 This prototype does not implement `sel`, `scope`, safe-point
 preemption, or automatic Perl I/O/XS handoff. Ordinary blocking Perl operations

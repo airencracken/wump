@@ -3,6 +3,7 @@
 #include "XSUB.h"
 #include "wump_runtime_internal.h"
 #include <math.h>
+#include "wump_publish.c"
 #include "wump_local.c"
 #include "wump_elements.c"
 #include "wump_magic.c"
@@ -108,6 +109,7 @@ HV **Perl_wump_gv_hv(GV *gv) {
 	wump_local *binding = wump_local_find(aTHX_ gv, 'h', FALSE);
 	if (binding != NULL) return (HV **)&binding->value;
 	HV **original = &GvGP(gv)->gp_hv;
+	if (PL_wump_task) Perl_wump_publish(aTHX_ (SV *)*original);
 	if (PL_wump_task == NULL || *original == NULL || !SvMAGICAL(*original)) return original;
 	MAGIC *tied = mg_find((SV *)*original, PERL_MAGIC_tied);
 	if (tied == NULL || tied->mg_obj == NULL || !SvROK(tied->mg_obj)) return original;
@@ -170,6 +172,7 @@ PADLIST **Perl_wump_cv_padlist(CV *cv) {
 void Perl_wump_cv_prepare(pTHX_ CV *cv) {
 	if (PL_wump_task == NULL || PL_wump_task->finished == 2 ||
 		CvISXSUB(cv) || wump_cv_find(aTHX_ cv) != NULL) return;
+	Perl_wump_publish(aTHX_ (SV *)cv);
 	PADLIST *original = CvPADLIST(cv);
 	if (original == NULL) return;
 	wump_cv_slot *slot;
@@ -201,6 +204,8 @@ SV **Perl_wump_gv_sv(GV *gv) {
 		if (gv == aTHX->Idefgv) gv = PL_defgv;
 		else if (gv == aTHX->Ierrgv) gv = PL_errgv;
 		else if (gv == aTHX->Ireplgv) gv = PL_replgv;
+		if (gv != PL_defgv && gv != PL_errgv && gv != PL_replgv)
+			Perl_wump_publish(aTHX_ GvGP(gv)->gp_sv);
 	}
 	return &GvGP(gv)->gp_sv;
 }
@@ -210,6 +215,7 @@ AV **Perl_wump_gv_av(GV *gv) {
 	wump_local *binding = wump_local_find(aTHX_ gv, 'a', FALSE);
 	if (binding != NULL) return (AV **)&binding->value;
 	if (PL_wump_task != NULL && gv == aTHX->Idefgv) gv = PL_defgv;
+	if (PL_wump_task && gv != PL_defgv) Perl_wump_publish(aTHX_ (SV *)GvGP(gv)->gp_av);
 	return &GvGP(gv)->gp_av;
 }
 
@@ -349,6 +355,18 @@ static struct wump_perl_task *wump_perl_task_new(pTHX_ SV *callback) {
 	I32 mark = PL_savestack_ix;
 	SAVEDESTRUCTOR_X(wump_perl_new_abort, task);
 	wump_local_snapshot(aTHX_ task);
+	if (PL_wump_task) {
+		Perl_wump_publish(aTHX_ (SV *)task->entry);
+		/* Snapshot containers/cells are private to the child; only values
+		 * reached through their references escape the parent. */
+		for (wump_local *slot = task->locals; slot; slot = slot->next) {
+			Perl_wump_publish_snapshot(aTHX_ slot->value);
+		}
+		for (wump_element *slot = task->elements; slot; slot = slot->next) {
+			Perl_wump_publish_snapshot(aTHX_ slot->value);
+			Perl_wump_publish_snapshot(aTHX_ (SV *)slot->cell);
+		}
+	}
 	task->id = ++wump_perl_active->next_task;
 	LEAVE_SCOPE(mark);
 	return task;
@@ -494,6 +512,7 @@ static void xs_wump_send(pTHX_ CV *cv) {
 	if (message->next != NULL) message->next->previous = message;
 	wump_perl_active->messages = message;
 	message->value = newSVsv(ST(1));
+	Perl_wump_publish(aTHX_ message->value);
 	if (wump_chan_send(ch->ch, &message) != 0) croak("Wump: send on closed channel");
 	XSRETURN_EMPTY;
 }
@@ -547,6 +566,7 @@ static void xs_wump_sleep(pTHX_ CV *cv) {
 
 void Perl_wump_boot(pTHX) {
 	newXS("Wump::_run", xs_wump_run, __FILE__);
+	newXS("Wump::is_shared", xs_wump_is_shared, __FILE__);
 	newXS("Wump::_act", xs_wump_act, __FILE__);
 	newXS("Wump::_chan", xs_wump_chan, __FILE__);
 	newXS("Wump::_send", xs_wump_send, __FILE__);

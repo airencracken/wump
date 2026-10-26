@@ -49,7 +49,8 @@ char Perl_wump_magic_kind(pTHX_ SV *value) {
 			if (memEQs(key, len, "__DIE__")) kind = 'D';
 			else if (memEQs(key, len, "__WARN__")) kind = 'W';
 			else return 0;
-		} else if (mg->mg_type == PERL_MAGIC_ext && mg->mg_virtual == &wump_magic_vtbl) {
+		} else if ((mg->mg_type == PERL_MAGIC_ext && mg->mg_virtual == &wump_magic_vtbl)
+			|| Perl_wump_publish_magic(mg)) {
 			continue;
 		} else if (mg->mg_type != PERL_MAGIC_backref && mg->mg_type != PERL_MAGIC_taint
 			&& mg->mg_type != PERL_MAGIC_utf8 && mg->mg_type != PERL_MAGIC_regex_global
@@ -153,7 +154,8 @@ char Perl_wump_hook_kind(pTHX_ HV *hv, SV *key) {
 	for (MAGIC *mg = SvMAGIC(hv); mg; mg = mg->mg_moremagic) {
 		if (mg->mg_type == PERL_MAGIC_sig && mg->mg_virtual == &PL_vtbl_sig)
 			signal_hash = TRUE;
-		else if (mg->mg_type != PERL_MAGIC_backref && !Perl_wump_element_magic(mg))
+		else if (mg->mg_type != PERL_MAGIC_backref && !Perl_wump_element_magic(mg)
+			&& !Perl_wump_publish_magic(mg))
 			return 0;
 	}
 	if (!signal_hash) return 0;

@@ -75,11 +75,19 @@ static wump_local *wump_local_add(pTHX_ struct wump_perl_task *task,
 static void wump_local_check(pTHX_ SV *value, char kind) {
 	if (value == NULL) return;
 	bool unsafe = SvGMAGICAL(value) || SvSMAGICAL(value);
+	if (unsafe) {
+		unsafe = FALSE;
+		for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic) {
+			if (Perl_wump_publish_magic(mg)) continue;
+			if (mg->mg_virtual && (mg->mg_virtual->svt_get || mg->mg_virtual->svt_set))
+				unsafe = TRUE;
+		}
+	}
 	if (kind == 's' && Perl_wump_magic_kind(aTHX_ value)) unsafe = FALSE;
 	if (kind != 's' && SvMAGICAL(value)) {
 		for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic) {
 			if (mg->mg_type != PERL_MAGIC_backref && mg->mg_type != PERL_MAGIC_arylen_p
-				&& !Perl_wump_element_magic(mg))
+				&& !Perl_wump_element_magic(mg) && !Perl_wump_publish_magic(mg))
 				unsafe = TRUE;
 		}
 	}

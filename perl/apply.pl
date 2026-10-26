@@ -101,10 +101,21 @@ U8 *Perl_wump_warning_cache(pTHX);
 void Perl_wump_lock(pTHX_ SV *value);
 void Perl_wump_save_capture(pTHX_ GV *gv);
 void Perl_wump_hook_store(pTHX_ SV *value, char kind);
+bool Perl_wump_publish_magic(const MAGIC *mg);
+bool Perl_wump_is_shared(pTHX_ const SV *value);
+void Perl_wump_publish(pTHX_ SV *value);
+void Perl_wump_publish_store(pTHX_ SV *owner, SV *value);
+void Perl_wump_publish_reference(pTHX_ SV *owner, SV *value);
+void Perl_wump_publish_snapshot(pTHX_ SV *value);
+void Perl_wump_publish_refresh(pTHX_ SV *value);
 C
 write_file("$source/wump_task_types.h", $header);
-edit('perl.h', "struct interpreter {\n#  include \"intrpvar.h\"\n};",
-	"#include \"wump_task_types.h\"\nstruct interpreter {\n#  include \"intrpvar.h\"\n    struct wump_perl_task *Iwump_task;\n};");
+if (index(read_file("$source/perl.h"), '#include "wump_task_types.h"') < 0) {
+	edit('perl.h', "struct interpreter {\n#  include \"intrpvar.h\"\n};",
+		"#include \"wump_task_types.h\"\nstruct interpreter {\n#  include \"intrpvar.h\"\n    struct wump_perl_task *Iwump_task;\n};");
+}
+edit('perl.h', "    struct wump_perl_task *Iwump_task;",
+	"    struct wump_perl_task *Iwump_task;\n    bool Iwump_publishing;");
 my $vars = "\n/* Wump execution state: root execution retains the upstream fields. */\n";
 $vars .= "#if defined(MULTIPLICITY)\n#define PL_wump_task (aTHX->Iwump_task)\n";
 for my $name (@vars) {
@@ -244,6 +255,8 @@ require "$FindBin::Bin/hooks.pl";
 apply_hooks($source);
 require "$FindBin::Bin/refcount.pl";
 apply_refcount($source);
+require "$FindBin::Bin/publication.pl";
+apply_publication($source);
 edit('pp.c', '    SvLOCK(sv);', '    if (PL_wump_task) Perl_wump_lock(aTHX_ sv); else SvLOCK(sv);');
 for my $pair (
 	["$FindBin::Bin/core/wump_core.c", "$source/wump_core.c"],
@@ -251,6 +264,7 @@ for my $pair (
 	["$FindBin::Bin/core/wump_elements.c", "$source/wump_elements.c"],
 	["$FindBin::Bin/core/wump_magic.c", "$source/wump_magic.c"],
 	["$FindBin::Bin/core/wump_lock.c", "$source/wump_lock.c"],
+	["$FindBin::Bin/core/wump_publish.c", "$source/wump_publish.c"],
 	["$FindBin::Bin/../runtime/include/wump.h", "$source/wump.h"],
 	["$FindBin::Bin/../runtime/src/internal.h", "$source/wump_runtime_internal.h"],
 ) {

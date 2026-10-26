@@ -245,9 +245,13 @@ other SVs that task owns.
   (§5.3). **No implicit locks.**
 
 The current prototype establishes a conservative atomic SV-head counter
-baseline for all core SVs, plus scoped `lock` inside acts. It does not yet
-distinguish owned/shared counters or implement escape barriers, no-cache reads,
-or deferred reclamation. Those remain prerequisites for multi-core Perl;
+baseline for all core SVs, plus scoped `lock` inside acts. Initial publication
+barriers now track generic references through captures, channels, package
+variables, inherited references, and stores into marked values. They use
+extension magic, leave SV-head layout unchanged, and do not yet prove ownership
+for unmarked values: raw XS storage and opaque native roots remain an audit
+boundary. Owned/shared counter specialization, no-cache reads, and deferred
+reclamation remain prerequisites for multi-core Perl;
 the interpreter bridge still runs with one execution slot. Native counter
 stress is deliberately restricted to a rooted SV without concurrent allocation,
 data mutation, or final destruction. C++ XS standard refcount helpers use atomics;
