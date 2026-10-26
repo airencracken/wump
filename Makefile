@@ -2,6 +2,7 @@ CC = cc
 AR = ar
 BUILD = build
 ITERATIONS = 100000
+PERL_TARBALL = $(BUILD)/perl/perl-5.42.2.tar.xz
 CPPFLAGS = -Iruntime/include -Iruntime/src
 CFLAGS = -O2 -g -std=c11 -Wall -Wextra -Werror -pthread
 LDFLAGS = -pthread
@@ -13,8 +14,20 @@ WRAPPED = pthread_mutex_init pthread_cond_init pthread_condattr_init pthread_con
 IO_WRAPPED = calloc realloc pthread_mutex_init pthread_create epoll_create1 eventfd epoll_ctl epoll_wait fcntl poll __poll_chk read __read_chk write close accept4 connect getsockopt getpeername
 SYSCALL_WRAPPED = calloc pthread_cond_init pthread_cond_destroy pthread_cond_broadcast pthread_create pthread_join
 
-.PHONY: all test stress ubsan tsan tsan-control memcheck bench bench-compare clean
+.PHONY: all test stress ubsan tsan tsan-control memcheck bench bench-compare clean perl-source perl-fetch perl-build perl-source-test
 all: $(BUILD)/libwump.a $(BUILD)/hello $(BUILD)/select $(BUILD)/echo $(BUILD)/blocking
+
+perl-source:
+	bash perl/source.sh '$(BUILD)' '$(PERL_TARBALL)'
+
+perl-fetch:
+	bash perl/source.sh '$(BUILD)' --fetch
+
+perl-build: perl-source
+	bash perl/build.sh '$(BUILD)'
+
+perl-source-test:
+	bash tests/perl/source.sh
 
 $(BUILD):
 	mkdir -p $@

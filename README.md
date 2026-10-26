@@ -95,6 +95,34 @@ its main task may be stolen and run by another worker. Slot IDs are stable
 indices, not OS thread IDs. `WUMPPROCS` is not
 implemented yet.
 
+## Perl fork bootstrap
+
+The next integration step targets Perl 5.42.2, matching the installed Perl
+and the design's 5.42 base. Source acquisition and a private upstream build
+are available now; Perl task syntax and interpreter isolation are not yet
+implemented. The bootstrap does not install or replace system Perl.
+
+```sh
+make perl-fetch                 # downloads, verifies SHA512/size, and unpacks
+make perl-build                 # private MULTIPLICITY + USE_ITHREADS build
+make perl-source-test           # offline source acquisition failure tests
+```
+
+For an existing release archive, use
+`make perl-build PERL_TARBALL=/path/to/perl-5.42.2.tar.xz`.
+`PERL_JOBS=4` controls build parallelism. Source, configuration, and build
+outputs stay under `build/perl/`; the release archive is pinned by
+[perl/upstream.lock](perl/upstream.lock). Existing unrecognized source trees
+are preserved and rejected. `make clean` removes these private build outputs
+along with the runtime build outputs, so keep editable fork changes in
+repository patches rather than only in the generated source tree.
+
+The first Perl target is one execution slot with separate task stacks and
+channel operations. Parallel Perl additionally needs the shared-value,
+reference-counting, and pad changes described in [the design](DESIGN.md).
+Enabling `USE_ITHREADS` prepares Perl's op-sharing infrastructure; it does
+not add `threads.pm` compatibility or implement task isolation by itself.
+
 ## Channel selection and timers
 
 `wump_sel(cases, ncases, timeout_ns, &chosen)` performs exactly one channel

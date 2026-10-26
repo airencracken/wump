@@ -1,0 +1,6 @@
+# Perl 5.42.2 release archive. SHA512 and size match the locally installed
+# Gentoo dev-lang/perl Manifest, checked on 2026-10-25.
+version 5.42.2
+url https://www.cpan.org/src/5.0/perl-5.42.2.tar.xz
+size 14483976
+sha512 3c77dbede22df1a7ab3714c7dc6d675f14cb99b084fcc4e4d9b65aed1a080ac4d5ecf2cbf4759b2565f6452e52b337633f870dbcbf152dc66833cfe71f04fffc
