@@ -46,6 +46,9 @@ typedef struct wump_g {
 	uint64_t *stack_lo;
 	void (*cancel_fn)(void *);
 	void *cancel_arg;
+	void (*context_enter)(void *);
+	void (*context_free)(void *);
+	void *context_arg;
 #ifdef WUMP_VALGRIND
 	unsigned valgrind_stack;
 #endif
@@ -92,6 +95,14 @@ wump_g *wump_stack_new(size_t stack_size);
 void wump_stack_free(wump_g *g);
 
 wump_g *wump_self(void);
+/* Interpreter integration: hooks run on the scheduler stack. They must
+ * return normally without scheduling. All waiters are detached before
+ * shutdown calls context_free, and stacks remain mapped until it returns. */
+int wump_context_attach(void (*enter)(void *), void (*cleanup)(void *), void *arg);
+/* Successful spawn owns arg through cleanup, even if never dispatched.
+ * Failed spawn leaves ownership with the caller. */
+int wump_go_context(wump_fn fn, void *arg, void (*enter)(void *), void (*cleanup)(void *));
+void wump_halt(int error);
 /* Called with the primitive's lock held. The scheduler releases it only
  * after saving the coroutine context and finishing all access to it. */
 void wump_park(void (*unlock)(void *), void *arg);

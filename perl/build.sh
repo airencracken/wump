@@ -5,15 +5,25 @@ if [ "$#" -ne 1 ]; then
 	printf 'usage: %s BUILD_DIRECTORY\n' "$0" >&2
 	exit 1
 fi
-wump_version=$(awk '$1 == "version" {print $2}' "$(dirname -- "$0")/upstream.lock")
+wump_script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -z "$wump_script_dir" ]; then exit 1; fi
+wump_version=$(awk '$1 == "version" {print $2}' "$wump_script_dir/upstream.lock")
 if [ -z "$wump_version" ]; then exit 1; fi
 wump_source_dir=$1/perl/perl-$wump_version
+wump_runtime_override=
+if [ -n "${PERL_RUNTIME_BUILD:-}" ]; then
+	wump_runtime_override=$(CDPATH= cd -- "$PERL_RUNTIME_BUILD" && pwd)
+	if [ -z "$wump_runtime_override" ]; then exit 1; fi
+fi
 if [ ! -f "$wump_source_dir/.wump-upstream" ]; then
 	printf '%s\n' 'Run make perl-source before building the Perl fork.' >&2
 	exit 1
 fi
 if ! cd -- "$wump_source_dir"; then exit 1; fi
 wump_source_dir=$PWD
+wump_runtime_build=$(CDPATH= cd -- ../.. && pwd)
+if [ -z "$wump_runtime_build" ]; then exit 1; fi
+if [ -n "$wump_runtime_override" ]; then wump_runtime_build=$wump_runtime_override; fi
 if [ ! -f config.sh ]; then
 	if ! sh Configure -des -Dusemultiplicity -Duseithreads -Duse64bitall \
 		-Dprefix="$wump_source_dir/../install" -Dman1dir=none -Dman3dir=none; then
@@ -27,11 +37,30 @@ for wump_option in usemultiplicity useithreads; do
 		exit 1
 	fi
 done
+if ! perl "$wump_script_dir/apply.pl" "$wump_source_dir"; then exit 1; fi
 wump_jobs=${PERL_JOBS:-4}
 if [[ ! "$wump_jobs" =~ ^[1-9][0-9]*$ ]]; then
 	printf '%s\n' 'PERL_JOBS must be a positive integer.' >&2
 	exit 1
 fi
+wump_runtime_objects=
+for wump_object in stack sched chan io error ctx_x86_64; do
+	if [ ! -f "$wump_runtime_build/$wump_object.o" ]; then
+		printf 'Missing runtime object: %s\n' "$wump_runtime_build/$wump_object.o" >&2
+		exit 1
+	fi
+	wump_runtime_objects="$wump_runtime_objects $wump_runtime_build/$wump_object.o"
+done
+wump_runtime_config=$(printf 'ARCHOBJS =%s\ninclude %s/deps.mk\n' "$wump_runtime_objects" "$wump_script_dir")
+if [ ! -f wump_runtime.mk ] || [ "$(cat wump_runtime.mk)" != "$wump_runtime_config" ]; then
+	if ! printf '%s\n' "$wump_runtime_config" >wump_runtime.mk; then exit 1; fi
+fi
+for wump_makefile in Makefile makefile; do
+	if [ -f "$wump_makefile" ] && ! grep -q '^include wump_runtime.mk$' "$wump_makefile"; then
+		if ! chmod u+w "$wump_makefile"; then exit 1; fi
+		if ! printf '\ninclude wump_runtime.mk\n' >>"$wump_makefile"; then exit 1; fi
+	fi
+done
 if ! make -j"$wump_jobs"; then
 	printf '%s\n' 'Perl build failed; the source and build outputs were preserved.' >&2
 	exit 1

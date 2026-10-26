@@ -1,8 +1,8 @@
 # wump
 
 Go-style parallel concurrency for Perl. The [design](DESIGN.md) describes the
-Perl fork and its standalone C runtime. This checkout implements the first
-runtime slice on Linux x86-64; it does not yet run Perl programs.
+Perl fork and its standalone C runtime. This checkout implements the runtime
+and an initial single-slot Perl integration on Linux x86-64.
 
 Implemented:
 
@@ -29,8 +29,8 @@ Implemented:
 - GCC and Clang builds, concurrency and failure-injection tests, sanitizer
   checks, and equivalent C/Go benchmarks.
 
-The next parts of milestone 0 are sysmon and scheduling/performance work. Perl
-integration and deployment tooling remain later milestones. The design's
+The next parts of milestone 0 are sysmon and scheduling/performance work. Full
+Perl integration and deployment tooling remain later milestones. The design's
 million-task and within-2x-of-Go targets have not been achieved or validated.
 
 ## Build and run
@@ -95,33 +95,86 @@ its main task may be stolen and run by another worker. Slot IDs are stable
 indices, not OS thread IDs. `WUMPPROCS` is not
 implemented yet.
 
-## Perl fork bootstrap
+## Running Perl tasks
 
-The next integration step targets Perl 5.42.2, matching the installed Perl
-and the design's 5.42 base. Source acquisition and a private upstream build
-are available now; Perl task syntax and interpreter isolation are not yet
-implemented. The bootstrap does not install or replace system Perl.
+The Perl integration targets Perl 5.42.2, matching the installed Perl
+and the design's 5.42 base. The private fork can run Perl closures as runtime
+tasks, send scalar values and references through channels, yield, and sleep.
+This is a single-slot prototype; Perl code does not yet run on multiple cores.
+The build does not install or replace system Perl.
 
 ```sh
 make perl-fetch                 # downloads, verifies SHA512/size, and unpacks
-make perl-build                 # private MULTIPLICITY + USE_ITHREADS build
+make perl-build                 # task-aware MULTIPLICITY + USE_ITHREADS build
+make perl-example               # Perl tasks return 1, 4, 9, 16
+make perl-test                  # task behavior, failures, shutdown
+make perl-upstream-test         # selected upstream interpreter regressions
+make perl-memcheck              # task suite with registered C stacks and full Perl teardown
 make perl-source-test           # offline source acquisition failure tests
 ```
 
 For an existing release archive, use
 `make perl-build PERL_TARBALL=/path/to/perl-5.42.2.tar.xz`.
-`PERL_JOBS=4` controls build parallelism. Source, configuration, and build
+`PERL_JOBS=4` controls build parallelism. Run the Perl targets serially;
+concurrent invocations against the same generated tree are unsupported.
+Source, configuration, and build
 outputs stay under `build/perl/`; the release archive is pinned by
 [perl/upstream.lock](perl/upstream.lock). Existing unrecognized source trees
 are preserved and rejected. `make clean` removes these private build outputs
 along with the runtime build outputs, so keep editable fork changes in
 repository patches rather than only in the generated source tree.
 
-The first Perl target is one execution slot with separate task stacks and
-channel operations. Parallel Perl additionally needs the shared-value,
-reference-counting, and pad changes described in [the design](DESIGN.md).
+The prototype runs on one execution slot with separate task stacks and
+channel operations:
+
+```perl
+use v5.42;
+use Wump;
+
+run {
+	my $results = chan(2);
+	for my $number (1..4) {
+		act { $results->send($number * $number) };
+	}
+	say scalar $results->recv for 1..4;
+};
+```
+
+These are exported functions from `Wump`, rather than the design's eventual
+core feature syntax. `act` accepts a block and returns nothing. `chan()` is unbuffered;
+`chan(N)` has N slots. `send` copies its scalar, preserving reference identity.
+`recv` returns a value in scalar context, or `(value, ok)` in list context;
+`ok` is false once a closed channel is drained. `undef` remains a valid message.
+`close` wakes waiting tasks; duplicate close and send-after-close throw within
+the task. `yield` and `sleep(SECONDS)` schedule cooperatively. These operations
+require a running task; channels cannot outlive their `run`.
+
+The main block returning abandons other tasks. A caught `die` stays within
+its task. An uncaught task exception stops the run, prints its task ID and
+error, and exits the process with status 2, including inside an outer `eval`.
+Full task stack traces are still pending. Deadlock returns a catchable runtime
+error to the surrounding Perl caller, and later runs remain usable.
+
+The fork redirects execution state through a task pointer instead of copying
+interpreter globals at every switch. Each task owns its Perl stacks, exception
+state, default scalar, arguments, and separate pad frames for called subs.
+Captured and `state` lexicals retain their shared identity. Stashes and op
+trees belong to one interpreter; tasks do not clone interpreters. The original
+interpreter fields remain as the root context outside `run`; the design's full
+`aTHX`/per-task/per-P/process-global split remains future work.
+
+Parallel Perl additionally needs the shared-value, reference-counting, and
+pad-pooling changes described in [the design](DESIGN.md).
 Enabling `USE_ITHREADS` prepares Perl's op-sharing infrastructure; it does
 not add `threads.pm` compatibility or implement task isolation by itself.
+This prototype does not implement `sel`, `scope`, `lock`, `pocket`, package
+`local` overlays/inheritance, task-specific regex instances, safe-point
+preemption, or automatic Perl I/O/XS handoff. Ordinary blocking Perl operations
+still occupy the single slot. Compilation/mutation of existing subs while
+tasks are suspended, debugger/multicall integration, and yielding destructors
+are not supported yet. Task teardown releases abandoned Perl frames and their
+owned values while their C stacks are still mapped; it is not cancellation
+that resumes the task's ordinary code.
 
 ## Channel selection and timers
 

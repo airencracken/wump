@@ -84,6 +84,13 @@ static void stop(wump_runtime *rt, int error) {
 	pthread_mutex_unlock(&rt->mu);
 }
 
+void wump_halt(int error) {
+	wump_machine *m = current_machine();
+	if (m != NULL) {
+		stop(m->rt, error);
+	}
+}
+
 static void global_push_locked(wump_runtime *rt, wump_g *g) {
 	g->next = NULL;
 	if (rt->tail != NULL) {
@@ -376,6 +383,17 @@ static void recycle(wump_worker *w, wump_g *g) {
 	}
 }
 
+static void context_free(wump_g *g) {
+	void (*cleanup)(void *) = g->context_free;
+	void *arg = g->context_arg;
+	g->context_enter = NULL;
+	g->context_free = NULL;
+	g->context_arg = NULL;
+	if (cleanup != NULL) {
+		cleanup(arg);
+	}
+}
+
 static void *machine_entry(void *arg);
 
 /* rt->mu is held until the donor has committed the P handoff. A newly
@@ -452,6 +470,9 @@ static wump_g *new_task(wump_worker *p, wump_fn fn, void *arg, size_t stack_size
 	g->saved_errno = 0;
 	g->cancel_fn = NULL;
 	g->cancel_arg = NULL;
+	g->context_enter = NULL;
+	g->context_free = NULL;
+	g->context_arg = NULL;
 	*g->stack_lo = WUMP_STACK_CANARY;
 	g->sp = wump_ctx_init(g, task_entry, g);
 #ifdef WUMP_TSAN
@@ -509,6 +530,9 @@ static void schedule(wump_machine *m) {
 		}
 		m->cur = g;
 		g->state = G_RUNNING;
+		if (g->context_enter != NULL) {
+			g->context_enter(g->context_arg);
+		}
 		wump_set_errno(g->saved_errno);
 #ifdef WUMP_TSAN
 		__tsan_switch_to_fiber(g->tsan_fiber, 0);
@@ -543,6 +567,7 @@ static void schedule(wump_machine *m) {
 			local_push(p, g);
 		} else {
 			assert(state == G_DEAD);
+			context_free(g);
 			if (g == rt->main_g) {
 				stop(rt, 0);
 			} else {
@@ -561,6 +586,22 @@ static void *machine_entry(void *arg) {
 wump_g *wump_self(void) {
 	wump_machine *m = current_machine();
 	return m != NULL && m->p != NULL && !m->in_syscall ? m->cur : NULL;
+}
+
+int wump_context_attach(void (*enter)(void *), void (*cleanup)(void *), void *arg) {
+	wump_g *g = wump_self();
+	if (g == NULL || enter == NULL || cleanup == NULL) {
+		wump_set_errno(EINVAL);
+		return -1;
+	}
+	if (g->context_enter != NULL) {
+		wump_set_errno(EBUSY);
+		return -1;
+	}
+	g->context_enter = enter;
+	g->context_free = cleanup;
+	g->context_arg = arg;
+	return 0;
 }
 
 void wump_park(void (*unlock)(void *), void *arg) {
@@ -586,7 +627,11 @@ void wump_yield(void) {
 }
 
 int wump_go(wump_fn fn, void *arg) {
-	if (wump_self() == NULL || fn == NULL) {
+	return wump_go_context(fn, arg, NULL, NULL);
+}
+
+int wump_go_context(wump_fn fn, void *arg, void (*enter)(void *), void (*cleanup)(void *)) {
+	if (wump_self() == NULL || fn == NULL || (enter == NULL) != (cleanup == NULL)) {
 		wump_set_errno(EINVAL);
 		return -1;
 	}
@@ -595,6 +640,9 @@ int wump_go(wump_fn fn, void *arg) {
 	if (g == NULL) {
 		return -1;
 	}
+	g->context_enter = enter;
+	g->context_free = cleanup;
+	g->context_arg = arg;
 	local_push(p, g);
 	return 0;
 }
@@ -783,6 +831,9 @@ destroy_workers:
 		if (g->cancel_fn != NULL) {
 			g->cancel_fn(g->cancel_arg);
 		}
+	}
+	for (wump_g *g = rt.all; g != NULL; g = g->all_next) {
+		context_free(g);
 	}
 	wump_poller_destroy(rt.poller);
 	while (rt.all != NULL) {
