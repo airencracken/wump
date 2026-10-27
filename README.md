@@ -141,7 +141,15 @@ without executing Perl opcodes or allocating Perl values in those threads;
 state-isolation prerequisite; the allocator and remaining shared interpreter
 state still prevent multi-worker Perl execution.
 
-For example:
+`run { ... }` below is temporary prototype scaffolding and must be removed
+from the public interface. The intended design has the interpreter run
+ordinary top-level Perl as the main act and manage scheduler startup,
+parallel execution, and shutdown automatically. `act { ... }` spawns work
+directly, like Go's `go`; `scope` provides explicit waiting for spawned acts.
+Removing exported `run` and migrating the examples/tests are required entry
+integration work, tracked in [design milestone 1](DESIGN.md#8-milestones).
+
+Current prototype example:
 
 ```perl
 use v5.42;

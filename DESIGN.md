@@ -71,6 +71,15 @@ lock %cache;                       # Perl's existing `lock` keyword, now a
 
 ### Semantics
 - **`act` returns nothing**, like `go`. Results come back through channels.
+- **The interpreter owns the runtime.** With Wump enabled, ordinary
+  top-level Perl code runs as the main act. The interpreter manages scheduler
+  startup, parallel execution, and shutdown; application code uses `act` to
+  spawn work directly.
+- **No application-level `run { ... }` wrapper in the final interface.**
+  The prototype's exported `run` function is temporary test/embedding
+  scaffolding. Removing it is required integration work, not an optional
+  alternative API. `act` keeps its Go-style spawn semantics, and `scope`
+  provides explicit waiting for its spawned acts.
 - **Uncaught `die` in any task is a Go panic:** print the error and a
   stack trace for that task (`task 42 [running]:` plus the Perl call
   stack), then exit the whole program with status 2.
@@ -478,6 +487,14 @@ Each one ends in something runnable.
    split, `my_perl` = task, `act`/`chan`/`sel`/`scope`/`lock`/`pocket` in core,
    task-local specials and `local` overlays, panic semantics. Perl test
    suite passes.
+   - Required entry integration: run ordinary top-level Perl as the main act
+     and let the interpreter own scheduler lifetime. Remove the prototype's
+     exported `run` function and migrate its examples and tests.
+   - Acceptance: a Wump-enabled script creates a channel, spawns with
+     `act { ... }`, and receives a result at top level without `run { ... }`.
+     Verify spawn returns immediately, main-task exit ends execution, and
+     explicit `scope` waiting remains separate. This entry integration can
+     run on one P while parallel execution is still being brought up.
 2. **Many Ps for I/O**: Ms, syscall handoff, netpoller, fork(), signals.
    Perl code still runs on one P at a time behind a runtime lock; that's
    development scaffolding, never a shipped mode.
