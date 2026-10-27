@@ -5,8 +5,11 @@
 static UV stale_id;
 
 static int execute(pTHX_ char *body, char *library, int expected) {
-	char program[] = "interpreter-entry", option[] = "-e", modules[] = "-Iperl/lib";
-	char *args[] = {program, modules, library, option, body, NULL};
+	/* perl_parse retains argv through interpreter destruction. */
+	static char program[] = "interpreter-entry", option[] = "-e", modules[] = "-Iperl/lib";
+	static char *args[] = {program, modules, NULL, option, NULL, NULL};
+	args[2] = library;
+	args[4] = body;
 	if (perl_parse(aTHX_ NULL, 5, args, NULL)) return 1;
 	if (stale_id) {
 		/* Keep only the ID across interpreter destruction. Never retain
