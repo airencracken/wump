@@ -4,9 +4,11 @@ use warnings;
 use Test::More;
 use Scalar::Util 'refaddr';
 use Wump;
+use lib 'tests/perl/lib';
+use WumpTest;
 
 my $counter = {value => 0};
-run {
+scope {
 	my $done = chan;
 	for (1..12) {
 		act {
@@ -24,7 +26,7 @@ run {
 is($counter->{value}, 360, 'lock serializes shared reference updates across yields');
 
 my ($error, $after);
-run {
+scope {
 	my $done = chan;
 	eval {
 		lock $counter;
@@ -39,7 +41,7 @@ is($error, "unlock on unwind\n", 'lock keeps exception text intact');
 is($after, 'acquired', 'exception unwinding releases a lock to a parked act');
 
 my ($recursive, $returned);
-run {
+scope {
 	lock $counter;
 	eval { lock $counter };
 	$recursive = $@;
@@ -50,7 +52,7 @@ is($returned, refaddr($counter), 'lock preserves reference identity');
 
 my (@array, %hash, $scalar);
 my @events;
-run {
+scope {
 	my $done = chan;
 	{
 		lock @array;
@@ -76,38 +78,29 @@ my $owned = 0;
 	sub DESTROY { $owned++ }
 }
 my @lifetimes;
-run {
+scope {
 	my $item = bless {}, 'LockOwned';
 	{ lock $item; undef $item; yield; push @lifetimes, $owned }
 	push @lifetimes, $owned;
 };
 is_deeply(\@lifetimes, [0, 1], 'lock retains its target until scope exit and then releases it immediately');
 
-run {
+check_program(q{
+	use Wump;
+	my $counter = {};
 	my $park = chan;
 	act { lock $counter; $park->recv };
 	yield;
 	act { lock $counter; die "canceled waiter ran\n" };
 	yield;
-};
-pass('shutdown cancels both lock owner and parked lock waiter');
-run { lock $counter; $counter->{value}++ };
-is($counter->{value}, 361, 'a later run can lock a target whose previous owner was abandoned');
+	print "main returned\n";
+}, 0, qr/\Amain returned\n\z/, 'shutdown cancels lock owner and parked waiter');
 
-my $deadlock;
-eval {
-	run {
-		my $a = {};
-		my $b = {};
-		act { lock $a; yield; lock $b };
-		lock $b;
-		yield;
-		lock $a;
-	};
-};
-$deadlock = $@;
-like($deadlock, qr/runtime failed/, 'lock-order deadlock returns to the surrounding caller');
-run { lock $counter };
-pass('lock state recovers after deadlock cleanup');
+check_program(q{
+	use Wump;
+	my ($a, $b) = ({}, {});
+	act { lock $a; yield; lock $b };
+	lock $b; yield; lock $a;
+}, 2, qr/Wump: runtime failed:/, 'lock-order deadlock terminates with a diagnostic');
 
 done_testing;

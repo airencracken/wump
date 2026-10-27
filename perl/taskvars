@@ -42,6 +42,8 @@ top_env
 start_env
 sortcop
 sortstash
+firstgv
+secondgv
 errgv
 replgv
 eval_root
@@ -49,3 +51,5 @@ eval_start
 curcopdb
 in_diehook
 in_warnhook
+statusvalue
+statusvalue_posix

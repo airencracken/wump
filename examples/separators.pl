@@ -1,7 +1,7 @@
 use v5.42;
 use Wump;
 
-run {
+scope {
 	my $done = chan;
 	for my $separator (':', '|') {
 		act {

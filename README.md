@@ -141,13 +141,10 @@ without executing Perl opcodes or allocating Perl values in those threads;
 state-isolation prerequisite; the allocator and remaining shared interpreter
 state still prevent multi-worker Perl execution.
 
-`run { ... }` below is temporary prototype scaffolding and must be removed
-from the public interface. The intended design has the interpreter run
-ordinary top-level Perl as the main act and manage scheduler startup,
-parallel execution, and shutdown automatically. `act { ... }` spawns work
-directly, like Go's `go`; `scope` provides explicit waiting for spawned acts.
-Removing exported `run` and migrating the examples/tests are required entry
-integration work, tracked in [design milestone 1](DESIGN.md#8-milestones).
+`use Wump` enables interpreter-owned scheduling: ordinary top-level Perl runs
+as the main act. The interpreter starts and stops the scheduler automatically,
+currently on one execution slot. `act { ... }` spawns work directly and returns
+immediately. The prototype's former `run` wrapper has been removed.
 
 Current prototype example:
 
@@ -155,13 +152,11 @@ Current prototype example:
 use v5.42;
 use Wump;
 
-run {
-	my $results = chan(2);
-	for my $number (1..4) {
-		act { $results->send($number * $number) };
-	}
-	say scalar $results->recv for 1..4;
-};
+my $results = chan(2);
+for my $number (1..4) {
+	act { $results->send($number * $number) };
+}
+say scalar $results->recv for 1..4;
 ```
 
 These are exported functions from `Wump`, rather than the design's eventual
@@ -171,30 +166,45 @@ core feature syntax. `act` accepts a block and returns nothing. `chan()` is unbu
 `ok` is false once a closed channel is drained. `undef` remains a valid message.
 `close` wakes waiting tasks; duplicate close and send-after-close throw within
 the task. `yield` and `sleep(SECONDS)` schedule cooperatively. These operations
-require a running task; channels cannot outlive their `run`.
+require a running task. Compile-time blocks cannot schedule, and importing
+Wump at runtime without compile-time activation fails explicitly.
 
-The main block returning abandons other tasks. A caught `die` stays within
-its task. An uncaught task exception stops the run, prints its task ID and
+`scope { ... }` executes its block immediately, then waits for acts spawned
+inside it and their descendants. Nested scopes wait for their own groups;
+unrelated acts are independent. A caught exception in the scope body unwinds
+the scope without waiting or canceling its children.
+
+Returning from the main program abandons other tasks. A caught `die` stays within
+its task. An uncaught task exception stops the scheduler, prints its task ID and
 error, and exits the process with status 2, including inside an outer `eval`.
-Full task stack traces are still pending. Deadlock returns a catchable runtime
-error to the surrounding Perl caller, and later runs remain usable.
+Full task stack traces are still pending. Deadlock prints a runtime diagnostic
+and exits with status 2. Explicit main `exit` preserves its requested status.
+INIT and END blocks keep their interpreter ordering; END runs in the main act
+before remaining acts are abandoned.
 
 The fork redirects execution state through a task pointer instead of copying
 interpreter globals at every switch. Each task owns its Perl stacks, exception
 state, default scalar, arguments, and separate pad frames for called subs.
 Captured and `state` lexicals retain their shared identity. Stashes and op
-trees belong to one interpreter; tasks do not clone interpreters. The original
-interpreter fields remain as the root context outside `run`; the design's full
+trees belong to one interpreter; tasks do not clone interpreters. The main act
+borrows the interpreter's original stacks, which remain owned by Perl teardown.
+Spawned acts own separate stacks. The design's full
 `aTHX`/per-task/per-P/process-global split remains future work.
+
+Custom sorts preserve their `$a`/`$b` operands across yields in main and spawned
+acts. Linux `$!` and `$^E` use the scheduler's per-act native errno; `$?` has
+task-local status storage. Their `local` bindings restore the enclosing value
+on return and exception unwind. New acts start with their own error and status
+values rather than inheriting those bindings.
 
 Regex match state is task-local. Numbered and named captures, capture offsets,
 `/p` values, `$^R`, named-capture hash iterators, match-once flags, and `/o`
 caches survive yields without taking another task's results. Runtime `/o`
 patterns compile on their first evaluation in each task. Regex code blocks
 and substitution replacements can yield; `qr` values retain their captured
-lexicals when sent to another task or retained after a run. An empty pattern
-still uses the calling task's previous pattern, and tied match inputs still
-receive their normal magic callbacks.
+lexicals when sent to another task or retained after their creating act exits.
+An empty pattern still uses the calling task's previous pattern, and tied
+match inputs still receive their normal magic callbacks.
 
 Instances are created lazily from the compiled pattern. Each PMOP has a unique
 identity so a recycled Perl regex-pad offset cannot retrieve an old task's
@@ -217,7 +227,7 @@ taken before localization retain the original value's identity. A spawned task
 inherits a snapshot of its parent's visible bindings. Scalar values and aggregate
 elements are copied shallowly, so referenced objects remain shared. Parent scope
 exit and later assignments do not change the child's inherited slots. Bindings
-localized outside `run` retain ordinary Perl behavior; they are not task snapshots.
+in compile-time code retain upstream Perl behavior.
 
 Ordinary array/hash elements and slices also support task-local `local`.
 Their bindings follow the aggregate's identity, including through references
@@ -298,7 +308,7 @@ to pocket values. Lexical `my` variables keep their usual closure-capture rules.
 
 Pockets currently support the same package variables, elements and slices
 as task-local `local`, with the restrictions described above. Executing `pocket`
-requires a running `run`/`act`; lexical scalar targets remain invalid, as with
+requires a running main or spawned act; lexical scalar targets remain invalid, as with
 `local`. `no Wump` disables the keyword within its lexical scope. Qualified
 names, method names and hash keys retain normal lookup. The keyword is an
 experimental part of the private fork, not a stock Perl feature.
@@ -312,7 +322,7 @@ hash address the same mutex. Locks are released on scope exit, exception unwind,
 and abandoned-task cleanup. Acquisition is not reentrant: locking the same
 identity twice in one act raises an error. Locks are not inherited at spawn.
 The lock retains its target while holders or waiters exist, then releases it
-immediately. Code outside a run keeps upstream Perl's lock behavior.
+immediately. Scripts that do not enable Wump keep upstream Perl's lock behavior.
 See [examples/safety.pl](examples/safety.pl), or run `make perl-safety-example`.
 
 The private core now uses atomic SV-head reference counts as a conservative
@@ -330,7 +340,7 @@ make concurrent Perl allocation, destruction, read caching, compiler state,
 or XS safe. Per-worker allocators, deferred reclamation, ownership/publication
 barriers, and the remaining interpreter/XS state split must precede multi-core
 Perl execution. Channel messages copy the outer scalar and retain reference
-identity; pending messages own their references until receive or run cleanup.
+identity; pending messages own their references until receive or scheduler cleanup.
 
 The first publication barriers now mark generic Perl value graphs when they
 escape through act captures, inherited references, channels, package-variable
@@ -343,7 +353,7 @@ their common Perl roots while their private pointers remain opaque.
 It handles cycles and deep graphs without recursive descent, and invokes no
 `FETCH`, overloaded conversion, or hash-iteration callbacks. Temporary work
 roots are released before the barrier returns; metadata itself owns no values.
-Stores made outside a run still propagate into previously published values.
+Stores made outside an act still propagate into previously published values.
 Stores made by destructors during abandoned-task cleanup also propagate.
 Fresh local bindings and shallow snapshot cells stay independent; their
 referents are published when shared with a child. New closure instances are
@@ -364,7 +374,7 @@ callbacks preserve native magic, localization, and weak-reference lifetimes.
 Run `make perl-publication-example` to see publication through a channel and
 an act capture while retaining the original shared object.
 
-This prototype does not implement `sel`, `scope`, safe-point
+This prototype does not implement `sel`, safe-point
 preemption, or automatic Perl I/O/XS handoff. Ordinary blocking Perl operations
 still occupy the single slot. Compilation/mutation of existing subs while
 tasks are suspended and debugger/general multicall integration are not supported

@@ -4,11 +4,13 @@ use warnings;
 use Test::More;
 use Scalar::Util qw(refaddr weaken);
 use Wump;
+use lib 'tests/perl/lib';
+use WumpTest;
 
 our $package_value = {visits => 0};
 my $shared = {visits => 0};
 my ($message, $captured);
-run {
+scope {
 	my $out = chan;
 	act {
 		lock $shared;
@@ -30,7 +32,7 @@ my $destroyed = 0;
 	sub DESTROY { $destroyed++ }
 }
 my $weak;
-run {
+scope {
 	my $out = chan(4);
 	act {
 		for (1..400) {
@@ -50,19 +52,20 @@ run {
 is($destroyed, 400, 'buffered shared messages and scoped locks release each object exactly once');
 is($weak, undef, 'shared message cleanup invalidates weak references');
 
-run {
+check_program(q{
+	use Wump;
+	package SharedOwned { sub DESTROY { print "released\n" } }
 	my $out = chan(1);
 	act {
 		$out->send(bless {}, 'SharedOwned');
 		$out->send(bless {}, 'SharedOwned');
 	};
 	yield;
-};
-is($destroyed, 402, 'shutdown releases buffered and blocked-send message references');
+}, 0, qr/\Areleased\nreleased\n\z/, 'shutdown releases buffered and blocked-send message references');
 
 my $cycle = {};
 $cycle->{self} = $cycle;
-run {
+scope {
 	my $out = chan;
 	act { $out->send($cycle) };
 	my $received = $out->recv;

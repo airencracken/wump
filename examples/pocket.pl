@@ -4,7 +4,7 @@ use Wump;
 our $request = 'outside';
 sub current_request { $request }
 
-run {
+scope {
 	my $done = chan;
 	local $request = 'inherited context';
 	{

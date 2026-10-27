@@ -5,12 +5,14 @@ use Test::More;
 use Scalar::Util 'refaddr';
 use English '-no_match_vars';
 use Wump;
+use lib 'tests/perl/lib';
+use WumpTest;
 use XS::APItest ();
 
 my @seen;
 my $root = sub { push @seen, "root:$_[0]" };
 local $SIG{__WARN__} = $root;
-run {
+scope {
 	my $out = chan;
 	for my $name ('one', 'two') {
 		act {
@@ -27,7 +29,7 @@ is(refaddr($SIG{__WARN__}), refaddr($root), 'task hooks leave the root hook inta
 
 @seen = ();
 my @errors;
-run {
+scope {
 	my $out = chan;
 	for my $name ('one', 'two') {
 		act {
@@ -42,7 +44,7 @@ is_deeply([sort @seen], ["one:one\n", "two:two\n"], 'die callbacks remain isolat
 is_deeply([sort @errors], ["one\n", "two\n"], 'die hooks preserve caught exceptions');
 
 @seen = ();
-run {
+scope {
 	my $go = chan;
 	my $out = chan;
 	{
@@ -57,7 +59,7 @@ run {
 is_deeply(\@seen, ["pocket:parent\n", "ordinary:child\n"], 'spawn inherits ordinary hooks through pocket after parent scope exit');
 
 @seen = ();
-run {
+scope {
 	local $SIG{__WARN__} = sub { push @seen, "outer:$_[0]" };
 	eval {
 		local $SIG{__WARN__} = sub { push @seen, "inner:$_[0]" };
@@ -72,7 +74,7 @@ is_deeply(\@seen, ["inner:nested\n", "outer:restored\n"], 'exception unwinding r
 my ($escaped, $base);
 $base = \$SIG{__WARN__};
 @seen = ();
-run {
+scope {
 	local $SIG{__WARN__} = sub { push @seen, "local:$_[0]" };
 	$escaped = \$SIG{__WARN__};
 	$$base = sub { push @seen, "newroot:$_[0]" };
@@ -84,7 +86,7 @@ is_deeply(\@seen, ["local:active\n", "newroot:outside\n"], 'base and escaped hoo
 $SIG{__WARN__} = $root;
 
 @seen = ();
-run {
+scope {
 	local $SIG{__WARN__};
 	$SIG{__WARN__} = sub {
 		$SIG{__WARN__} = sub { push @seen, "replacement:$_[0]" };
@@ -98,7 +100,7 @@ is_deeply(\@seen, ["selected:first\n", "replacement:second\n"], 'a selected hook
 
 my @warnings;
 local $^W = 0;
-run {
+scope {
 	my $out = chan;
 	for my $flag (0, 1) {
 		act {
@@ -113,7 +115,7 @@ is_deeply([sort {$a->[0] <=> $b->[0]} @warnings], [[0, 0], [1, 1]], '$^W remains
 is($^W, 0, 'localized warning flags leave root warning state intact');
 
 my ($parent, $child, $saved_flags);
-run {
+scope {
 	my $go = chan;
 	my $out = chan;
 	{
@@ -131,7 +133,7 @@ $$saved_flags = 1;
 is_deeply([$$saved_flags, $^W], [1, 0], 'escaped warning flags keep private storage');
 
 my @emitted;
-run {
+scope {
 	local $SIG{__WARN__} = sub { push @emitted, $_[0] };
 	no warnings;
 	{
@@ -144,12 +146,12 @@ run {
 is(scalar @emitted, 0, 'explicit lexical no warnings still overrides $^W');
 
 my $unsupported;
-run { eval { local $SIG{INT} = sub {} }; $unsupported = $@ };
+scope { eval { local $SIG{INT} = sub {} }; $unsupported = $@ };
 like($unsupported, qr/magic variable localization/, 'process signal handlers remain outside act-local hooks');
 
 @seen = ();
 my @captures;
-run {
+scope {
 	local $SIG{__WARN__} = sub {
 		push @captures, $1;
 		'handler' =~ /(handler)/;
@@ -163,7 +165,7 @@ run {
 is_deeply(\@captures, [qw(caller handler caller)], 'warning callbacks preserve caller captures while using their own matches');
 
 my @deletion;
-run {
+scope {
 	local $SIG{__WARN__} = sub { push @seen, "local:$_[0]" };
 	my $old = delete $SIG{__WARN__};
 	push @deletion, exists $SIG{__WARN__};
@@ -180,7 +182,7 @@ my @numeric;
 	BEGIN { ${^WARNING_BITS} = undef }
 	sub legacy_numeric ($text) { return $text + 0 }
 }
-run {
+scope {
 	my $out = chan;
 	for my $flag (0, 1) {
 		act {
@@ -199,7 +201,7 @@ like($numeric[0][1], qr/isn't numeric/, 'native numeric warning text is preserve
 
 my ($encoded, $load_error, $during_load);
 my @load_seen;
-run {
+scope {
 	eval {
 		my $out = chan;
 		local $SIG{__WARN__} = sub { push @load_seen, $_[0] };
@@ -230,7 +232,7 @@ is_deeply(\@load_seen, ["child during loading\n", "after loading\n"],
 	'PerlIO temporary hooks suppress loader warnings while children inherit the ordinary hook');
 
 @seen = ();
-run {
+scope {
 	local $SIG{__WARN__} = sub { push @seen, "old:$_[0]" };
 	XS::APItest::Hash::store(\%SIG, '__WARN__', sub { push @seen, "native:$_[0]" });
 	yield;
@@ -245,7 +247,7 @@ for my $case (['-W', '1,1,1'], ['-X', '0,0,0'], ['-w', '1,0,0']) {
 	my $script = q{
 		use Wump;
 		my @flags = ($^W);
-		run {
+		scope {
 			local $^W = 0;
 			push @flags, $^W;
 			my $out = chan;
@@ -262,8 +264,10 @@ for my $case (['-W', '1,1,1'], ['-X', '0,0,0'], ['-w', '1,0,0']) {
 	is_deeply([$closed, $text], [1, $case->[1]], "$case->[0] command-line warning mode survives local and spawn");
 }
 
-my ($tied_error, $signal_fetches) = ('', 0);
-{
+check_program(q{
+	use Wump;
+	our $signal_fetches = 0;
+	{
 	package TiedSignalHooks;
 	sub TIEHASH { bless {}, $_[0] }
 	sub FETCH { $signal_fetches++; return }
@@ -271,15 +275,13 @@ my ($tied_error, $signal_fetches) = ('', 0);
 	sub FIRSTKEY { return }
 	sub NEXTKEY { return }
 	sub CLEAR { return }
-}
-{
-	local %SIG;
-	tie %SIG, 'TiedSignalHooks';
-	$signal_fetches = 0;
-	run { eval { local $SIG{__WARN__} = sub {} }; $tied_error = $@ };
+	}
+	BEGIN { tie %SIG, 'TiedSignalHooks' }
+	eval { local $SIG{__WARN__} = sub {} };
+	print $@;
+	print "fetches:$signal_fetches\n";
 	untie %SIG;
-}
-like($tied_error, qr/magic variable localization/, 'a tied SIG hash cannot bypass the container magic restriction');
-is($signal_fetches, 0, 'rejected tied SIG localization does not invoke FETCH');
+}, 0, qr/magic variable localization[^\n]*\nfetches:0\n\z/,
+	'a tied SIG hash cannot bypass validation or invoke FETCH');
 
 done_testing;

@@ -11,7 +11,7 @@ $mode = 'global';
 %options = (name => 'global');
 my $source = sub {
 	my $answer;
-	run {
+	scope {
 		my $out = chan;
 		local $mode = 'ordinary';
 		pocket $mode = 'private';

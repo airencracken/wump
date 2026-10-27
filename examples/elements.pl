@@ -2,7 +2,7 @@ use v5.42;
 use Wump;
 
 our %context = (request => 'outside', service => 'wump');
-run {
+scope {
 	my $done = chan;
 	for my $name ('alpha', 'bravo') {
 		act {

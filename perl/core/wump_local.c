@@ -115,8 +115,47 @@ void Perl_wump_save_defsv(pTHX) {
 	SAVEDESTRUCTOR_X(wump_local_pop, slot);
 }
 
+static char wump_error_magic(pTHX_ SV *value) {
+	char found = 0;
+	if (!value || !SvMAGICAL(value)) return 0;
+	for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic) {
+		if (mg->mg_type == PERL_MAGIC_sv && mg->mg_virtual == &PL_vtbl_sv
+			&& mg->mg_len == 1 && mg->mg_ptr
+			&& (mg->mg_ptr[0] == '!' || mg->mg_ptr[0] == '\005' || mg->mg_ptr[0] == '?'))
+			found = mg->mg_ptr[0];
+		else if (mg->mg_type != PERL_MAGIC_backref && mg->mg_type != PERL_MAGIC_taint
+			&& !Perl_wump_publish_magic(mg)) return 0;
+	}
+	return found;
+}
+
+static void wump_errno_restore(pTHX_ void *arg) {
+	PERL_UNUSED_CONTEXT;
+	errno = PTR2IV(arg);
+}
+
 SV *Perl_wump_localize(pTHX_ GV *gv, char kind) {
 	SV *old = kind == 's' ? GvSV(gv) : kind == 'a' ? (SV *)GvAV(gv) : (SV *)GvHV(gv);
+	char error_magic = kind == 's' ? wump_error_magic(aTHX_ old) : 0;
+	if (error_magic) {
+		/* Linux $! and $^E read native errno, which the scheduler already
+		 * preserves per act. Restore its value, never a native TLS address. */
+		int saved = errno;
+		SV *value = newSV(0);
+		mg_localize(old, value, FALSE);
+		wump_local *slot = wump_local_add(aTHX_ PL_wump_task, gv, 's', value);
+		slot->pocket = TRUE;
+		if (error_magic == '?') {
+			SAVEI32(PL_statusvalue);
+			SAVEI32(PL_statusvalue_posix);
+		} else SAVEDESTRUCTOR_X(wump_errno_restore, INT2PTR(void *, (IV)saved));
+		SAVEDESTRUCTOR_X(wump_local_pop, slot);
+		int localizing = PL_localizing;
+		PL_localizing = 1;
+		mg_set(value);
+		PL_localizing = localizing;
+		return value;
+	}
 	wump_local_check(aTHX_ old, kind);
 	char magic = kind == 's' ? Perl_wump_magic_kind(aTHX_ old) : 0;
 	SV *value = magic ? Perl_wump_magic_new(aTHX_ magic, NULL)

@@ -7,7 +7,7 @@ sub parse ($text, $results) {
 	$results->send("$text retained $+{name} and $+{number}");
 }
 
-run {
+scope {
 	my $results = chan;
 	act { parse('alpha-11', $results) };
 	act { parse('bravo-22', $results) };

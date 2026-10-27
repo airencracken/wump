@@ -3,7 +3,7 @@ use strict;
 use warnings;
 use Wump;
 
-run {
+scope {
 	my $payload = {visits => 0};
 	say 'before send: ', Wump::is_shared($payload) ? 'shared' : 'unclassified';
 	my $messages = chan(1);

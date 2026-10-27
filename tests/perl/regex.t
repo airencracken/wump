@@ -3,12 +3,14 @@ use strict;
 use warnings;
 use Test::More;
 use Wump;
+use lib 'tests/perl/lib';
+use WumpTest;
 binmode STDOUT, ':utf8';
 binmode STDERR, ':utf8';
 
 sub together ($code, @inputs) {
 	my @out;
-	run {
+	scope {
 		my $ch = chan;
 		for my $input (@inputs) {
 			act { $ch->send($code->(@$input)) };
@@ -51,7 +53,7 @@ sub once ($id, $pattern, $text, $park) {
 	yield if $park;
 	return [$id, $1];
 }
-is_deeply(once(0, 'root', 'root', 0), [0, 'root'], 'prime /o cache outside the runtime');
+is_deeply(once(0, 'root', 'root', 0), [0, 'root'], 'prime main act /o cache');
 is_deeply(together(\&once, [1, 'alpha', 'alpha', 1], [2, 'bravo', 'bravo', 1]),
 	[[1, 'alpha'], [2, 'bravo']], 'each task has its own /o cache despite a primed root pattern');
 is_deeply(once(0, 'ignored', 'root', 0), [0, 'root'], 'task compilation leaves the root /o cache intact');
@@ -193,7 +195,7 @@ my $overlap_qr = qr/([a-z]+)(?{
 })/;
 sub overlap_code ($text) { $text =~ $overlap_qr; return [$text, $^R] }
 my @overlap;
-run {
+scope {
 	my $ch = chan;
 	$long_entered = chan;
 	$long_release = chan;
@@ -276,7 +278,7 @@ while (my ($key, $value) = each %+) {
 	together(\&named_iteration, [1], [2]);
 	last if @root_keys > 6;
 }
-is_deeply([sort @root_keys], ['a=a', 'b=b', 'c=c'], 'task runs leave the root named capture iterator intact');
+is_deeply([sort @root_keys], ['a=a', 'b=b', 'c=c'], 'child acts leave the main named capture iterator intact');
 
 sub reused_ops ($id) {
 	my @seen;
@@ -296,7 +298,7 @@ is_deeply(together(\&reused_ops, [1], [2]), [
 ], 'freed and reused regex slots cannot retrieve stale task instances');
 
 my ($escaped, $escaped_code);
-run {
+scope {
 	$escaped = eval 'qr/(?<word>escaped)-(\d+)/';
 	die $@ if $@;
 	my $message = 'closure survived';
@@ -308,7 +310,7 @@ is_deeply([$1, $2, $+{word}], ['escaped', '99', 'escaped'], 'a qr value remains 
 is($^R, 'closure survived', 'escaped regex code retains captured lexicals after task cleanup');
 
 my $transferred;
-run {
+scope {
 	my $ch = chan;
 	act {
 		my $owned_text = 'producer closure';
@@ -321,18 +323,18 @@ run {
 };
 is_deeply($transferred, ['message', 'producer closure'], 'regex code sent through a channel survives producer cleanup');
 
-my ($entered, $completed) = (0, 0);
-run {
+check_program(q{
+	use Wump;
+	my $entered = 0;
 	my $wait = chan;
 	act {
-		'parked' =~ /(parked)(?{ $entered++; $wait->recv })/;
-		$completed++;
+		'parked' =~ /(parked)(?{ $entered++; print "entered\n"; $wait->recv })/;
+		print "completed\n";
 	};
 	yield until $entered;
-};
-is_deeply([$entered, $completed], [1, 0], 'shutdown abandons a task parked inside regex execution');
+}, 0, qr/\Aentered\n\z/, 'shutdown abandons a task parked inside regex execution');
 is_deeply(together(\&callback, [1, 'alpha-11'], [2, 'bravo-22']),
-	[[1, 'alpha', '11', 1], [2, 'bravo', '22', 2]], 'regex code recovers after abandoned engine frames');
+	[[1, 'alpha', '11', 1], [2, 'bravo', '22', 2]], 'regex code remains usable after subprocess shutdown');
 
 {
 	package WumpTest::RegexDestructor;
@@ -343,7 +345,7 @@ is_deeply(together(\&callback, [1, 'alpha-11'], [2, 'bravo-22']),
 	}
 }
 my @destroyed;
-run {
+scope {
 	my $ch = chan;
 	act {
 		state $owned = WumpTest::RegexDestructor->new(\@destroyed);

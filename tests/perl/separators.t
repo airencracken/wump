@@ -4,6 +4,8 @@ use warnings;
 use Test::More;
 use English '-no_match_vars';
 use Wump;
+use lib 'tests/perl/lib';
+use WumpTest;
 
 sub records ($text) {
 	open my $fh, '<', \$text or die "scalar input: $!";
@@ -23,7 +25,7 @@ sub output ($field, $record, $label) {
 }
 
 my @inputs;
-run {
+scope {
 	my $out = chan;
 	for my $case ([1, ':', 'a:b:'], [2, '|', 'c|d|']) {
 		act {
@@ -41,7 +43,7 @@ is_deeply([sort {$a->[0] <=> $b->[0]} @inputs], [[1, ':', ['a', 'b']], [2, '|', 
 is($/, "\n", 'input localization leaves the global separator intact');
 
 my @outputs;
-run {
+scope {
 	my $out = chan;
 	act { $out->send(output(':', '<a>', 'alpha')) };
 	act { $out->send(output('|', '<b>', 'bravo')) };
@@ -54,7 +56,7 @@ is($\, undef, 'output localization leaves the global separator intact');
 is($,, undef, 'field separator global slot remains intact');
 
 my (@scope, $error);
-run {
+scope {
 	local $/ = ':';
 	local $\ = 'outer';
 	eval {
@@ -71,7 +73,7 @@ is_deeply(\@scope, [['|', 'inner', ['x|', 'y|']], [':', 'outer', ['x:', 'y:']]],
 is($error, "separator unwind\n", 'separator scope preserves the caught exception');
 
 my ($child, $parent);
-run {
+scope {
 	my $go = chan;
 	my $out = chan;
 	{
@@ -89,7 +91,7 @@ is_deeply($parent, ['|', 'private', ['a|', 'b|']], 'pocket uses a private input 
 is_deeply($child, [':', 'inherited', ['a:', 'b:']], 'spawn snapshots outer ordinary settings through pocket and parent scope exit');
 
 my @modes;
-run {
+scope {
 	{ local $/; push @modes, [$/, records("a\nb\n")] }
 	{ local $/ = ''; push @modes, [$/, records("a\n\nb\n\n")] }
 	{ my $size = 3; local $/ = \$size; yield; push @modes, [${$/}, records('abcdefg')] }
@@ -101,9 +103,9 @@ is_deeply($modes[2], [3, ['abc', 'def', 'g']], 'scalar-reference input separator
 my ($unicode, $unlocalized);
 my $unicode_text = "a\x{3a9}b\x{3a9}";
 utf8::encode($unicode_text);
-# Initialize this layer before the run; hooks.t also exercises loading inside.
+# Initialize this layer before spawning acts; hooks.t also exercises loading inside.
 open my $unicode_fh, '<:encoding(UTF-8)', \$unicode_text or die "encoded input: $!";
-run {
+scope {
 	{
 		local $/ = "\x{3a9}";
 		yield;
@@ -122,7 +124,7 @@ is_deeply($unlocalized, [':', ['a:', 'b:']], 'unlocalized assignments remain sha
 $/ = "\n";
 
 my @invalid;
-run {
+scope {
 	local $/ = ':';
 	for my $value (\0, \-1, [], {}) {
 		eval { $/ = $value };
@@ -135,7 +137,7 @@ for my $case (@invalid) {
 }
 
 my $english;
-run {
+scope {
 	local $INPUT_RECORD_SEPARATOR = ':';
 	local $OUTPUT_RECORD_SEPARATOR = 'english';
 	yield;
@@ -145,7 +147,7 @@ is_deeply($english, [':', 'english', ['a:', 'b:']], 'English aliases address the
 
 my ($root_ref, $escaped_input, $escaped_output, $local_after_root_write);
 $root_ref = \$/;
-run {
+scope {
 	local $/ = '|';
 	local $\ = 'private';
 	($escaped_input, $escaped_output) = (\$/, \$\);
@@ -175,7 +177,7 @@ my (@tied_seen, $tied_child);
 	}
 }
 tie *YIELD_PRINT, 'YieldPrinter', \@tied_seen;
-run {
+scope {
 	my $out = chan;
 	(tied *YIELD_PRINT)->{out} = $out;
 	local $\ = 'ordinary output';
@@ -187,30 +189,22 @@ is_deeply(\@tied_seen, ["\n", "\n"], 'tied say sees its temporary separator acro
 is($tied_child, 'ordinary output', 'internal say override is excluded from child inheritance');
 is($\, undef, 'tied say restores the root output separator');
 
-my $abandoned = 0;
-{
-	package SeparatorOwned;
-	sub DESTROY { $abandoned++ }
-}
-run {
+check_program(q{
+	use Wump;
+	package SeparatorOwned { sub DESTROY { print "released\n" } }
 	my $park = chan;
-	act {
-		my $length = 3;
-		local $/ = bless \$length, 'SeparatorOwned';
-		$park->recv;
-	};
+	act { my $length = 3; local $/ = bless \$length, 'SeparatorOwned'; $park->recv };
 	yield;
-};
-is($abandoned, 1, 'abandoning a task releases the referenced record-length cache');
-run {
+}, 0, qr/\Areleased\n\z/, 'shutdown releases a parked record-length cache');
+check_program(q{
+	use Wump;
+	package SeparatorOwned { sub DESTROY { print "released\n" } }
 	my $length = 3;
 	local $/ = bless \$length, 'SeparatorOwned';
 	act { die 'queued act must not run' };
-};
-is($abandoned, 2, 'unstarted children release inherited separator caches');
-is($/, "\n", 'shutdown leaves the root input separator intact');
+}, 0, qr/\Areleased\n\z/, 'unstarted child releases inherited separator caches');
 
 my $later;
-run { local $/ = '|'; yield; $later = records('later|works|') };
-is_deeply($later, ['later|', 'works|'], 'later runs remain usable after failures, escaped references and tied callbacks');
+scope { local $/ = '|'; yield; $later = records('later|works|') };
+is_deeply($later, ['later|', 'works|'], 'later scopes remain usable after failures, escaped references and tied callbacks');
 done_testing;

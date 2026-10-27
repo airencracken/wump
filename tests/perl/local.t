@@ -3,13 +3,15 @@ use strict;
 use warnings;
 use Test::More;
 use Wump;
+use lib 'tests/perl/lib';
+use WumpTest;
 
 our ($mode, @items, %options);
 $mode = 'global';
 @items = ('global');
 %options = (global => 1);
 my (@seen, @outside);
-run {
+scope {
 	my $out = chan;
 	for my $name ('alpha', 'bravo') {
 		act {
@@ -28,7 +30,7 @@ is_deeply([sort { $a->[0] cmp $b->[0] } @seen], [
 	['bravo', ['bravo', undef], {name => 'bravo'}],
 ], 'parked tasks keep scalar, array and hash localizations separate');
 is_deeply(\@outside, ['global', ['global'], {global => 1}], 'other tasks see the global slots');
-is_deeply([$mode, [@items], {%options}], \@outside, 'run leaves the original global slots intact');
+is_deeply([$mode, [@items], {%options}], \@outside, 'scope leaves the original global slots intact');
 
 my (@nested, $early);
 sub early {
@@ -36,7 +38,7 @@ sub early {
 	yield;
 	return $mode;
 }
-run {
+scope {
 	local $mode = 'outer';
 	eval {
 		local $mode = 'inner';
@@ -53,7 +55,7 @@ is($early, 'return', 'return from a sub preserves the localized result');
 is($mode, 'global', 'early return unwinds the binding');
 
 my $isolated;
-run {
+scope {
 	my $ready = chan;
 	my $resume = chan;
 	my $out = chan;
@@ -73,7 +75,7 @@ is($mode, 'new global', 'unwinding a binding does not restore over a newer globa
 $mode = 'global';
 
 my (@family, $parent);
-run {
+scope {
 	my $go = chan;
 	my $out = chan;
 	{
@@ -108,7 +110,7 @@ our ($slots, @slots, %slots);
 ($slots, @slots) = ('root', 'root');
 %slots = (root => 1);
 my ($empty_slots, $nested_slots);
-run {
+scope {
 	my $out = chan;
 	local $slots;
 	local @slots;
@@ -129,7 +131,7 @@ is_deeply($nested_slots, [['outer'], {outer => 1}], 'nested aggregate scopes res
 is_deeply([$slots, [@slots], {%slots}], ['root', ['root'], {root => 1}], 'all three global slots survive localization');
 
 my ($grandchild, @defaults);
-run {
+scope {
 	my $out = chan;
 	local $mode = 'ancestor';
 	local $_ = 'default at spawn';
@@ -147,7 +149,7 @@ our ($alias, @alias, %alias);
 BEGIN { *alias = *mode }
 my ($alias_seen, $global_ref, $local_ref);
 $global_ref = \$mode;
-run {
+scope {
 	local $alias = 'alias';
 	$local_ref = \$mode;
 	yield;
@@ -159,7 +161,7 @@ isnt($local_ref, $global_ref, 'local creates a distinct scalar identity');
 
 my $referent = [];
 my ($identity, $sparse, $hash_copy, $iterator);
-run {
+scope {
 	my $out = chan;
 	local $mode = $referent;
 	local @items;
@@ -193,7 +195,7 @@ my @destructed;
 		Wump::act(sub { push @destructed, $main::mode });
 	}
 }
-run {
+scope {
 	local $mode = 'enclosing';
 	{
 		local $mode = bless {}, 'LocalCleanup';
@@ -202,25 +204,21 @@ run {
 };
 is_deeply(\@destructed, ['enclosing', 'enclosing'], 'completing scope-exit destructor can yield and spawn after the old binding is detached');
 
-my ($dropped, $queued_dropped) = (0, 0);
-{
-	package LocalOwned;
-	sub DESTROY { ${$_[0]->{counter}}++ }
-}
-run {
+check_program(q{
+	use Wump;
+	our $mode;
+	package LocalOwned { sub DESTROY { print "released\n" } }
 	my $park = chan;
-	act {
-		local $mode = bless {counter => \$dropped}, 'LocalOwned';
-		$park->recv;
-	};
+	act { local $mode = bless {}, 'LocalOwned'; $park->recv };
 	yield;
-};
-is($dropped, 1, 'abandoning a parked task unwinds its localized value');
-run {
-	local $mode = bless {counter => \$queued_dropped}, 'LocalOwned';
+}, 0, qr/\Areleased\n\z/, 'shutdown unwinds a parked localization');
+check_program(q{
+	use Wump;
+	our $mode;
+	package LocalOwned { sub DESTROY { print "released\n" } }
+	local $mode = bless {}, 'LocalOwned';
 	act { die 'queued task should not start' };
-};
-is($queued_dropped, 1, 'unstarted child releases its inherited reference');
+}, 0, qr/\Areleased\n\z/, 'unstarted child releases inherited references');
 
 my @errors;
 our (@guard_array, %guard_hash);
@@ -232,7 +230,7 @@ my @forms = (
 	sub { local $^I = '.backup' },
 	sub { local %ENV },
 );
-run {
+scope {
 	for my $form (@forms) {
 		eval { $form->() };
 		push @errors, $@;
@@ -249,7 +247,7 @@ my ($tied_error, $fetches) = ('', 0);
 	sub TIESCALAR { bless {}, shift }
 	sub FETCH { $fetches++; return 'tied' }
 }
-run {
+scope {
 	local @items = ('plain');
 	tie $items[0], 'LocalTied';
 	eval { act {} };
@@ -258,8 +256,8 @@ run {
 like($tied_error, qr/magic variable localization/, 'spawn rejects magic inside an inherited binding');
 is($fetches, 0, 'snapshot validation does not run tied FETCH');
 
-run { local $mode = 'healthy'; yield; push @seen, $mode };
-is($seen[-1], 'healthy', 'a later run remains usable after all failure paths');
+scope { local $mode = 'healthy'; yield; push @seen, $mode };
+is($seen[-1], 'healthy', 'later scopes remain usable after all failure paths');
 {
 	local $mode = 'ordinary root scope';
 	local $guard_hash{root} = 2;

@@ -2,7 +2,7 @@ use v5.42;
 use Wump;
 
 our $request = 'outside';
-run {
+scope {
 	my $done = chan;
 	for my $name ('alpha', 'bravo') {
 		local $request = $name;

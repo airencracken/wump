@@ -7,7 +7,7 @@ use Wump;
 use RootFixture;
 
 my (@native, @constant, @list, @opaque, @called);
-run {
+scope {
 	my $out = chan(1);
 	for my $kind (0..3) {
 		my $payload = [{nested => []}];
@@ -41,7 +41,7 @@ is_deeply(\@called, [1, 1], 'calling native subs from an act publishes supported
 	sub value { VALUE }
 }
 my @inline;
-run {
+scope {
 	my $value = HiddenInlineConstant::value();
 	@inline = (Wump::is_shared($value), Wump::is_shared($value->{nested}));
 };
@@ -69,7 +69,7 @@ class HiddenRootObject :isa(HiddenRootBase) {
 class HiddenRootEmpty { }
 
 my ($before_class, $after_class, $after_write, $empty);
-run {
+scope {
 	my $object = HiddenRootObject->new;
 	$before_class = $object->flags;
 	my $out = chan(1);
@@ -102,7 +102,7 @@ class HiddenRootEscaping {
 	}
 }
 my $after_construct;
-run {
+scope {
 	$construct_out = chan(1);
 	my $object = HiddenRootEscaping->new;
 	my $received = $construct_out->recv;
@@ -112,7 +112,7 @@ is_deeply($after_construct, [(1) x 5], 'fields initialized after the object esca
 undef $construct_out;
 
 my (@regex_before, @regex_after, @regex_calls);
-run {
+scope {
 	my $payload = [];
 	my $regex = qr/a(?{ push @$payload, 'called' })/;
 	@regex_before = (Wump::is_shared($payload));
@@ -128,7 +128,7 @@ is_deeply(\@regex_after, [1], 'regex publication follows its hidden callback CV 
 is_deeply(\@regex_calls, ['called'], 'publication does not execute regex code callbacks');
 
 my ($embedded, $matched);
-run {
+scope {
 	my $payload = [];
 	my $inner = qr/a(?{ push @$payload, 1 })/;
 	my $outer = qr/b${inner}c/;
@@ -143,7 +143,7 @@ ok($embedded, 'native regex storage publishes interpolated regex captures');
 ok($matched, 'interpolated regex remains executable after publication');
 
 my (@copy_flags, @copy_calls);
-run {
+scope {
 	my $payload = [];
 	my $regex = qr/a(?{ push @$payload, 'copy' })/;
 	my $copy = $$regex;
@@ -160,7 +160,7 @@ is_deeply(\@copy_flags, ['', 1], 'lightweight regex copies publish roots retaine
 is_deeply(\@copy_calls, ['copy'], 'a published regex copy retains its executable callback');
 
 my ($unicode, $unicode_match);
-run {
+scope {
 	my $regex = qr/(?<word>\p{Greek}+|alpha|bravo|charlie)/i;
 	my $out = chan(1);
 	$out->send($regex);
@@ -172,7 +172,7 @@ ok($unicode_match, 'publication handles native Unicode and trie auxiliary data')
 is($unicode, "\x{3b1}\x{3b2}", 'native regex capture values remain intact');
 
 my $foreign_capture;
-run {
+scope {
 	my $payload = [];
 	my $code = sub { $payload };
 	my $foreign = RootFixture::opaque_regex($code);
@@ -188,7 +188,7 @@ my ($destroyed, $weak) = (0, undef);
 	package HiddenRootOwned;
 	sub DESTROY { $destroyed++ }
 }
-run {
+scope {
 	my $out = chan(1);
 	{
 		my $payload = bless {}, 'HiddenRootOwned';

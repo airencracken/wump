@@ -5,9 +5,11 @@ use Test::More;
 use Scalar::Util qw(refaddr weaken);
 use XS::APItest ();
 use Wump;
+use lib 'tests/perl/lib';
+use WumpTest;
 
 my (@private, @sent, $escaped);
-run {
+scope {
 	my $value = {child => [42]};
 	@private = map { Wump::is_shared($_) } ($value, $value->{child}, \$value);
 	my $out = chan(1);
@@ -17,11 +19,11 @@ run {
 };
 is_deeply(\@private, ['', '', ''], 'new task-local values begin unpublished');
 is_deeply(\@sent, [1, 1, ''], 'channel publication marks the referent graph without marking the sender scalar');
-ok(Wump::is_shared($escaped), 'publication metadata survives run exit');
+ok(Wump::is_shared($escaped), 'publication metadata survives scope exit');
 
 my (@captured, @inherited);
 our $context;
-run {
+scope {
 	my $value = {child => []};
 	my $out = chan;
 	local $context = {data => []};
@@ -36,7 +38,7 @@ is_deeply(\@captured, [1, 1], 'spawn publishes captured lexical cells and their 
 is_deeply(\@inherited, [1, 1, 1, 1], 'child snapshots publish references held by inherited bindings');
 
 my (@clones, @clone_captures);
-run {
+scope {
 	my $out = chan;
 	for (1..3) {
 		my $value = [];
@@ -51,7 +53,7 @@ is_deeply(\@clone_captures, [1, 1, 1], 'each escaping closure publishes its actu
 
 my @stores;
 our ($package_scalar, @package_array, %package_hash);
-run {
+scope {
 	my $scalar = [];
 	my $array = [];
 	my $hash = [];
@@ -70,7 +72,7 @@ run {
 is_deeply(\@stores, [(1) x 7], 'package stores, later scalar assignments, and native hash stores publish new graphs');
 
 my @mutations;
-run {
+scope {
 	my $root = {array => [], scalar => undef};
 	my $out = chan(1);
 	$out->send($root);
@@ -87,7 +89,7 @@ is_deeply(\@mutations, [(1) x 5], 'shared array bulk mutations and scalar stores
 
 my $outside = {new => []};
 $escaped->{outside} = $outside;
-ok(Wump::is_shared($outside) && Wump::is_shared($outside->{new}), 'stores outside runs propagate into previously published containers');
+ok(Wump::is_shared($outside) && Wump::is_shared($outside->{new}), 'stores after scope exit propagate into previously published containers');
 
 my ($fetches, $stringifies) = (0, 0);
 {
@@ -100,7 +102,7 @@ my ($fetches, $stringifies) = (0, 0);
 	use overload '""' => sub { $stringifies++; return 'object' }, fallback => 1;
 }
 my @magic;
-run {
+scope {
 	my %tied;
 	my $tie = tie %tied, 'PublicationTie';
 	my $object = bless {value => []}, 'PublicationString';
@@ -113,7 +115,7 @@ is_deeply(\@magic, [1, 1, 1], 'raw publication reaches tie objects and blessed s
 is_deeply([$fetches, $stringifies], [0, 0], 'publication invokes no FETCH, iteration, or overloaded stringification callbacks');
 
 my ($deep, $cycle);
-run {
+scope {
 	my $value = [];
 	my $tail = $value;
 	for (1..4096) { my $next = []; push @$tail, $next; $tail = $next }
@@ -133,7 +135,7 @@ my ($destroyed, $weak) = (0, undef);
 	package PublishedOwned;
 	sub DESTROY { $destroyed++ }
 }
-run {
+scope {
 	my $out = chan(1);
 	{
 		my $object = bless {}, 'PublishedOwned';
@@ -152,7 +154,7 @@ sub shared_state {
 	state $value = [];
 	return Wump::is_shared($value);
 }
-run {
+scope {
 	local $localized = {private => []};
 	@local = (Wump::is_shared($localized), Wump::is_shared($localized->{private}));
 	@state = (shared_state(), shared_state());
@@ -166,7 +168,7 @@ $usage = $@;
 like($usage, qr/Usage: Wump::is_shared/, 'publication diagnostics require a reference');
 
 my ($readonly, $readonly_error);
-run {
+scope {
 	my $value = \42;
 	my $out = chan(1);
 	$out->send($value);
@@ -179,7 +181,7 @@ ok($readonly, 'read-only referents can be published');
 like($readonly_error, qr/read-only/, 'metadata preserves read-only protection');
 
 my ($compilation, $compile_error, @compile_warnings);
-run {
+scope {
 	local $SIG{__WARN__} = sub { push @compile_warnings, $_[0] };
 	my $symbols = \%PublicationCompilation::;
 	$compilation = eval q{
@@ -200,7 +202,7 @@ is_deeply($compilation, [0, '', 42], 'uninitialized stash entries retain their n
 
 our @snapshot_values;
 my $snapshot_flags;
-run {
+scope {
 	local @snapshot_values = ([]);
 	my $out = chan;
 	act {
@@ -211,20 +213,19 @@ run {
 };
 is_deeply($snapshot_flags, ['', '', 1], 'shallow snapshot containers and cells stay private while referents escape');
 
-our $teardown_values = {};
-{
-	package PublicationTeardown;
-	sub DESTROY { $main::teardown_values->{saved} = [] }
-}
-run {
+check_program(q{
+	use Wump;
+	our $teardown_values = {};
+	package PublicationTeardown {
+		sub DESTROY {
+			$main::teardown_values->{saved} = [];
+			print Wump::is_shared($main::teardown_values->{saved}) ? "published\n" : "private\n";
+		}
+	}
 	my $published = $teardown_values;
 	my $park = chan;
-	act {
-		my $owned = bless {}, 'PublicationTeardown';
-		$park->recv;
-	};
+	act { my $owned = bless {}, 'PublicationTeardown'; $park->recv };
 	yield;
-};
-ok(Wump::is_shared($teardown_values->{saved}), 'abandoned-task destructors publish values saved in shared storage');
+}, 0, qr/\Apublished\n\z/, 'abandoned-task destructors publish values saved in shared storage');
 
 done_testing;

@@ -76,10 +76,9 @@ lock %cache;                       # Perl's existing `lock` keyword, now a
   startup, parallel execution, and shutdown; application code uses `act` to
   spawn work directly.
 - **No application-level `run { ... }` wrapper in the final interface.**
-  The prototype's exported `run` function is temporary test/embedding
-  scaffolding. Removing it is required integration work, not an optional
-  alternative API. `act` keeps its Go-style spawn semantics, and `scope`
-  provides explicit waiting for its spawned acts.
+  Interpreter entry replaces the prototype's former exported `run` function.
+  `act` keeps its Go-style spawn semantics, and `scope` provides explicit
+  waiting for its spawned acts.
 - **Uncaught `die` in any task is a Go panic:** print the error and a
   stack trace for that task (`task 42 [running]:` plus the Perl call
   stack), then exit the whole program with status 2.
@@ -495,6 +494,10 @@ Each one ends in something runnable.
      Verify spawn returns immediately, main-task exit ends execution, and
      explicit `scope` waiting remains separate. This entry integration can
      run on one P while parallel execution is still being brought up.
+   - Implemented in the single-slot bridge: `use Wump` activates interpreter
+     entry, top-level code is the main act, and the `run` wrapper is removed.
+     Exported `scope` waits for its spawned acts and descendants. These are
+     still module functions; core feature syntax and multi-P Perl remain open.
 2. **Many Ps for I/O**: Ms, syscall handoff, netpoller, fork(), signals.
    Perl code still runs on one P at a time behind a runtime lock; that's
    development scaffolding, never a shipped mode.

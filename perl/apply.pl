@@ -38,7 +38,7 @@ while ($intrp =~ /PERLVAR(?:I|IC)?\(\s*I,\s*(\w+),\s*([^,\)]+)(?:,[^\)]*)?\)/g) 
 	$types{$name} = $type;
 }
 my $header = "/* Generated from Perl's intrpvar.h by perl/apply.pl. */\n";
-$header .= "struct wump_cv_slot;\nstruct wump_regex_slot;\nstruct wump_local;\nstruct wump_element;\nstruct wump_element_iter;\nstruct wump_perl_task {\n";
+$header .= "struct wump_cv_slot;\nstruct wump_regex_slot;\nstruct wump_local;\nstruct wump_element;\nstruct wump_element_iter;\nstruct wump_perl_scope;\nstruct wump_perl_task {\n";
 for my $name (@vars) {
 	exists $types{$name} or die "Missing upstream interpreter field: $name\n";
 	$header .= "\t$types{$name} I$name;\n";
@@ -53,12 +53,15 @@ $header .= <<'C';
 	struct wump_element_iter *element_iters;
 	UV next_binding;
 	UV id;
-	int initialized, finished;
+	struct wump_perl_scope *scope, *member_of;
+	int initialized, finished, main;
 };
 I32 *Perl_wump_cv_depth(pTHX_ const CV *cv);
 PADLIST **Perl_wump_cv_padlist(CV *cv);
 void Perl_wump_cv_prepare(pTHX_ CV *cv);
 void Perl_wump_boot(pTHX);
+int Perl_wump_main(pTHX);
+void Perl_wump_panic(pTHX_ SV *error);
 SV **Perl_wump_gv_sv(GV *gv);
 AV **Perl_wump_gv_av(GV *gv);
 void Perl_wump_pm_stamp(pTHX_ PMOP *pm);
@@ -120,12 +123,14 @@ if (index(read_file("$source/perl.h"), '#include "wump_task_types.h"') < 0) {
 }
 edit('perl.h', "    struct wump_perl_task *Iwump_task;",
 	"    struct wump_perl_task *Iwump_task;\n    bool Iwump_publishing;");
+edit('perl.h', "    bool Iwump_publishing;",
+	"    bool Iwump_publishing;\n    bool Iwump_enabled;");
 # Keep the former task slot reserved for private-layout compatibility;
 # execution selects its task through TLS, never through that shared slot.
 my $vars = "\n/* Wump execution state: root execution retains the upstream fields. */\n";
 $vars .= "#if defined(MULTIPLICITY)\n#define PL_wump_task Perl_wump_task_current(aTHX)\n";
 for my $name (@vars) {
-	$vars .= "#undef PL_$name\n#define PL_$name (*(PL_wump_task ? &PL_wump_task->I$name : &aTHX->I$name))\n";
+	$vars .= "#undef PL_$name\n#define PL_$name (*(PL_wump_task && !PL_wump_task->main ? &PL_wump_task->I$name : &aTHX->I$name))\n";
 }
 $vars .= "#endif\n";
 my $magic_cache_macros = <<'C';
@@ -201,6 +206,12 @@ my $run = read_file("$source/run.c");
 my $include = "\n#include \"wump_core.c\"\n";
 write_file("$source/run.c", $run . $include) unless index($run, $include) >= 0;
 edit('perl.c', 'boot_core_UNIVERSAL();', "boot_core_UNIVERSAL();\n    Perl_wump_boot(aTHX);");
+edit('perl.c', "perl_run(pTHXx)\n{",
+	"perl_run(pTHXx)\n{\n    if (aTHX->Iwump_enabled && !PL_wump_task) return Perl_wump_main(aTHX);");
+edit('pp_sort.c', "                save_gp(PL_firstgv, 0);\n                save_gp(PL_secondgv, 0);",
+	"                if (PL_wump_task) {\n                    save_scalar(PL_firstgv);\n                    save_scalar(PL_secondgv);\n                } else {\n                    save_gp(PL_firstgv, 0);\n                    save_gp(PL_secondgv, 0);\n                }");
+edit('pp_ctl.c', "    write_to_stderr(exceptsv);\n    my_failure_exit();",
+	"    if (PL_wump_task && PL_wump_task->main && PL_wump_task->finished != 2) {\n        Perl_wump_panic(aTHX_ exceptsv);\n        my_exit(2);\n    }\n    write_to_stderr(exceptsv);\n    my_failure_exit();");
 edit('op.h', "    OP *\top_code_list;\t/* list of (?{}) code blocks */",
 	"    OP *\top_code_list;\t/* list of (?{}) code blocks */\n    U64 op_wump_id;\n    U8 op_wump_runtime;");
 edit('op.h', "#define PM_GETRE_raw(o)\t(REGEXP*)(PL_regex_pad[(o)->op_pmoffset])",
