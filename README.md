@@ -638,6 +638,7 @@ Leak checks are separate from `make asan`, which sets `detect_leaks=0`.
 Linux LSan needs tracer access to stop and inspect threads. Restricted
 environments can fail even on a clean program with a fatal LSan/ptrace
 diagnostic; the leak targets report that failure without suppressing it.
+Both leak targets check a clean process before running leak-sensitive suites.
 Local TCP and socket half-close tests also require their system calls to be
 permitted by the environment; a denied call remains a test failure.
 

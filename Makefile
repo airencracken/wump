@@ -64,12 +64,13 @@ perl-asan:
 	ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=1 PERL_DESTRUCT_LEVEL=2 PERL_SANITIZER=address $(MAKE) BUILD='$(BUILD)/perl-asan' PERL_TARBALL='$(abspath $(PERL_TARBALL))' CFLAGS='$(CFLAGS) -O1 -fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls' LDFLAGS='$(LDFLAGS) -fsanitize=address' perl-test
 
 perl-lsan: perl-asan
-	ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 PERL_DESTRUCT_LEVEL=2 $(MAKE) BUILD='$(BUILD)/perl-asan' perl-leak-test
+	$(MAKE) BUILD='$(BUILD)/perl-asan' perl-leak-test
 
 perl-leak-test:
+	ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 PERL_DESTRUCT_LEVEL=2 timeout 30s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -e '0'
 	@for suite in $(PERL_SUITES); do \
 		printf 'LSan Perl suite: %s\n' "$$suite"; \
-		timeout 120s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) "tests/perl/$$suite.t"; result=$$?; \
+		ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 PERL_DESTRUCT_LEVEL=2 timeout 120s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) "tests/perl/$$suite.t"; result=$$?; \
 		if [ "$$result" -ne 0 ]; then exit "$$result"; fi; \
 	done
 
@@ -191,7 +192,7 @@ asan:
 	ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=1 $(MAKE) BUILD='$(BUILD)/asan' CFLAGS='$(CFLAGS) -O1 -fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls' LDFLAGS='$(LDFLAGS) -fsanitize=address' test asan-control
 
 lsan:
-	ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 $(MAKE) BUILD='$(BUILD)/asan' CFLAGS='$(CFLAGS) -O1 -fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls' LDFLAGS='$(LDFLAGS) -fsanitize=address' test lsan-control
+	ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 $(MAKE) BUILD='$(BUILD)/asan' CFLAGS='$(CFLAGS) -O1 -fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls' LDFLAGS='$(LDFLAGS) -fsanitize=address' lsan-control test
 
 $(BUILD)/sanitizer_control: tests/sanitizer_control.c $(BUILD)/libwump.a
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) -o $@

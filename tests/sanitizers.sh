@@ -25,6 +25,15 @@ case "$2" in
 		done
 		;;
 	lsan)
+		wump_log="$wump_build/control-lsan-clean.log"
+		ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 LSAN_OPTIONS=exitcode=87 \
+			timeout 60s "$wump_build/sanitizer_control" >"$wump_log" 2>&1
+		wump_status=$?
+		if [ "$wump_status" -ne 0 ]; then
+			cat "$wump_log"
+			printf 'LSan clean-process preflight failed (exit %s); leak detection is not validated.\n' "$wump_status" >&2
+			exit 1
+		fi
 		wump_log="$wump_build/control-leak.log"
 		ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 LSAN_OPTIONS=exitcode=87 \
 			timeout 30s "$wump_build/sanitizer_control" leak >"$wump_log" 2>&1
