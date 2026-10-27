@@ -108,6 +108,8 @@ void Perl_wump_publish_store(pTHX_ SV *owner, SV *value);
 void Perl_wump_publish_reference(pTHX_ SV *owner, SV *value);
 void Perl_wump_publish_snapshot(pTHX_ SV *value);
 void Perl_wump_publish_refresh(pTHX_ SV *value);
+struct wump_perl_task *Perl_wump_task_current(pTHX);
+void Perl_wump_task_activate(pTHX_ struct wump_perl_task *task);
 void Perl_wump_regex_roots(pTHX_ REGEXP *rx,
 	void (*visit)(pTHX_ SV *, void *), void *arg);
 C
@@ -118,8 +120,10 @@ if (index(read_file("$source/perl.h"), '#include "wump_task_types.h"') < 0) {
 }
 edit('perl.h', "    struct wump_perl_task *Iwump_task;",
 	"    struct wump_perl_task *Iwump_task;\n    bool Iwump_publishing;");
+# Keep the former task slot reserved for private-layout compatibility;
+# execution selects its task through TLS, never through that shared slot.
 my $vars = "\n/* Wump execution state: root execution retains the upstream fields. */\n";
-$vars .= "#if defined(MULTIPLICITY)\n#define PL_wump_task (aTHX->Iwump_task)\n";
+$vars .= "#if defined(MULTIPLICITY)\n#define PL_wump_task Perl_wump_task_current(aTHX)\n";
 for my $name (@vars) {
 	$vars .= "#undef PL_$name\n#define PL_$name (*(PL_wump_task ? &PL_wump_task->I$name : &aTHX->I$name))\n";
 }

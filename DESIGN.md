@@ -259,6 +259,13 @@ stress is deliberately restricted to a rooted SV without concurrent allocation,
 data mutation, or final destruction. C++ XS standard refcount helpers use atomics;
 direct legacy lvalue access remains subject to XS serialization.
 
+The active-task selector now lives in native thread-local storage rather than
+the shared interpreter header. Every lookup checks interpreter identity and
+reloads TLS across task migration. A two-thread native fixture checks isolated
+task fields and unchanged root state for two interpreter contexts. It does
+not execute Perl opcodes concurrently; shared allocators, interpreter caches,
+publication mutation, and XS serialization still need their own gates.
+
 An SV becomes shared when it escapes. The **escape barrier** runs at:
 1. `act` closure creation: captured lexicals escape.
 2. Storing a reference into a shared SV/AV/HV: the referent graph

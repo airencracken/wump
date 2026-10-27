@@ -132,7 +132,16 @@ along with the runtime build outputs, so keep editable fork changes in
 repository patches rather than only in the generated source tree.
 
 The prototype runs on one execution slot with separate task stacks and
-channel operations:
+channel operations. The active-task selector is thread-local and filtered by
+interpreter identity, so native threads can select independent task state
+against one interpreter while other interpreter contexts retain their root
+state. `make perl-task-context-test` checks 200,000 concurrent state updates
+without executing Perl opcodes or allocating Perl values in those threads;
+`make perl-task-context-tsan` instruments that fixture with TSan. This is a
+state-isolation prerequisite; the allocator and remaining shared interpreter
+state still prevent multi-worker Perl execution.
+
+For example:
 
 ```perl
 use v5.42;

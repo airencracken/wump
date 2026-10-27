@@ -3,6 +3,23 @@
 #include "XSUB.h"
 #include "wump_runtime_internal.h"
 #include <math.h>
+
+static _Thread_local struct wump_perl_task *wump_current_task;
+
+/* A coroutine can resume on another native thread. Fetch TLS afresh on
+ * every access, and let a nested interpreter retain its own root state. */
+__attribute__((noinline)) struct wump_perl_task *Perl_wump_task_current(pTHX) {
+	__asm__ volatile("" ::: "memory");
+	struct wump_perl_task *task = wump_current_task;
+	return task && task->interp == aTHX ? task : NULL;
+}
+
+void Perl_wump_task_activate(pTHX_ struct wump_perl_task *task) {
+	assert(task == NULL || task->interp == aTHX);
+	__asm__ volatile("" ::: "memory");
+	wump_current_task = task;
+}
+
 #include "wump_publish.c"
 #include "wump_local.c"
 #include "wump_elements.c"
@@ -222,7 +239,7 @@ AV **Perl_wump_gv_av(GV *gv) {
 static void wump_perl_enter(void *arg) {
 	struct wump_perl_task *task = arg;
 	PERL_SET_CONTEXT(task->interp);
-	task->interp->Iwump_task = task;
+	Perl_wump_task_activate(task->interp, task);
 }
 
 static void wump_perl_task_free(void *arg) {
@@ -230,7 +247,7 @@ static void wump_perl_task_free(void *arg) {
 	dTHXa(task->interp);
 	if (!task->initialized) {
 		/* A queued task has no Perl stacks on which to free its CV. */
-		PL_wump_task = NULL;
+		Perl_wump_task_activate(aTHX_ NULL);
 		wump_local_clear(aTHX_ task);
 		SvREFCNT_dec(task->entry);
 		Safefree(task);
@@ -331,7 +348,7 @@ static void wump_perl_task_free(void *arg) {
 			slab = next;
 		}
 	}
-	PL_wump_task = NULL;
+	Perl_wump_task_activate(aTHX_ NULL);
 	Safefree(task);
 }
 
@@ -427,7 +444,7 @@ static void xs_wump_run(pTHX_ CV *cv) {
 	struct wump_perl_task *task = wump_perl_task_new(aTHX_ ST(0));
 	int result = wump_run(wump_perl_task_start, task, 1);
 	int error = wump_errno();
-	PL_wump_task = NULL;
+	Perl_wump_task_activate(aTHX_ NULL);
 	/* Startup can fail before the task has attached its cleanup hook. */
 	if (!run.started) {
 		wump_local_clear(aTHX_ task);
