@@ -49,7 +49,8 @@ int main(int argc, char **argv, char **env) {
 	char second[] =
 		"use Wump; our $stale;"
 		"eval { $stale->recv }; die qq{stale channel check: $@} unless $@ =~ /inactive runtime/;"
-		"my $out = chan(1); scope { act { $out->send(42) } };"
+		"my $out = chan(1); my $wg = waitgroup(); add($wg);"
+		"act { $out->send(42); done($wg) }; await($wg);"
 		"die 'restart failed' unless $out->recv == 42;";
 	char deadlock[] = "use Wump; my $park = chan; $park->recv;";
 	char recovered[] =

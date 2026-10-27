@@ -8,7 +8,7 @@ use WumpTest;
 no warnings 'experimental::args_array_with_signatures';
 
 my @received;
-scope {
+with_tasks {
 	my $ch = chan;
 	act { $ch->send('from a Perl task') };
 	push @received, scalar $ch->recv;
@@ -27,7 +27,7 @@ sub worker ($id) {
 	return [$id, $local, \@args, $_, $error, $after];
 }
 @received = ();
-scope {
+with_tasks {
 	my $out = chan(2);
 	for my $id (1..12) {
 		act { $out->send(worker($id)) };
@@ -40,7 +40,7 @@ is_deeply(\@received, [map { [$_, "local-$_", [$_], "default-$_", "caught-$_\n",
 
 my ($copy, $reference, @open, @closed, @errors);
 my $shared = {value => 42};
-scope {
+with_tasks {
 	my $ch = chan(3);
 	my $value = 'before';
 	$ch->send($value);
@@ -68,7 +68,7 @@ sub recursive ($n) {
 	return $n ? $keep + recursive($n - 1) : 0;
 }
 @received = ();
-scope {
+with_tasks {
 	my $ch = chan;
 	act { $ch->send(recursive(9)) };
 	act { $ch->send(recursive(12)) };
@@ -78,7 +78,7 @@ is_deeply([sort {$a <=> $b} @received], [45, 78], 'recursive pads are separate b
 
 sub counter () { state $count = 0; return ++$count }
 @received = ();
-scope {
+with_tasks {
 	my $ch = chan;
 	for (1..4) {
 		act { $ch->send(counter()) };
@@ -88,13 +88,13 @@ scope {
 is_deeply(\@received, [1, 2, 3, 4], 'state lexicals retain identity across tasks');
 
 my @invalid;
-scope {
+with_tasks {
 	for my $capacity (-1, 0.5, 1e30, 'garbage', undef, []) { eval { chan($capacity) }; push @invalid, $@ }
 };
 like($invalid[$_], qr/invalid channel capacity/, 'invalid capacity is rejected') for 0..5;
 
 my $stream_sum = 0;
-scope {
+with_tasks {
 	my $ch = chan(4);
 	act { $ch->send($_) for 1..1000; $ch->close };
 	while (my ($value, $ok) = $ch->recv) {
@@ -115,7 +115,10 @@ check_program(q{
 check_program(q{
 	use Wump;
 	package Tracked { sub DESTROY { print "released\n" } }
-	scope { act { state $owned = bless {}, 'Tracked' } };
+	my $wg = waitgroup;
+	add $wg;
+	act { state $owned = bless {}, 'Tracked'; done $wg };
+	await $wg;
 	print "completed\n";
 }, 0, qr/\Areleased\ncompleted\n\z/, 'completion releases state-owned values');
 

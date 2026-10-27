@@ -4,6 +4,8 @@ use warnings;
 use Test::More;
 use B::Deparse;
 use Wump;
+use lib 'tests/perl/lib';
+use WumpTest;
 
 our ($mode, @items, %options);
 $mode = 'global';
@@ -11,7 +13,7 @@ $mode = 'global';
 %options = (name => 'global');
 my $source = sub {
 	my $answer;
-	scope {
+	with_tasks {
 		my $out = chan;
 		local $mode = 'ordinary';
 		pocket $mode = 'private';

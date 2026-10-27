@@ -12,7 +12,7 @@ $mode = 'global';
 %options = (name => 'global', shared => 1);
 sub read_mode { $mode }
 my ($inside, $called, $child, $restored);
-scope {
+with_tasks {
 	my $out = chan;
 	{
 		pocket $mode = 'private';
@@ -31,7 +31,7 @@ is($restored, 'global', 'pocket ends at the enclosing block boundary');
 is($mode, 'global', 'pocket leaves the original global scalar intact');
 
 my (@siblings, $grandchild);
-scope {
+with_tasks {
 	my $out = chan;
 	for my $name ('alpha', 'bravo') {
 		act { pocket $mode = $name; yield; $out->send([$name, read_mode()]) };
@@ -40,7 +40,7 @@ scope {
 };
 is_deeply([sort {$a->[0] cmp $b->[0]} @siblings], [['alpha', 'alpha'], ['bravo', 'bravo']], 'sibling acts retain independent pockets across scheduling');
 is($mode, 'global', 'sibling pockets leave the root binding intact');
-scope {
+with_tasks {
 	my $out = chan;
 	local $mode = 'ordinary ancestor';
 	pocket $mode = 'parent private';
@@ -53,7 +53,7 @@ scope {
 is($grandchild, 'ordinary ancestor', 'grandchildren skip each act pocket while retaining the inherited ordinary binding');
 
 my (@seen, @nested);
-scope {
+with_tasks {
 	my $out = chan;
 	local $mode = 'ordinary';
 	local @items = ('ordinary');
@@ -83,7 +83,7 @@ is_deeply($seen[2], ['explicit', ['ordinary'], {name => 'ordinary'}], 'ordinary 
 is_deeply(\@nested, ['private', 'ordinary', ['ordinary'], {name => 'ordinary'}], 'nested scopes restore the expected scalar and aggregate bindings');
 
 my ($snapshot, $parent_after);
-scope {
+with_tasks {
 	my $out = chan;
 	local $mode = 'at spawn';
 	my $outer = \$mode;
@@ -97,7 +97,7 @@ is($snapshot, 'at spawn', 'child snapshots the eligible outer value at spawn tim
 is($parent_after, 'private', 'writing through an outer reference does not replace the pocket binding');
 
 my (@element_children, $element_parent);
-scope {
+with_tasks {
 	my $out = chan;
 	local $items[0] = 'ordinary element';
 	local $options{name} = 'ordinary element';
@@ -118,7 +118,7 @@ is_deeply($element_children[0], [['ordinary element', 'shared'], {name => 'ordin
 is_deeply($element_children[1], [['explicit element', 'shared'], {name => 'explicit element', shared => 1}], 'ordinary element overrides remain inheritable inside a pocket scope');
 
 my ($aggregate_child, $parent_iterator);
-scope {
+with_tasks {
 	my $out = chan;
 	local @items = ('ordinary aggregate', 'shared');
 	local %options = (name => 'ordinary aggregate', shared => 1);
@@ -137,7 +137,7 @@ is_deeply($aggregate_child, [['ordinary aggregate', 'shared'], {name => 'ordinar
 is_deeply([sort @$parent_iterator], ['extra', 'name', 'shared'], 'inheritance snapshot leaves the parent pocket hash iterator intact');
 
 my ($missing_child, $masked_child);
-scope {
+with_tasks {
 	my $out = chan;
 	pocket $options{name} = 'private';
 	delete $options{name};
@@ -158,7 +158,7 @@ is_deeply($masked_child, ['', undef], 'a pocket resurrection does not expose an 
 our $alias;
 BEGIN { *alias = *mode }
 my ($alias_child, $alias_parent, $escaped);
-scope {
+with_tasks {
 	my $out = chan;
 	local $mode = 'ordinary alias';
 	pocket $alias = 'private alias';
@@ -172,7 +172,7 @@ is($alias_child, 'ordinary alias', 'inheritance filtering respects glob aliases'
 is($$escaped, 'private alias', 'a reference can keep a pocket scalar alive past block exit');
 
 my ($explicit_reference, $inherited_reference, $private_reference, $ordinary_reference);
-scope {
+with_tasks {
 	my $out = chan;
 	local $object = [];
 	my $ordinary = $object;
@@ -189,7 +189,7 @@ is($explicit_reference, $private_reference, 'explicitly captured references reta
 is_deeply($private_reference, ['shared explicitly'], 'pocket controls binding inheritance rather than copying referenced objects');
 
 my ($eval_value, $eval_after, @exception);
-scope {
+with_tasks {
 	$eval_value = eval 'pocket $mode = "eval pocket"; yield; $mode';
 	$eval_after = $mode;
 	eval {
@@ -204,7 +204,7 @@ is($eval_after, 'global', 'eval scope exit releases its pocket binding');
 is_deeply(\@exception, ['global', "pocket failure\n"], 'caught exception unwinds pocket through the normal save stack');
 
 my ($index_child, $index_parent);
-scope {
+with_tasks {
 	my $out = chan;
 	pocket $options{do {
 		local $mode = 'ordinary index expression';
@@ -223,7 +223,7 @@ sub early_pocket {
 	yield;
 	return $mode;
 }
-scope {
+with_tasks {
 	{
 		pocket $mode;
 		pocket @items;
@@ -251,7 +251,7 @@ my ($fetches, $private_magic_child, $inheritable_magic_error) = (0, undef, '');
 	sub FETCH { $fetches++; 'private tied value' }
 	sub STORE {}
 }
-scope {
+with_tasks {
 	my $out = chan;
 	{
 		local $mode = 'ordinary';
@@ -274,7 +274,7 @@ like($inheritable_magic_error, qr/magic variable localization/, 'snapshot valida
 is($fetches, 0, 'inheritance filtering and validation do not invoke tied FETCH');
 
 my $private_aggregate_magic;
-scope {
+with_tasks {
 	my $out = chan;
 	local @items = ('ordinary');
 	local %options = (name => 'ordinary');
@@ -293,7 +293,7 @@ my ($destroyed, $at_parent_exit) = (0, 0);
 	package PocketOwned;
 	sub DESTROY { ${$_[0]->{counter}}++ }
 }
-scope {
+with_tasks {
 	my $out = chan;
 	{
 		pocket $object = bless {counter => \$destroyed}, 'PocketOwned';
@@ -313,7 +313,7 @@ check_program(q{
 }, 0, qr/\Areleased\n\z/, 'shutdown unwinds an abandoned pocket element');
 
 my @unsupported;
-scope {
+with_tasks {
 	for my $form (sub { pocket $^I = '.backup' }, sub { pocket *mode }) {
 		eval { $form->() };
 		push @unsupported, $@;
@@ -341,7 +341,7 @@ like($@, qr/pocket reference alias localization/, 'unsupported reference declara
 	is($names{pocket}, 'key', 'ordinary bare hash keys remain available');
 }
 my $enabled_again;
-scope { pocket $mode = 'enabled again'; $enabled_again = $mode };
+with_tasks { pocket $mode = 'enabled again'; $enabled_again = $mode };
 is($enabled_again, 'enabled again', 'keyword opt-in returns after the no Wump lexical scope');
 
 my %keyword_names = (pocket => 'ordinary key');

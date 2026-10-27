@@ -9,7 +9,7 @@ use lib 'tests/perl/lib';
 use WumpTest;
 
 my (@private, @sent, $escaped);
-scope {
+with_tasks {
 	my $value = {child => [42]};
 	@private = map { Wump::is_shared($_) } ($value, $value->{child}, \$value);
 	my $out = chan(1);
@@ -23,7 +23,7 @@ ok(Wump::is_shared($escaped), 'publication metadata survives scope exit');
 
 my (@captured, @inherited);
 our $context;
-scope {
+with_tasks {
 	my $value = {child => []};
 	my $out = chan;
 	local $context = {data => []};
@@ -38,7 +38,7 @@ is_deeply(\@captured, [1, 1], 'spawn publishes captured lexical cells and their 
 is_deeply(\@inherited, [1, 1, 1, 1], 'child snapshots publish references held by inherited bindings');
 
 my (@clones, @clone_captures);
-scope {
+with_tasks {
 	my $out = chan;
 	for (1..3) {
 		my $value = [];
@@ -53,7 +53,7 @@ is_deeply(\@clone_captures, [1, 1, 1], 'each escaping closure publishes its actu
 
 my @stores;
 our ($package_scalar, @package_array, %package_hash);
-scope {
+with_tasks {
 	my $scalar = [];
 	my $array = [];
 	my $hash = [];
@@ -72,7 +72,7 @@ scope {
 is_deeply(\@stores, [(1) x 7], 'package stores, later scalar assignments, and native hash stores publish new graphs');
 
 my @mutations;
-scope {
+with_tasks {
 	my $root = {array => [], scalar => undef};
 	my $out = chan(1);
 	$out->send($root);
@@ -102,7 +102,7 @@ my ($fetches, $stringifies) = (0, 0);
 	use overload '""' => sub { $stringifies++; return 'object' }, fallback => 1;
 }
 my @magic;
-scope {
+with_tasks {
 	my %tied;
 	my $tie = tie %tied, 'PublicationTie';
 	my $object = bless {value => []}, 'PublicationString';
@@ -115,7 +115,7 @@ is_deeply(\@magic, [1, 1, 1], 'raw publication reaches tie objects and blessed s
 is_deeply([$fetches, $stringifies], [0, 0], 'publication invokes no FETCH, iteration, or overloaded stringification callbacks');
 
 my ($deep, $cycle);
-scope {
+with_tasks {
 	my $value = [];
 	my $tail = $value;
 	for (1..4096) { my $next = []; push @$tail, $next; $tail = $next }
@@ -135,7 +135,7 @@ my ($destroyed, $weak) = (0, undef);
 	package PublishedOwned;
 	sub DESTROY { $destroyed++ }
 }
-scope {
+with_tasks {
 	my $out = chan(1);
 	{
 		my $object = bless {}, 'PublishedOwned';
@@ -154,7 +154,7 @@ sub shared_state {
 	state $value = [];
 	return Wump::is_shared($value);
 }
-scope {
+with_tasks {
 	local $localized = {private => []};
 	@local = (Wump::is_shared($localized), Wump::is_shared($localized->{private}));
 	@state = (shared_state(), shared_state());
@@ -168,7 +168,7 @@ $usage = $@;
 like($usage, qr/Usage: Wump::is_shared/, 'publication diagnostics require a reference');
 
 my ($readonly, $readonly_error);
-scope {
+with_tasks {
 	my $value = \42;
 	my $out = chan(1);
 	$out->send($value);
@@ -181,7 +181,7 @@ ok($readonly, 'read-only referents can be published');
 like($readonly_error, qr/read-only/, 'metadata preserves read-only protection');
 
 my ($compilation, $compile_error, @compile_warnings);
-scope {
+with_tasks {
 	local $SIG{__WARN__} = sub { push @compile_warnings, $_[0] };
 	my $symbols = \%PublicationCompilation::;
 	$compilation = eval q{
@@ -202,7 +202,7 @@ is_deeply($compilation, [0, '', 42], 'uninitialized stash entries retain their n
 
 our @snapshot_values;
 my $snapshot_flags;
-scope {
+with_tasks {
 	local @snapshot_values = ([]);
 	my $out = chan;
 	act {

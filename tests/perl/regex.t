@@ -10,7 +10,7 @@ binmode STDERR, ':utf8';
 
 sub together ($code, @inputs) {
 	my @out;
-	scope {
+	with_tasks {
 		my $ch = chan;
 		for my $input (@inputs) {
 			act { $ch->send($code->(@$input)) };
@@ -195,7 +195,7 @@ my $overlap_qr = qr/([a-z]+)(?{
 })/;
 sub overlap_code ($text) { $text =~ $overlap_qr; return [$text, $^R] }
 my @overlap;
-scope {
+with_tasks {
 	my $ch = chan;
 	$long_entered = chan;
 	$long_release = chan;
@@ -298,7 +298,7 @@ is_deeply(together(\&reused_ops, [1], [2]), [
 ], 'freed and reused regex slots cannot retrieve stale task instances');
 
 my ($escaped, $escaped_code);
-scope {
+with_tasks {
 	$escaped = eval 'qr/(?<word>escaped)-(\d+)/';
 	die $@ if $@;
 	my $message = 'closure survived';
@@ -310,7 +310,7 @@ is_deeply([$1, $2, $+{word}], ['escaped', '99', 'escaped'], 'a qr value remains 
 is($^R, 'closure survived', 'escaped regex code retains captured lexicals after task cleanup');
 
 my $transferred;
-scope {
+with_tasks {
 	my $ch = chan;
 	act {
 		my $owned_text = 'producer closure';
@@ -345,7 +345,7 @@ is_deeply(together(\&callback, [1, 'alpha-11'], [2, 'bravo-22']),
 	}
 }
 my @destroyed;
-scope {
+with_tasks {
 	my $ch = chan;
 	act {
 		state $owned = WumpTest::RegexDestructor->new(\@destroyed);

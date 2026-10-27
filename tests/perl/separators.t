@@ -25,7 +25,7 @@ sub output ($field, $record, $label) {
 }
 
 my @inputs;
-scope {
+with_tasks {
 	my $out = chan;
 	for my $case ([1, ':', 'a:b:'], [2, '|', 'c|d|']) {
 		act {
@@ -43,7 +43,7 @@ is_deeply([sort {$a->[0] <=> $b->[0]} @inputs], [[1, ':', ['a', 'b']], [2, '|', 
 is($/, "\n", 'input localization leaves the global separator intact');
 
 my @outputs;
-scope {
+with_tasks {
 	my $out = chan;
 	act { $out->send(output(':', '<a>', 'alpha')) };
 	act { $out->send(output('|', '<b>', 'bravo')) };
@@ -56,7 +56,7 @@ is($\, undef, 'output localization leaves the global separator intact');
 is($,, undef, 'field separator global slot remains intact');
 
 my (@scope, $error);
-scope {
+with_tasks {
 	local $/ = ':';
 	local $\ = 'outer';
 	eval {
@@ -73,7 +73,7 @@ is_deeply(\@scope, [['|', 'inner', ['x|', 'y|']], [':', 'outer', ['x:', 'y:']]],
 is($error, "separator unwind\n", 'separator scope preserves the caught exception');
 
 my ($child, $parent);
-scope {
+with_tasks {
 	my $go = chan;
 	my $out = chan;
 	{
@@ -91,7 +91,7 @@ is_deeply($parent, ['|', 'private', ['a|', 'b|']], 'pocket uses a private input 
 is_deeply($child, [':', 'inherited', ['a:', 'b:']], 'spawn snapshots outer ordinary settings through pocket and parent scope exit');
 
 my @modes;
-scope {
+with_tasks {
 	{ local $/; push @modes, [$/, records("a\nb\n")] }
 	{ local $/ = ''; push @modes, [$/, records("a\n\nb\n\n")] }
 	{ my $size = 3; local $/ = \$size; yield; push @modes, [${$/}, records('abcdefg')] }
@@ -105,7 +105,7 @@ my $unicode_text = "a\x{3a9}b\x{3a9}";
 utf8::encode($unicode_text);
 # Initialize this layer before spawning acts; hooks.t also exercises loading inside.
 open my $unicode_fh, '<:encoding(UTF-8)', \$unicode_text or die "encoded input: $!";
-scope {
+with_tasks {
 	{
 		local $/ = "\x{3a9}";
 		yield;
@@ -124,7 +124,7 @@ is_deeply($unlocalized, [':', ['a:', 'b:']], 'unlocalized assignments remain sha
 $/ = "\n";
 
 my @invalid;
-scope {
+with_tasks {
 	local $/ = ':';
 	for my $value (\0, \-1, [], {}) {
 		eval { $/ = $value };
@@ -137,7 +137,7 @@ for my $case (@invalid) {
 }
 
 my $english;
-scope {
+with_tasks {
 	local $INPUT_RECORD_SEPARATOR = ':';
 	local $OUTPUT_RECORD_SEPARATOR = 'english';
 	yield;
@@ -147,7 +147,7 @@ is_deeply($english, [':', 'english', ['a:', 'b:']], 'English aliases address the
 
 my ($root_ref, $escaped_input, $escaped_output, $local_after_root_write);
 $root_ref = \$/;
-scope {
+with_tasks {
 	local $/ = '|';
 	local $\ = 'private';
 	($escaped_input, $escaped_output) = (\$/, \$\);
@@ -177,7 +177,7 @@ my (@tied_seen, $tied_child);
 	}
 }
 tie *YIELD_PRINT, 'YieldPrinter', \@tied_seen;
-scope {
+with_tasks {
 	my $out = chan;
 	(tied *YIELD_PRINT)->{out} = $out;
 	local $\ = 'ordinary output';
@@ -205,6 +205,6 @@ check_program(q{
 }, 0, qr/\Areleased\n\z/, 'unstarted child releases inherited separator caches');
 
 my $later;
-scope { local $/ = '|'; yield; $later = records('later|works|') };
+with_tasks { local $/ = '|'; yield; $later = records('later|works|') };
 is_deeply($later, ['later|', 'works|'], 'later scopes remain usable after failures, escaped references and tied callbacks');
 done_testing;

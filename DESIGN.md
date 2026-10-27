@@ -60,9 +60,12 @@ sel {                              # Go's select; `select` stays the builtin
     default                  { ... }
 }
 
-scope {                            # sync.WaitGroup as a block: waits for
-    act { work($_) } for 1..8;     # every task spawned inside it
+my $workers = waitgroup;           # sync.WaitGroup-style explicit counter
+for my $id (1..8) {
+    add $workers, 1;
+    act { work($id); done $workers }
 }
+await $workers;                    # $workers->add/done/wait also work
 
 lock %cache;                       # Perl's existing `lock` keyword, now a
                                    # real mutex until the block ends:
@@ -77,8 +80,10 @@ lock %cache;                       # Perl's existing `lock` keyword, now a
   spawn work directly.
 - **No application-level `run { ... }` wrapper in the final interface.**
   Interpreter entry replaces the prototype's former exported `run` function.
-  `act` keeps its Go-style spawn semantics, and `scope` provides explicit
-  waiting for its spawned acts.
+  `act` keeps its Go-style spawn semantics. Wait groups provide explicit
+  `add`/`done`/`await` functions and `add`/`done`/`wait` methods; they track
+  registered work rather than lexical scopes or act ancestry. Perl's process
+  `wait` keyword keeps its existing meaning.
 - **Uncaught `die` in any task is a Go panic:** print the error and a
   stack trace for that task (`task 42 [running]:` plus the Perl call
   stack), then exit the whole program with status 2.
@@ -136,7 +141,7 @@ local storage, which Go deliberately doesn't have.
 
 ```
  ┌──────────────── perl fork ─────────────────┐
- │ act/chan/sel/scope ops, task-aware interp    │
+ │ act/chan/sel ops, wait groups, task state   │
  │ escape tracking, task-local dynamic scope    │
  ├──────────────── runtime (C) ────────────────┤
  │ tasks+stacks │ scheduler │ channels/sel      │
@@ -298,7 +303,9 @@ synchronize with:
   the enclosing block exits. It's not reentrant, like `sync.Mutex`;
   re-locking in the same task dies. It's a better fit than Go's version,
   since the lock lives on the data it protects.
-- `scope {}` for waiting on a group of tasks.
+- **wait groups** for explicitly registered work: `waitgroup()`, `add`,
+  `done`, and `await`, or `Wump::WaitGroup->new` and `add`/`done`/`wait` methods.
+  There is no implicit block or descendant membership.
 
 **`perl -race`** is the race detector. It's a debug build that stamps the
 owning task in every SV, checks every access against escape status, and
@@ -483,7 +490,8 @@ Each one ends in something runnable.
 0. **Runtime in C**: tasks, stacks, scheduler, channels, `sel`, timers,
    netpoller, sysmon. Benchmarked against Go.
 1. **Fork, one P** (Go pre-1.5 defaulted to `GOMAXPROCS=1` too): interpvar
-   split, `my_perl` = task, `act`/`chan`/`sel`/`scope`/`lock`/`pocket` in core,
+   split, `my_perl` = task, `act`/`chan`/`sel`/`lock`/`pocket` in core,
+   explicit wait groups with functional and object interfaces,
    task-local specials and `local` overlays, panic semantics. Perl test
    suite passes.
    - Required entry integration: run ordinary top-level Perl as the main act
@@ -492,12 +500,13 @@ Each one ends in something runnable.
    - Acceptance: a Wump-enabled script creates a channel, spawns with
      `act { ... }`, and receives a result at top level without `run { ... }`.
      Verify spawn returns immediately, main-task exit ends execution, and
-     explicit `scope` waiting remains separate. This entry integration can
+     explicit wait-group waiting remains separate. This entry integration can
      run on one P while parallel execution is still being brought up.
    - Implemented in the single-slot bridge: `use Wump` activates interpreter
      entry, top-level code is the main act, and the `run` wrapper is removed.
-     Exported `scope` waits for its spawned acts and descendants. These are
-     still module functions; core feature syntax and multi-P Perl remain open.
+     Wait groups use explicit counters with functional and object calls;
+     `scope` is removed. These are still module functions; core feature syntax
+     and multi-P Perl remain open.
 2. **Many Ps for I/O**: Ms, syscall handoff, netpoller, fork(), signals.
    Perl code still runs on one P at a time behind a runtime lock; that's
    development scaffolding, never a shipped mode.

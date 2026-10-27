@@ -11,7 +11,7 @@ $mode = 'global';
 @items = ('global');
 %options = (global => 1);
 my (@seen, @outside);
-scope {
+with_tasks {
 	my $out = chan;
 	for my $name ('alpha', 'bravo') {
 		act {
@@ -38,7 +38,7 @@ sub early {
 	yield;
 	return $mode;
 }
-scope {
+with_tasks {
 	local $mode = 'outer';
 	eval {
 		local $mode = 'inner';
@@ -55,7 +55,7 @@ is($early, 'return', 'return from a sub preserves the localized result');
 is($mode, 'global', 'early return unwinds the binding');
 
 my $isolated;
-scope {
+with_tasks {
 	my $ready = chan;
 	my $resume = chan;
 	my $out = chan;
@@ -75,7 +75,7 @@ is($mode, 'new global', 'unwinding a binding does not restore over a newer globa
 $mode = 'global';
 
 my (@family, $parent);
-scope {
+with_tasks {
 	my $go = chan;
 	my $out = chan;
 	{
@@ -110,7 +110,7 @@ our ($slots, @slots, %slots);
 ($slots, @slots) = ('root', 'root');
 %slots = (root => 1);
 my ($empty_slots, $nested_slots);
-scope {
+with_tasks {
 	my $out = chan;
 	local $slots;
 	local @slots;
@@ -131,7 +131,7 @@ is_deeply($nested_slots, [['outer'], {outer => 1}], 'nested aggregate scopes res
 is_deeply([$slots, [@slots], {%slots}], ['root', ['root'], {root => 1}], 'all three global slots survive localization');
 
 my ($grandchild, @defaults);
-scope {
+with_tasks {
 	my $out = chan;
 	local $mode = 'ancestor';
 	local $_ = 'default at spawn';
@@ -149,7 +149,7 @@ our ($alias, @alias, %alias);
 BEGIN { *alias = *mode }
 my ($alias_seen, $global_ref, $local_ref);
 $global_ref = \$mode;
-scope {
+with_tasks {
 	local $alias = 'alias';
 	$local_ref = \$mode;
 	yield;
@@ -161,7 +161,7 @@ isnt($local_ref, $global_ref, 'local creates a distinct scalar identity');
 
 my $referent = [];
 my ($identity, $sparse, $hash_copy, $iterator);
-scope {
+with_tasks {
 	my $out = chan;
 	local $mode = $referent;
 	local @items;
@@ -195,7 +195,7 @@ my @destructed;
 		Wump::act(sub { push @destructed, $main::mode });
 	}
 }
-scope {
+with_tasks {
 	local $mode = 'enclosing';
 	{
 		local $mode = bless {}, 'LocalCleanup';
@@ -230,7 +230,7 @@ my @forms = (
 	sub { local $^I = '.backup' },
 	sub { local %ENV },
 );
-scope {
+with_tasks {
 	for my $form (@forms) {
 		eval { $form->() };
 		push @errors, $@;
@@ -247,7 +247,7 @@ my ($tied_error, $fetches) = ('', 0);
 	sub TIESCALAR { bless {}, shift }
 	sub FETCH { $fetches++; return 'tied' }
 }
-scope {
+with_tasks {
 	local @items = ('plain');
 	tie $items[0], 'LocalTied';
 	eval { act {} };
@@ -256,7 +256,7 @@ scope {
 like($tied_error, qr/magic variable localization/, 'spawn rejects magic inside an inherited binding');
 is($fetches, 0, 'snapshot validation does not run tied FETCH');
 
-scope { local $mode = 'healthy'; yield; push @seen, $mode };
+with_tasks { local $mode = 'healthy'; yield; push @seen, $mode };
 is($seen[-1], 'healthy', 'later scopes remain usable after all failure paths');
 {
 	local $mode = 'ordinary root scope';

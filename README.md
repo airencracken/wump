@@ -107,6 +107,7 @@ The build does not install or replace system Perl.
 make perl-fetch                 # downloads, verifies SHA512/size, and unpacks
 make perl-build                 # task-aware MULTIPLICITY + USE_ITHREADS build
 make perl-example               # Perl tasks return 1, 4, 9, 16
+make perl-waitgroup-example     # Functional and object wait groups
 make perl-regex-example         # yielding tasks retain separate regex captures
 make perl-local-example         # spawned tasks inherit separate local bindings
 make perl-elements-example      # tasks localize individual shared hash elements
@@ -169,10 +170,30 @@ the task. `yield` and `sleep(SECONDS)` schedule cooperatively. These operations
 require a running task. Compile-time blocks cannot schedule, and importing
 Wump at runtime without compile-time activation fails explicitly.
 
-`scope { ... }` executes its block immediately, then waits for acts spawned
-inside it and their descendants. Nested scopes wait for their own groups;
-unrelated acts are independent. A caught exception in the scope body unwinds
-the scope without waiting or canceling its children.
+Wait groups track explicitly registered work, as in Go. Functions and methods
+operate on the same counter:
+
+```perl
+my $wg = waitgroup;                 # or Wump::WaitGroup->new
+for my $id (1..8) {
+	add $wg, 1;                      # or $wg->add(1)
+	act { work($id); done $wg };      # or $wg->done
+}
+await $wg;                         # or $wg->wait
+```
+
+`add` defaults to one and also accepts negative integer deltas; `done`
+subtracts one. `await` and `wait` return when the counter is zero, releasing
+all waiting acts. Register work before spawning it. A group can be reused
+after all previous waits have returned. Negative counters, overflow, and reuse
+while previous waiters are returning fail without changing the counter.
+Only explicitly registered work participates; lexical blocks and act ancestry
+do not add membership. Returning from main still ends the program.
+
+The function is named `await` because Perl's existing `wait` keyword remains
+the process-wait builtin. Object calls use `$wg->wait`. `use Wump::WaitGroup`
+enables the object interface without exporting functions. There is no
+`scope {}` wrapper. See [examples/waitgroup.pl](examples/waitgroup.pl).
 
 Returning from the main program abandons other tasks. A caught `die` stays within
 its task. An uncaught task exception stops the scheduler, prints its task ID and

@@ -7,9 +7,7 @@ sub parse ($text, $results) {
 	$results->send("$text retained $+{name} and $+{number}");
 }
 
-scope {
-	my $results = chan;
-	act { parse('alpha-11', $results) };
-	act { parse('bravo-22', $results) };
-	say scalar $results->recv for 1..2;
-};
+my $results = chan;
+act { parse('alpha-11', $results) };
+act { parse('bravo-22', $results) };
+say scalar $results->recv for 1..2;

@@ -10,7 +10,7 @@ use WumpTest;
 our $package_value = {visits => 0};
 my $shared = {visits => 0};
 my ($message, $captured);
-scope {
+with_tasks {
 	my $out = chan;
 	act {
 		lock $shared;
@@ -32,7 +32,7 @@ my $destroyed = 0;
 	sub DESTROY { $destroyed++ }
 }
 my $weak;
-scope {
+with_tasks {
 	my $out = chan(4);
 	act {
 		for (1..400) {
@@ -65,7 +65,7 @@ check_program(q{
 
 my $cycle = {};
 $cycle->{self} = $cycle;
-scope {
+with_tasks {
 	my $out = chan;
 	act { $out->send($cycle) };
 	my $received = $out->recv;

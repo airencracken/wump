@@ -153,7 +153,7 @@ typedef struct wump_perl_channel {
 typedef struct wump_perl_run {
 	wump_perl_channel *channels;
 	wump_perl_message *messages;
-	struct wump_perl_scope *scopes;
+	struct wump_perl_waitgroup *groups;
 	struct wump_perl_lock *locks;
 	SV *panic;
 	UV panic_task, next_task;
@@ -172,51 +172,7 @@ void Perl_wump_panic(pTHX_ SV *error) {
 	wump_halt(ECANCELED);
 }
 
-typedef struct wump_perl_scope {
-	wump_chan *done;
-	UV pending;
-	bool owner, waiting;
-	struct wump_perl_scope *parent;
-	struct wump_perl_scope *next, *previous;
-} wump_perl_scope;
-
-static void wump_scope_release(pTHX_ wump_perl_scope *group, bool notify) {
-	while (!group->owner && !group->pending) {
-		wump_perl_scope *parent = group->parent;
-		if (group->previous) group->previous->next = group->next;
-		else wump_perl_active->scopes = group->next;
-		if (group->next) group->next->previous = group->previous;
-		wump_chan_free(group->done);
-		Safefree(group);
-		if (!parent) return;
-		/* A nested group retains its enclosing group even if its owner
-		 * catches an exception and returns before the descendants finish. */
-		assert(parent->pending);
-		parent->pending--;
-		if (notify && !parent->pending && parent->owner && parent->waiting) {
-			if (wump_chan_send(parent->done, NULL) != 0) abort();
-		}
-		group = parent;
-	}
-}
-
-static void wump_scope_leave(pTHX_ void *arg) {
-	wump_perl_scope *group = arg;
-	group->owner = FALSE;
-	wump_scope_release(aTHX_ group, wump_self() != NULL);
-}
-
-static void wump_scope_complete(pTHX_ struct wump_perl_task *task, bool notify) {
-	wump_perl_scope *group = task->member_of;
-	if (!group) return;
-	task->member_of = NULL;
-	assert(group->pending);
-	group->pending--;
-	if (notify && !group->pending && group->owner && group->waiting) {
-		if (wump_chan_send(group->done, NULL) != 0) abort();
-	}
-	wump_scope_release(aTHX_ group, notify);
-}
+#include "wump_waitgroup.c"
 
 #include "wump_lock.c"
 
@@ -307,7 +263,6 @@ static void wump_perl_task_free(void *arg) {
 		Perl_wump_task_activate(aTHX_ NULL);
 		wump_local_clear(aTHX_ task);
 		SvREFCNT_dec(task->entry);
-		wump_scope_complete(aTHX_ task, FALSE);
 		Safefree(task);
 		return;
 	}
@@ -415,7 +370,6 @@ static void wump_perl_task_free(void *arg) {
 			slab = next;
 		}
 	}
-	wump_scope_complete(aTHX_ task, FALSE);
 	Perl_wump_task_activate(aTHX_ NULL);
 	Safefree(task);
 }
@@ -453,8 +407,6 @@ static struct wump_perl_task *wump_perl_task_new(pTHX_ SV *callback) {
 		}
 	}
 	task->id = ++wump_perl_active->next_task;
-	task->scope = task->member_of = PL_wump_task->scope;
-	if (task->member_of) task->member_of->pending++;
 	LEAVE_SCOPE(mark);
 	return task;
 }
@@ -499,7 +451,6 @@ static void wump_perl_task_start(void *arg) {
 		FREETMPS;
 		LEAVE;
 	}
-	wump_scope_complete(aTHX_ task, TRUE);
 	task->finished = 1;
 }
 
@@ -537,11 +488,10 @@ int Perl_wump_main(pTHX) {
 		Safefree(run.messages);
 		run.messages = next;
 	}
-	while (run.scopes != NULL) {
-		wump_perl_scope *next = run.scopes->next;
-		wump_chan_free(run.scopes->done);
-		Safefree(run.scopes);
-		run.scopes = next;
+	while (run.groups != NULL) {
+		wump_perl_waitgroup *next = run.groups->next;
+		wump_waitgroup_free(run.groups);
+		run.groups = next;
 	}
 	if (run.panic != NULL) {
 		PerlIO_printf(Perl_error_log, "task %" UVuf " [panic]: %s", run.panic_task, SvPV_nolen(run.panic));
@@ -566,43 +516,11 @@ static void xs_wump_enable(pTHX_ CV *cv) {
 	XSRETURN_EMPTY;
 }
 
-static void xs_wump_scope(pTHX_ CV *cv) {
-	dXSARGS;
-	if (items != 1 || !PL_wump_task || !wump_self()) croak("Wump: scope requires a running task");
-	if (!SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVCV) croak("Wump: expected a code reference");
-	wump_perl_scope *group;
-	Newxz(group, 1, wump_perl_scope);
-	group->done = wump_chan_make(0, 1);
-	if (!group->done) { Safefree(group); croak("Wump: scope allocation failed"); }
-	group->owner = TRUE;
-	group->parent = PL_wump_task->scope;
-	if (group->parent) group->parent->pending++;
-	group->next = wump_perl_active->scopes;
-	if (group->next) group->next->previous = group;
-	wump_perl_active->scopes = group;
-	ENTER;
-	SAVETMPS;
-	SAVEDESTRUCTOR_X(wump_scope_leave, group);
-	SAVEVPTR(PL_wump_task->scope);
-	PL_wump_task->scope = group;
-	PUSHMARK(SP);
-	PUTBACK;
-	call_sv(ST(0), G_DISCARD);
-	FREETMPS;
-	if (group->pending) {
-		group->waiting = TRUE;
-		if (wump_chan_recv(group->done, NULL) != 1) croak("Wump: scope wait failed");
-	}
-	LEAVE;
-	XSRETURN_EMPTY;
-}
-
 static void xs_wump_act(pTHX_ CV *cv) {
 	dXSARGS;
 	if (items != 1 || wump_self() == NULL || PL_wump_task == NULL) croak("Wump: act requires a running task and a code reference");
 	struct wump_perl_task *task = wump_perl_task_new(aTHX_ ST(0));
 	if (wump_go_context(wump_perl_task_start, task, wump_perl_enter, wump_perl_task_free) != 0) {
-		wump_scope_complete(aTHX_ task, FALSE);
 		wump_local_clear(aTHX_ task);
 		SvREFCNT_dec(task->entry);
 		Safefree(task);
@@ -707,7 +625,11 @@ static void xs_wump_sleep(pTHX_ CV *cv) {
 
 void Perl_wump_boot(pTHX) {
 	newXS("Wump::_enable", xs_wump_enable, __FILE__);
-	newXS("Wump::_scope", xs_wump_scope, __FILE__);
+	newXS("Wump::_waitgroup", xs_wump_waitgroup, __FILE__);
+	newXS("Wump::_wg_add", xs_wump_wg_add, __FILE__);
+	newXS("Wump::_wg_done", xs_wump_wg_done, __FILE__);
+	newXS("Wump::_wg_wait", xs_wump_wg_wait, __FILE__);
+	newXS("Wump::_wg_destroy", xs_wump_wg_destroy, __FILE__);
 	newXS("Wump::is_shared", xs_wump_is_shared, __FILE__);
 	newXS("Wump::_act", xs_wump_act, __FILE__);
 	newXS("Wump::_chan", xs_wump_chan, __FILE__);

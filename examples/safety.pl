@@ -5,7 +5,7 @@ use Wump;
 
 my $totals = {visits => 0};
 my @reports;
-scope {
+{
 	my $done = chan;
 	local $SIG{__WARN__} = sub { push @reports, "inherited: $_[0]" };
 	pocket $SIG{__WARN__} = sub { push @reports, "parent only: $_[0]" };

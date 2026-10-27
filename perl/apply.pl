@@ -38,7 +38,7 @@ while ($intrp =~ /PERLVAR(?:I|IC)?\(\s*I,\s*(\w+),\s*([^,\)]+)(?:,[^\)]*)?\)/g) 
 	$types{$name} = $type;
 }
 my $header = "/* Generated from Perl's intrpvar.h by perl/apply.pl. */\n";
-$header .= "struct wump_cv_slot;\nstruct wump_regex_slot;\nstruct wump_local;\nstruct wump_element;\nstruct wump_element_iter;\nstruct wump_perl_scope;\nstruct wump_perl_task {\n";
+$header .= "struct wump_cv_slot;\nstruct wump_regex_slot;\nstruct wump_local;\nstruct wump_element;\nstruct wump_element_iter;\nstruct wump_perl_task {\n";
 for my $name (@vars) {
 	exists $types{$name} or die "Missing upstream interpreter field: $name\n";
 	$header .= "\t$types{$name} I$name;\n";
@@ -53,7 +53,6 @@ $header .= <<'C';
 	struct wump_element_iter *element_iters;
 	UV next_binding;
 	UV id;
-	struct wump_perl_scope *scope, *member_of;
 	int initialized, finished, main;
 };
 I32 *Perl_wump_cv_depth(pTHX_ const CV *cv);
@@ -287,6 +286,7 @@ for my $pair (
 	["$FindBin::Bin/core/wump_elements.c", "$source/wump_elements.c"],
 	["$FindBin::Bin/core/wump_magic.c", "$source/wump_magic.c"],
 	["$FindBin::Bin/core/wump_lock.c", "$source/wump_lock.c"],
+	["$FindBin::Bin/core/wump_waitgroup.c", "$source/wump_waitgroup.c"],
 	["$FindBin::Bin/core/wump_publish.c", "$source/wump_publish.c"],
 	["$FindBin::Bin/core/wump_regex_roots.c", "$source/wump_regex_roots.c"],
 	["$FindBin::Bin/../runtime/include/wump.h", "$source/wump.h"],

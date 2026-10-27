@@ -45,42 +45,8 @@ program(q{
 
 program(q{
 	use Wump;
-	my @seen;
-	scope {
-		act { yield; push @seen, 'child'; act { yield; push @seen, 'grandchild' } };
-		scope { act { push @seen, 'nested' } };
-	};
-	print join(',', sort @seen), "\n";
-}, 0, qr/\Achild,grandchild,nested\n\z/, 'scope waits for children and descendants across nested scopes');
-
-program(q{
-	use Wump;
-	my $park = chan;
-	act { $park->recv; print "unrelated completed\n" };
-	for (1..100) { scope { act { yield }; yield; act {} } }
-	print "scopes completed\n";
-}, 0, qr/\Ascopes completed\n\z/, 'scope does not wait for unrelated acts and supports repeated completion');
-
-program(q{
-	use Wump;
-	my $out = chan(1);
-	eval { scope { act { $out->send(7) }; die "caught\n" } };
-	print $@;
-	print scalar($out->recv), "\n";
-	scope { act { print "still usable\n" } };
-}, 0, qr/\Acaught\n7\nstill usable\n\z/, 'scope body exceptions restore the parent scope');
-
-program(q{
-	use Wump;
-	my @seen;
-	scope {
-		act {
-			eval { scope { act { sleep 0.001; push @seen, 'grandchild' }; die "caught\n" } };
-			push @seen, 'parent';
-		};
-	};
-	print join(',', sort @seen), "\n";
-}, 0, qr/\Agrandchild,parent\n\z/, 'outer scope waits for descendants of a failed nested scope');
+	print defined(&main::scope) || defined(&Wump::scope) || defined(&Wump::_scope) ? 'present' : 'absent';
+}, 0, qr/\Aabsent\z/, 'scope wrapper is removed from the public and private bridge');
 
 program(q{
 	use Wump;

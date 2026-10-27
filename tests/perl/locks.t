@@ -8,7 +8,7 @@ use lib 'tests/perl/lib';
 use WumpTest;
 
 my $counter = {value => 0};
-scope {
+with_tasks {
 	my $done = chan;
 	for (1..12) {
 		act {
@@ -26,7 +26,7 @@ scope {
 is($counter->{value}, 360, 'lock serializes shared reference updates across yields');
 
 my ($error, $after);
-scope {
+with_tasks {
 	my $done = chan;
 	eval {
 		lock $counter;
@@ -41,7 +41,7 @@ is($error, "unlock on unwind\n", 'lock keeps exception text intact');
 is($after, 'acquired', 'exception unwinding releases a lock to a parked act');
 
 my ($recursive, $returned);
-scope {
+with_tasks {
 	lock $counter;
 	eval { lock $counter };
 	$recursive = $@;
@@ -52,7 +52,7 @@ is($returned, refaddr($counter), 'lock preserves reference identity');
 
 my (@array, %hash, $scalar);
 my @events;
-scope {
+with_tasks {
 	my $done = chan;
 	{
 		lock @array;
@@ -78,7 +78,7 @@ my $owned = 0;
 	sub DESTROY { $owned++ }
 }
 my @lifetimes;
-scope {
+with_tasks {
 	my $item = bless {}, 'LockOwned';
 	{ lock $item; undef $item; yield; push @lifetimes, $owned }
 	push @lifetimes, $owned;
