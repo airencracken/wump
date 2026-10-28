@@ -340,6 +340,34 @@ read**: conversions are computed each time. Hash iteration state for
 shared hashes moves to a per-task side table, so `keys`/`values`/`each`
 are reads, like ranging over a Go map. `pos()` stays a write.
 
+The first scalar read barrier is implemented for published plain nonreference
+SVs carrying only publication magic. Conversion backends for IV, UV, NV,
+truth, PV, bytes and UTF-8 convert a deep private snapshot; scalar copies use
+the same snapshot to avoid modifying source COW bookkeeping. Snapshots copy
+valid raw representations and their public/private cache distinctions,
+including dual values, unsigned numbers and boolean identity. Existing macro
+fast paths can read already cached representations without taking a snapshot.
+Explicit mutable-buffer requests and internal string-force/UTF-8-upgrade paths
+continue to operate on the original SV.
+
+Snapshots are mortal in the caller's existing temporary scope, so successive
+conversions and scheduler switches do not invalidate computed string results.
+Each act has a nested read-frame chain, with a root-interpreter fallback
+outside scheduling. Save-stack entries pin the source and restore the chain
+on normal return, throw and abandoned-act teardown. Undefined-value diagnostics
+map a snapshot back to its original source for variable-name reporting.
+Reference/overload conversion and other magic still follow upstream paths.
+Native inversion lists also retain their native conversion/copy paths despite
+their low SV type number. Plain scalar copies add no save-stack entries,
+allowing callers to copy keys while assembling localization save records.
+
+Native C/C++ regressions check unchanged source flags, bodies, PVs and COW
+counts. Eight native readers exercise immutable, already published sources
+using separate executor allocators and task stacks; full-core TSan and
+Valgrind cover concurrency and teardown. This does not yet provide concurrent
+publication or writers, shared hash iteration, regex read-cache isolation,
+or lifetime protection for cached pointers borrowed directly from a source.
+
 Bodies and string buffers freed by writes to shared SVs are retired, not
 freed. They're reused after every P passes a safe point (§4), so a
 `char*` from `SvPV` stays valid until the op that fetched it ends. That's
@@ -419,7 +447,7 @@ frees scalars, strings, references, arrays, and hashes concurrently against one
 interpreter. It checks root-cache isolation, cross-thread cache handoff,
 post-merge survival/reuse and complete teardown. A separate TSan build
 instruments Perl's full allocation/destruction paths. This is not yet parallel
-opcode execution: read caches, shared-graph reclamation,
+opcode execution: remaining read caches, shared-graph reclamation,
 compiler state and XS still need isolation. Central cache refill is pending.
 Perl memory-tracking builds and `-DD` arena scans are rejected by `use Wump`;
 the initial caches target the private fork's system-malloc configuration.

@@ -2,7 +2,7 @@
 # within the integration C file included by upstream run.c.
 $(common_objs) $(main_only_objs) $(mini_only_objs) perlmain$(OBJ_EXT): wump_task_types.h wump_task_embed.h
 run$(OBJ_EXT): wump_core.c wump_local.c wump_elements.c wump_magic.c wump_lock.c wump_waitgroup.c wump_publish.c wump.h wump_runtime_internal.h
-sv$(OBJ_EXT): wump_alloc.c
+sv$(OBJ_EXT): wump_alloc.c wump_reads.c
 hv$(OBJ_EXT): wump_keys.c
 $(MINIPERL_EXE) $(LIBPERL): wump_runtime.mk
 regcomp$(OBJ_EXT): wump_regex_roots.c

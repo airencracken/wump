@@ -39,6 +39,7 @@ while ($intrp =~ /PERLVAR(?:I|IC)?\(\s*I,\s*(\w+),\s*([^,\)]+)(?:,[^\)]*)?\)/g) 
 }
 my $header = "/* Generated from Perl's intrpvar.h by perl/apply.pl. */\n";
 $header .= "START_EXTERN_C\n";
+$header .= "struct wump_read_frame;\n";
 $header .= "struct wump_cv_slot;\nstruct wump_regex_slot;\nstruct wump_local;\nstruct wump_element;\nstruct wump_element_iter;\nstruct wump_perl_task {\n";
 for my $name (@vars) {
 	exists $types{$name} or die "Missing upstream interpreter field: $name\n";
@@ -52,6 +53,7 @@ $header .= <<'C';
 	struct wump_local *locals;
 	struct wump_element *elements;
 	struct wump_element_iter *element_iters;
+	struct wump_read_frame *read_frame;
 	UV next_binding;
 	UV id;
 	int initialized, finished, main;
@@ -108,6 +110,15 @@ void Perl_wump_save_capture(pTHX_ GV *gv);
 void Perl_wump_hook_store(pTHX_ SV *value, char kind);
 bool Perl_wump_publish_magic(const MAGIC *mg);
 bool Perl_wump_is_shared(pTHX_ const SV *value);
+bool Perl_wump_readable(pTHX_ const SV *value);
+SV *Perl_wump_scalar_snapshot(pTHX_ const SV *value);
+const SV *Perl_wump_read_origin(pTHX_ const SV *value);
+IV Perl_wump_read_iv(pTHX_ SV *value, I32 flags);
+UV Perl_wump_read_uv(pTHX_ SV *value, I32 flags);
+NV Perl_wump_read_nv(pTHX_ SV *value, I32 flags);
+bool Perl_wump_read_bool(pTHX_ SV *value, I32 flags);
+char *Perl_wump_read_pv(pTHX_ SV *value, STRLEN *length, U32 flags, int encoding);
+void Perl_wump_read_copy(pTHX_ SV *target, SV *value, I32 flags);
 void Perl_wump_publish(pTHX_ SV *value);
 void Perl_wump_publish_store(pTHX_ SV *owner, SV *value);
 void Perl_wump_publish_reference(pTHX_ SV *owner, SV *value);
@@ -157,6 +168,8 @@ edit('perl.h', "    bool Iwump_publishing;",
 	"    bool Iwump_publishing;\n    bool Iwump_enabled;");
 edit('perl.h', "    bool Iwump_enabled;",
 	"    bool Iwump_enabled;\n    perl_mutex Iwump_keys_mutex;\n    bool Iwump_keys_ready;");
+edit('perl.h', "    bool Iwump_keys_ready;",
+	"    bool Iwump_keys_ready;\n    struct wump_read_frame *Iwump_read_frame;");
 # Keep the former task slot reserved for private-layout compatibility;
 # execution selects its task through TLS, never through that shared slot.
 my $vars = "\n/* Wump execution state: root execution retains the upstream fields. */\n";
@@ -316,6 +329,8 @@ require "$FindBin::Bin/refcount.pl";
 apply_refcount($source);
 require "$FindBin::Bin/keys.pl";
 apply_keys($source);
+require "$FindBin::Bin/reads.pl";
+apply_reads($source);
 edit('sv.c', "    struct arena_desc set[ARENAS_PER_SET];\n};",
 	"    struct arena_desc set[ARENAS_PER_SET];\n};\n#include \"wump_alloc.c\"");
 # Debug builds must not race on the arena table's one-time sanity check.
@@ -334,6 +349,7 @@ edit('pp.c', '    SvLOCK(sv);', '    if (PL_wump_task) Perl_wump_lock(aTHX_ sv);
 for my $pair (
 	["$FindBin::Bin/core/wump_core.c", "$source/wump_core.c"],
 	["$FindBin::Bin/core/wump_alloc.c", "$source/wump_alloc.c"],
+	["$FindBin::Bin/core/wump_reads.c", "$source/wump_reads.c"],
 	["$FindBin::Bin/core/wump_keys.c", "$source/wump_keys.c"],
 	["$FindBin::Bin/core/wump_local.c", "$source/wump_local.c"],
 	["$FindBin::Bin/core/wump_elements.c", "$source/wump_elements.c"],

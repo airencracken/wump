@@ -7,7 +7,7 @@ CPPFLAGS = -Iruntime/include -Iruntime/src
 CFLAGS = -O2 -g -std=c11 -Wall -Wextra -Werror -pthread
 LDFLAGS = -pthread
 LDLIBS = -lm
-PERL_SUITES = entry waitgroup preempt tasks regex local elements pocket pocket-deparse separators hooks locks shared keys publication hidden-roots
+PERL_SUITES = entry waitgroup preempt tasks regex local elements pocket pocket-deparse separators hooks locks shared keys reads publication hidden-roots
 
 RUNTIME = stack sched chan io error
 OBJECTS = $(addprefix $(BUILD)/,$(addsuffix .o,$(RUNTIME))) $(BUILD)/ctx_x86_64.o
@@ -46,12 +46,14 @@ perl-test: perl-build perl-source-test
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/locks.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/shared.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/keys.t
+	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/reads.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/publication.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/hidden-roots.t
 	perl tests/perl/patcher.pl '$(BUILD)/perl/perl-5.42.2'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/refcount.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/task-context.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/allocator.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
+	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/reads.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/entry.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 
 perl-refcount-test: perl-build
@@ -72,6 +74,13 @@ perl-allocator-test: perl-build
 
 perl-allocator-tsan:
 	PERL_SANITIZER=thread $(MAKE) BUILD='$(BUILD)/perl-tsan' PERL_TARBALL='$(abspath $(PERL_TARBALL))' CFLAGS='$(CFLAGS) -O1 -fsanitize=thread -fno-omit-frame-pointer' LDFLAGS='$(LDFLAGS) -fsanitize=thread' perl-allocator-test
+
+.PHONY: perl-reads-test perl-reads-tsan
+perl-reads-test: perl-build
+	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/reads.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
+
+perl-reads-tsan:
+	PERL_SANITIZER=thread $(MAKE) BUILD='$(BUILD)/perl-tsan' PERL_TARBALL='$(abspath $(PERL_TARBALL))' CFLAGS='$(CFLAGS) -O1 -fsanitize=thread -fno-omit-frame-pointer' LDFLAGS='$(LDFLAGS) -fsanitize=thread' perl-reads-test perl-allocator-test
 
 perl-asan:
 	ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=1 PERL_DESTRUCT_LEVEL=2 PERL_SANITIZER=address $(MAKE) BUILD='$(BUILD)/perl-asan' PERL_TARBALL='$(abspath $(PERL_TARBALL))' CFLAGS='$(CFLAGS) -O1 -fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls' LDFLAGS='$(LDFLAGS) -fsanitize=address' perl-test
@@ -133,6 +142,7 @@ perl-memcheck: perl-source $(BUILD)/libwump.a
 	PERL_DESTRUCT_LEVEL=2 timeout 300s valgrind --trace-children=yes --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/locks-memcheck.%p.log' $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/locks.t
 	PERL_DESTRUCT_LEVEL=2 timeout 300s valgrind --trace-children=yes --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/shared-memcheck.%p.log' $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/shared.t
 	PERL_DESTRUCT_LEVEL=2 timeout 300s valgrind --trace-children=yes --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/keys-memcheck.%p.log' $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/keys.t
+	PERL_DESTRUCT_LEVEL=2 timeout 300s valgrind --trace-children=yes --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/reads-memcheck.%p.log' $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/reads.t
 	PERL_DESTRUCT_LEVEL=2 timeout 300s valgrind --trace-children=yes --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/publication-memcheck.%p.log' $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/publication.t
 	PERL_DESTRUCT_LEVEL=2 timeout 300s valgrind --trace-children=yes --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/hidden-roots-memcheck.%p.log' $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/hidden-roots.t
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/entry.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
@@ -140,10 +150,13 @@ perl-memcheck: perl-source $(BUILD)/libwump.a
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/allocator.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	timeout 90s valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/allocator-memcheck.%p.log' $(BUILD)/allocator
 	timeout 90s valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/key-legacy-memcheck.%p.log' $(BUILD)/key-legacy
+	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/reads.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
+	timeout 120s valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/readers-memcheck.%p.log' $(BUILD)/readers
+	timeout 90s valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/read-cache-memcheck.%p.log' $(BUILD)/read-cache
 
 perl-upstream-test: perl-build
 	$(MAKE) -C $(BUILD)/perl/perl-5.42.2 test_prep
-	cd $(BUILD)/perl/perl-5.42.2/t && timeout 240s ./perl TEST -v comp/*.t re/*.t class/*.t op/anonconst.t op/const-optree.t op/args.t op/closure.t op/die.t op/eval.t op/lex.t op/local.t op/ref.t op/sort.t op/array.t op/avhv.t op/hash*.t op/each*.t op/delete.t op/localref.t op/lvref.t op/multideref.t op/push.t op/reverse.t op/splice.t op/tiearray.t op/tiehash.t op/chop.t op/readline.t op/readline_nb.t op/print.t op/sig*.t op/warn.t io/argv.t io/print.t io/say.t ../lib/B/Deparse.t ../lib/B/Deparse-core.t ../lib/B/Deparse-subclass.t
+	cd $(BUILD)/perl/perl-5.42.2/t && timeout 240s ./perl TEST -v comp/*.t re/*.t class/*.t op/anonconst.t op/const-optree.t op/args.t op/closure.t op/die.t op/eval.t op/lex.t op/local.t op/ref.t op/sort.t op/array.t op/avhv.t op/hash*.t op/each*.t op/delete.t op/localref.t op/lvref.t op/multideref.t op/push.t op/reverse.t op/splice.t op/tiearray.t op/tiehash.t op/chop.t op/readline.t op/readline_nb.t op/print.t op/sig*.t op/warn.t op/bool.t op/numconvert.t op/numify.t op/numify_chkflags.t op/svflags.t op/append.t op/concat2.t op/utf8cache.t op/utf8decode.t op/utf8magic.t op/arith2.t op/int.t op/overload_integer.t io/argv.t io/print.t io/say.t ../lib/B/Deparse.t ../lib/B/Deparse-core.t ../lib/B/Deparse-subclass.t
 
 $(BUILD):
 	mkdir -p $@

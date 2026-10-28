@@ -121,6 +121,8 @@ make perl-lsan                  # same instrumented suites with leak checks and 
 make perl-source-test           # offline source acquisition failure tests
 make perl-allocator-test        # native allocation and cross-executor final frees
 make perl-allocator-tsan        # instrument the entire private Perl and fixture
+make perl-reads-test            # plain shared-scalar conversions and copies
+make perl-reads-tsan            # eight readers against an instrumented private Perl
 ```
 
 For an existing release archive, use
@@ -406,9 +408,36 @@ Executor arenas require system malloc without Perl's memory-tracking modes;
 `use Wump` rejects unsupported tracking builds and `-DD` arena scans before
 scheduling starts.
 
-Perl execution still uses one slot. Safe shared-value reads, deferred
+Published plain scalars now use private snapshots when a conversion needs
+to compute a representation. This batch covers signed/unsigned integers,
+floating-point and truth conversion, computed string buffers, byte/UTF-8
+conversion, and scalar copies. Snapshots preserve dual values, private versus
+public cache flags, and boolean identity without changing the source's flags,
+body, string buffer, or COW count. Numeric and string macro fast paths can
+still use already cached representations directly.
+
+Computed string buffers survive nested conversions and yields until the
+caller's current temporary scope ends. Read frames belong to the current act,
+retain the source through callbacks, and unwind on exceptions or abandoned
+acts. Undefined-value warnings retain the original variable name. Explicit
+mutable-buffer requests, string forcing and UTF-8 upgrades still modify the
+original value. Tied values, overloaded references, and other magic retain
+their upstream paths and require a separate concurrency audit.
+
+`make perl-reads-test` checks C and C++ conversion/copy behavior and runs eight
+native readers through 14,336 read/copy cycles against one interpreter.
+Publication finishes before the readers start; sources remain immutable while
+the native threads run. `make perl-reads-tsan` instruments the whole private
+Perl and also checks the allocator's deliberate-race control. Perl tests cover
+warnings, throws, yields, encoding failures, explicit mutators and abandoned
+read callbacks; `make perl-memcheck` checks these paths and native readers with
+full leak checking.
+
+Perl execution still uses one slot. Remaining shared-value read paths, deferred
 reclamation, publication mutation, compiler and method caches, and the remaining
 interpreter/XS state split must precede multi-core Perl execution.
+Cached string pointers still borrow source storage, so this stage does not
+support concurrent writers or remove the need for deferred reclamation.
 Channel messages copy the outer scalar and retain reference
 identity; pending messages own their references until receive or scheduler cleanup.
 

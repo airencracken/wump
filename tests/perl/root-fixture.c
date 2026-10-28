@@ -2,6 +2,104 @@
 #include "perl.h"
 #include "XSUB.h"
 #include <stdint.h>
+#include "wump.h"
+
+static SV *read_target(pTHX_ SV *reference) {
+	if (!SvROK(reference)) croak("scalar reference required");
+	return SvRV(reference);
+}
+
+static XS(xs_scalar_publish) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items != 1) croak("Usage: RootFixture::scalar_publish(REFERENCE)");
+	Perl_wump_publish(aTHX_ read_target(aTHX_ ST(0)));
+	XSRETURN_EMPTY;
+}
+
+static XS(xs_scalar_state) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items != 1) croak("Usage: RootFixture::scalar_state(REFERENCE)");
+	SV *value = read_target(aTHX_ ST(0));
+	AV *state = newAV();
+	av_push(state, newSVuv(SvFLAGS(value)));
+	av_push(state, newSVuv(PTR2UV(SvANY(value))));
+	if (SvPOKp(value)) {
+		av_push(state, newSVuv(PTR2UV(SvPVX_const(value))));
+		av_push(state, newSVuv(SvLEN(value)));
+		av_push(state, newSVpvn(SvPVX_const(value), SvCUR(value)));
+		av_push(state, newSVuv(SvIsCOW(value) && !SvIsCOW_static(value) && SvLEN(value) ? CowREFCNT(value) : 0));
+	}
+	ST(0) = sv_2mortal(newRV_noinc((SV *)state));
+	XSRETURN(1);
+}
+
+static XS(xs_scalar_read) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items != 2) croak("Usage: RootFixture::scalar_read(REFERENCE, KIND)");
+	SV *value = read_target(aTHX_ ST(0));
+	IV kind = SvIV(ST(1));
+	SV *result;
+	STRLEN length;
+	char *text;
+	switch (kind) {
+	case 0: result = newSViv(SvIV(value)); break;
+	case 1: result = newSVuv(SvUV(value)); break;
+	case 2: result = newSVnv(SvNV(value)); break;
+	case 3:
+		text = sv_2pv_flags(value, &length, 0);
+		result = newSVpvn_flags(text, length, SvUTF8(value) ? SVf_UTF8 : 0);
+		break;
+	case 4:
+		text = sv_2pvbyte_flags(value, &length, 0);
+		result = newSVpvn(text, length);
+		break;
+	case 5:
+		text = sv_2pvutf8_flags(value, &length, 0);
+		result = newSVpvn_flags(text, length, SVf_UTF8);
+		break;
+	case 6: result = newSVsv(boolSV(SvTRUE(value))); break;
+	case 7: result = newSVsv(value); break;
+	case 8:
+		text = sv_pvn_force_flags(value, &length, 0);
+		result = newSVpvn(text, length);
+		break;
+	case 9: result = newSVuv(sv_utf8_upgrade(value)); break;
+	case 10:
+		if (!Perl_wump_readable(aTHX_ value)) croak("not a published plain scalar");
+		result = Perl_wump_scalar_snapshot(aTHX_ value);
+		break;
+	case 11: result = newSVsv(boolSV(SvIsBOOL(value))); break;
+	default: croak("unknown scalar read kind");
+	}
+	ST(0) = sv_2mortal(result);
+	XSRETURN(1);
+}
+
+static XS(xs_read_frame_active) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items) croak("Usage: RootFixture::read_frame_active()");
+	struct wump_perl_task *task = PL_wump_task;
+	ST(0) = boolSV(task ? task->read_frame != NULL : aTHX->Iwump_read_frame != NULL);
+	XSRETURN(1);
+}
+
+static XS(xs_borrow_read) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items != 2) croak("Usage: RootFixture::borrow_read(REFERENCE, OTHER)");
+	SV *value = read_target(aTHX_ ST(0));
+	SV *other = read_target(aTHX_ ST(1));
+	STRLEN length, second_length;
+	const char *first = sv_2pv_flags(value, &length, SV_CONST_RETURN);
+	wump_yield();
+	(void)sv_2pv_flags(other, &second_length, SV_CONST_RETURN);
+	ST(0) = sv_2mortal(newSVpvn(first, length));
+	XSRETURN(1);
+}
 
 static XS(xs_key_too_large) {
 	dXSARGS;
@@ -106,5 +204,10 @@ XS_EXTERNAL(boot_RootFixture) {
 	newXS("RootFixture::debug_runops", xs_debug_runops, __FILE__);
 	newXS("RootFixture::key_too_large", xs_key_too_large, __FILE__);
 	newXS("RootFixture::key_missing", xs_key_missing, __FILE__);
+	newXS("RootFixture::scalar_publish", xs_scalar_publish, __FILE__);
+	newXS("RootFixture::scalar_state", xs_scalar_state, __FILE__);
+	newXS("RootFixture::scalar_read", xs_scalar_read, __FILE__);
+	newXS("RootFixture::read_frame_active", xs_read_frame_active, __FILE__);
+	newXS("RootFixture::borrow_read", xs_borrow_read, __FILE__);
 	XSRETURN_YES;
 }
