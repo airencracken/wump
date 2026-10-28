@@ -307,8 +307,9 @@ spawn; pocket bindings are skipped. Native warning generation uses the private
 usual precedence. Encoding layers can initialize inside acts. PerlIO's temporary
 loading hook stays within the current act and is excluded from inheritance.
 Hook and warning-cell references retain their private cache after scope exit,
-with the same identity rules as separator references. Process signal handlers,
-whole `%SIG` localization, and `${^WARNING_BITS}` localization remain unsupported.
+with the same identity rules as separator references. Localization of process
+signal handlers, whole `%SIG` localization, and `${^WARNING_BITS}` localization
+remain unsupported. Signal handler assignments remain process-wide.
 
 `delete local`, typeglob/reference-alias localization, and localization of other
 magic variables (including tied values, `%ENV`, and `$^I`) raise
