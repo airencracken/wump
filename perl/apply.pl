@@ -86,6 +86,10 @@ void Perl_wump_element_structure(pTHX_ SV *aggregate);
 bool Perl_wump_hv_slot(pTHX_ HV *hv, const char *key, STRLEN len, int flags,
 	int action, SV *value, U32 hash, void **result);
 HV *Perl_wump_hv_iteration(pTHX_ HV *hv, bool reset);
+bool Perl_wump_hv_readable(pTHX_ HV *hv);
+void Perl_wump_hv_publish_cursor(pTHX_ HV *hv);
+bool Perl_wump_hv_iter_reset(pTHX_ HV *hv, I32 *count);
+HE *Perl_wump_hv_iter_next(pTHX_ HV *hv, I32 flags, bool *handled);
 STRLEN Perl_wump_hv_used(HV *hv);
 void Perl_wump_elements_clear(pTHX_ struct wump_perl_task *task);
 void Perl_wump_elements_snapshot(pTHX_ struct wump_perl_task *task);

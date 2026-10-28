@@ -1,4 +1,5 @@
 #include "read-cases.h"
+#include "hash-iteration.h"
 #include <pthread.h>
 
 enum { workers = 8, rounds = 128 };
@@ -6,6 +7,7 @@ typedef struct reader {
 	PerlInterpreter *interp;
 	struct wump_perl_allocator pool;
 	read_case *tests;
+	hash_state *hash;
 	pthread_barrier_t *barrier;
 } reader;
 
@@ -26,10 +28,12 @@ static void *read_values(void *arg) {
 		ENTER;
 		SAVETMPS;
 		for (int i = 0; i < read_cases; i++) exercise_case(aTHX_ &ctx->tests[i]);
+		exercise_hash(aTHX_ ctx->hash, pass == 0);
 		FREETMPS;
 		LEAVE;
 	}
 	CHECK(task.read_frame == NULL);
+	CHECK(task.element_iters == NULL);
 	while (PL_curstackinfo) {
 		PERL_SI *si = PL_curstackinfo;
 		PERL_SI *previous = si->si_prev;
@@ -61,6 +65,8 @@ int main(int argc, char **argv, char **env) {
 	read_case tests[read_cases];
 	SV *alias;
 	build_cases(aTHX_ tests, &alias);
+	hash_state hash;
+	build_hash(aTHX_ &hash);
 	reader contexts[workers];
 	pthread_t threads[workers];
 	pthread_barrier_t barrier;
@@ -68,6 +74,7 @@ int main(int argc, char **argv, char **env) {
 	for (int i = 0; i < workers; i++) {
 		contexts[i].interp = aTHX;
 		contexts[i].tests = tests;
+		contexts[i].hash = &hash;
 		contexts[i].barrier = &barrier;
 		Perl_wump_allocator_init(aTHX_ &contexts[i].pool);
 		CHECK(pthread_create(&threads[i], NULL, read_values, &contexts[i]) == 0);
@@ -82,10 +89,13 @@ int main(int argc, char **argv, char **env) {
 		SvREFCNT_dec(tests[i].value);
 	}
 	SvREFCNT_dec(alias);
+	unchanged_hash(&hash);
+	SvREFCNT_dec(hash.value);
 	PL_perl_destruct_level = 2;
 	CHECK(perl_destruct(interp) == 0);
 	perl_free(interp);
 	PERL_SYS_TERM();
 	puts("ok - 8 concurrent readers complete 14336 shared scalar read/copy cycles without source mutation or leaked snapshots");
+	puts("ok - 8 concurrent readers traverse 265216 shared hash entries with independent cursors and native clones");
 	return 0;
 }

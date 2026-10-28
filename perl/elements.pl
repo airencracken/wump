@@ -45,6 +45,13 @@ C
 		"Perl_hv_iterinit(pTHX_ HV *hv)\n{\n    HV *wump_view = Perl_wump_hv_iteration(aTHX_ hv, TRUE);\n    if (wump_view != hv) return hv_iterinit(wump_view);");
 	edit('hv.c', "Perl_hv_iternext_flags(pTHX_ HV *hv, I32 flags)\n{",
 		"Perl_hv_iternext_flags(pTHX_ HV *hv, I32 flags)\n{\n    hv = Perl_wump_hv_iteration(aTHX_ hv, FALSE);");
+	edit('hv.c', '    if (wump_view != hv) return hv_iterinit(wump_view);',
+		"    if (wump_view != hv) return hv_iterinit(wump_view);\n    I32 wump_count;\n    if (Perl_wump_hv_iter_reset(aTHX_ hv, &wump_count)) return wump_count;");
+	edit('hv.c', '    hv = Perl_wump_hv_iteration(aTHX_ hv, FALSE);',
+		"    hv = Perl_wump_hv_iteration(aTHX_ hv, FALSE);\n    bool wump_iter_handled;\n    HE *wump_entry = Perl_wump_hv_iter_next(aTHX_ hv, flags, &wump_iter_handled);\n    if (wump_iter_handled) return wump_entry;");
+	# Native cloning must avoid saving/restoring the source's root cursor.
+	edit('hv.c', '    if (!SvMAGICAL((const SV *)ohv)) {',
+		'    if (!SvMAGICAL((const SV *)ohv) || Perl_wump_hv_readable(aTHX_ ohv)) {');
 	edit('hv.c', '    u = HvUSEDKEYS(hv);', '    u = Perl_wump_hv_used(hv);');
 	edit('hv.c', "Perl_newHVhv(pTHX_ HV *ohv)\n{",
 		"Perl_newHVhv(pTHX_ HV *ohv)\n{\n    HV *wump_copy = Perl_wump_hv_clone(aTHX_ ohv);\n    if (wump_copy) return wump_copy;");

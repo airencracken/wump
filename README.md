@@ -433,6 +433,30 @@ warnings, throws, yields, encoding failures, explicit mutators and abandoned
 read callbacks; `make perl-memcheck` checks these paths and native readers with
 full leak checking.
 
+Published ordinary hashes now keep `each`/`keys`/`values` cursors in the
+current act. One act's iteration and resets leave other acts' cursors alone;
+publication preserves the parent's progress, and children start with fresh
+cursors. Iteration reads raw buckets and records
+visited keys without copying values or retaining HE pointers between calls.
+Value aliases remain live, and deleting current or upcoming keys within one
+act remains supported. Native hash copies also avoid changing the source
+cursor. Existing element overlays retain their private-view iteration path.
+Adding an element binding starts a fresh private view for that act.
+
+A partial cursor retains its hash until reset, exhaustion or act cleanup.
+Reset and exhaustion release that pin after the current operation, using a
+private reference so cleanup never writes the source's temporary flag.
+Visited-key storage grows with the keys read; collision chains are rescanned,
+so heavily colliding buckets can take quadratic work. Tied/restricted hashes,
+stashes, and other hash magic retain upstream iteration paths. Legacy XS that
+reads or writes cursor fields directly still needs an audit.
+
+The native readers also traverse 265,216 shared hash entries, including long
+collision chains, empty/NUL/UTF-8 keys and numeric-valued native clones. They
+check unchanged source flags, storage, cursor and randomization state. Perl
+checks interleaving, reset contexts, deletions, aliases, weak lifetimes, tied
+hooks and abandoned iterators.
+
 Perl execution still uses one slot. Remaining shared-value read paths, deferred
 reclamation, publication mutation, compiler and method caches, and the remaining
 interpreter/XS state split must precede multi-core Perl execution.

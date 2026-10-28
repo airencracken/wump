@@ -365,8 +365,35 @@ Native C/C++ regressions check unchanged source flags, bodies, PVs and COW
 counts. Eight native readers exercise immutable, already published sources
 using separate executor allocators and task stacks; full-core TSan and
 Valgrind cover concurrency and teardown. This does not yet provide concurrent
-publication or writers, shared hash iteration, regex read-cache isolation,
+publication or writers, regex read-cache isolation,
 or lifetime protection for cached pointers borrowed directly from a source.
+
+Ordinary published hash iteration now has act-local cursors. These share the
+existing task iterator registry, but store visited keys rather than a cloned
+hash of values. Each call scans the current raw bucket for an unseen key and
+returns the original HE; no HE pointer survives in cursor state. This preserves
+value aliases and permits same-act deletion without retaining deleted values.
+Each act resets/exhausts independently. Children inherit no iterator progress.
+Publication seeds the publishing act's cursor from any active root iterator;
+same-act stores/deletes preserve visited keys, while a new element binding
+switches that act to a fresh private view.
+Native cloning of eligible hashes uses the raw-copy path, avoiding upstream's
+save/restore writes to the source cursor.
+
+Partial cursors pin their source hash. Reset and exhaustion transfer the pin
+to a private mortal RV through `sv_setrv_noinc`; `newRV_noinc` would write the
+shared referent's TEMP flag. The private RV keeps weakly dereferenced sources
+alive through the remainder of the current operation. Abandoned-task cleanup
+releases unfinished cursors. Empty hash iteration creates no source aux data.
+Native stress covers long collision chains and immutable numeric-valued hash
+clones, with source flags, storage, root cursor and randomization unchanged.
+
+Visited keys require O(n) private storage; rescanning a collision chain can
+cost O(k²) for k colliding keys. Iteration during insertion/resizing retains
+Perl's unspecified semantics. Restricted/tied hashes, stashes and other hash
+magic keep upstream paths; element overlays keep their existing private
+views. Direct XS cursor fields and callbacks while copying magical values
+remain audit boundaries. Concurrent writers and reclamation are still open.
 
 Bodies and string buffers freed by writes to shared SVs are retired, not
 freed. They're reused after every P passes a safe point (§4), so a

@@ -14,6 +14,9 @@ typedef struct wump_element {
 
 typedef struct wump_element_iter {
 	HV *origin, *view;
+	STRLEN bucket;
+	U32 random;
+	bool cursor;
 	struct wump_element_iter *next;
 } wump_element_iter;
 
@@ -100,9 +103,26 @@ static void wump_element_invalidate(pTHX_ struct wump_perl_task *task, SV *origi
 		if ((SV *)iter->origin != origin) { link = &iter->next; continue; }
 		*link = iter->next;
 		HV *view = iter->view, *owner = iter->origin;
+		bool cursor = iter->cursor;
 		Safefree(iter);
 		SvREFCNT_dec(view);
-		SvREFCNT_dec(owner);
+		/* A weak dereference can leave the cursor as the only owner. Keep
+		 * that pin through the rest of the current opcode/native temp scope. */
+		if (cursor) {
+			/* newRV_noinc clears the referent's TEMP flag even when it is
+			 * already clear. Use the setter, which only writes the new RV. */
+			SV *pin = newSV_type(SVt_IV);
+			sv_setrv_noinc(pin, (SV *)owner);
+			sv_2mortal(pin);
+		} else SvREFCNT_dec(owner);
+		return;
+	}
+}
+
+static void wump_element_invalidate_view(pTHX_ struct wump_perl_task *task, SV *origin) {
+	for (wump_element_iter *iter = task->element_iters; iter; iter = iter->next) {
+		if ((SV *)iter->origin != origin) continue;
+		if (!iter->cursor) wump_element_invalidate(aTHX_ task, origin);
 		return;
 	}
 }
@@ -166,6 +186,7 @@ HE *Perl_wump_local_hv(pTHX_ HV *hv, SV *key) {
 	HE *old = hv_fetch_ent(hv, name, 0, 0);
 	if (old) wump_local_check(aTHX_ HeVAL(old), 's');
 	wump_element_mark(aTHX_ (SV *)hv);
+	wump_element_invalidate(aTHX_ PL_wump_task, (SV *)hv);
 	wump_element *slot = wump_element_add(aTHX_ PL_wump_task, (SV *)hv);
 	slot->pocket = PL_op->op_wump_pocket;
 	slot->hook = hook;
@@ -179,7 +200,7 @@ HE *Perl_wump_local_hv(pTHX_ HV *hv, SV *key) {
 bool Perl_wump_hv_slot(pTHX_ HV *hv, const char *key, STRLEN len, int flags,
 	int action, SV *value, U32 hash, void **result) {
 	if (PL_wump_task && (action & (HV_FETCH_ISSTORE | HV_DELETE)))
-		wump_element_invalidate(aTHX_ PL_wump_task, (SV *)hv);
+		wump_element_invalidate_view(aTHX_ PL_wump_task, (SV *)hv);
 	wump_element *slot = wump_element_hv(aTHX_ hv, key, len, flags, FALSE);
 	if (!slot) {
 		if (action & HV_FETCH_ISSTORE) Perl_wump_publish_store(aTHX_ (SV *)hv, value);
@@ -246,6 +267,100 @@ STRLEN Perl_wump_hv_used(HV *hv) {
 	STRLEN count = HvTOTALKEYS(view);
 	SvREFCNT_dec(view);
 	return count;
+}
+
+static bool wump_hv_plain(pTHX_ HV *hv) {
+	if (!PL_wump_task || !hv || SvTYPE(hv) != SVt_PVHV
+		|| HvNAME_HEK(hv) || PL_phase == PERL_PHASE_DESTRUCT
+		|| wump_element_has(aTHX_ (SV *)hv)) return FALSE;
+	for (MAGIC *mg = SvMAGIC(hv); mg; mg = mg->mg_moremagic) {
+		if (!Perl_wump_publish_magic(mg) && !Perl_wump_element_magic(mg)
+			&& mg->mg_type != PERL_MAGIC_backref) return FALSE;
+	}
+	return TRUE;
+}
+
+bool Perl_wump_hv_readable(pTHX_ HV *hv) {
+	return wump_hv_plain(aTHX_ hv) && Perl_wump_is_shared(aTHX_ (SV *)hv);
+}
+
+bool Perl_wump_hv_iter_reset(pTHX_ HV *hv, I32 *count) {
+	if (!Perl_wump_hv_readable(aTHX_ hv)) return FALSE;
+	/* Match hv_iterinit's native count, which includes placeholders. */
+	*count = HvTOTALKEYS(hv);
+	wump_element_invalidate(aTHX_ PL_wump_task, (SV *)hv);
+	return TRUE;
+}
+
+static wump_element_iter *wump_hv_cursor(pTHX_ HV *hv) {
+	wump_element_iter *iter;
+	for (iter = PL_wump_task->element_iters; iter; iter = iter->next)
+		if (iter->origin == hv) break;
+	if (!iter) {
+		Newxz(iter, 1, wump_element_iter);
+		iter->origin = (HV *)SvREFCNT_inc(hv);
+		iter->view = newHV(); /* Keys visited by this act; no value snapshots. */
+		iter->cursor = TRUE;
+#ifdef PERL_HASH_RANDOMIZE_KEYS
+		iter->random = HvRAND_get(hv);
+#endif
+		iter->next = PL_wump_task->element_iters;
+		PL_wump_task->element_iters = iter;
+	}
+	assert(iter->cursor);
+	return iter;
+}
+
+static void wump_hv_visit(pTHX_ wump_element_iter *iter, HE *entry) {
+	hv_common(iter->view, NULL, HeKEY(entry), HeKLEN(entry),
+		HeKUTF8(entry) ? HVhek_UTF8 : 0, HV_FETCH_ISSTORE,
+		SvREFCNT_inc(&PL_sv_yes), HeHASH(entry));
+}
+
+void Perl_wump_hv_publish_cursor(pTHX_ HV *hv) {
+	if (!wump_hv_plain(aTHX_ hv) || PL_wump_task->finished
+		|| !HvHasAUX(hv) || !HvEITER_get(hv) || HvRITER_get(hv) < 0
+		|| (STRLEN)HvRITER_get(hv) > HvMAX(hv)) return;
+	/* Publication switches the parent from its root cursor to private state.
+	 * Children get no record and begin at the start. Native root execution
+	 * outside scheduling keeps its own untouched cursor. */
+	wump_element_iter *iter = wump_hv_cursor(aTHX_ hv);
+	iter->bucket = HvRITER_get(hv);
+	HE *next = HeNEXT(HvEITER_get(hv));
+	for (STRLEN position = 0; position <= iter->bucket; position++) {
+		STRLEN bucket = (position ^ iter->random) & HvMAX(hv);
+		HE *stop = position == iter->bucket ? next : NULL;
+		for (HE *entry = HvARRAY(hv)[bucket]; entry && entry != stop; entry = HeNEXT(entry))
+			wump_hv_visit(aTHX_ iter, entry);
+	}
+}
+
+HE *Perl_wump_hv_iter_next(pTHX_ HV *hv, I32 flags, bool *handled) {
+	*handled = Perl_wump_hv_readable(aTHX_ hv);
+	if (!*handled) return NULL;
+	if (!HvARRAY(hv) || !HvTOTALKEYS(hv)) {
+		wump_element_invalidate(aTHX_ PL_wump_task, (SV *)hv);
+		return NULL;
+	}
+	wump_element_iter *iter = wump_hv_cursor(aTHX_ hv);
+	/* Rescan only the current collision chain. Remember keys, never HE
+	 * pointers: same-act deletes can free the last or next returned entry.
+	 * Insertions/resizing during each retain Perl's unspecified semantics. */
+	while (iter->bucket <= HvMAX(hv)) {
+		STRLEN bucket = (iter->bucket ^ iter->random) & HvMAX(hv);
+		for (HE *entry = HvARRAY(hv)[bucket]; entry; entry = HeNEXT(entry)) {
+			if (!(flags & HV_ITERNEXT_WANTPLACEHOLDERS)
+				&& HeVAL(entry) == &PL_sv_placeholder) continue;
+			int key_flags = HeKUTF8(entry) ? HVhek_UTF8 : 0;
+			if (hv_common(iter->view, NULL, HeKEY(entry), HeKLEN(entry), key_flags,
+				HV_FETCH_ISEXISTS, NULL, HeHASH(entry))) continue;
+			wump_hv_visit(aTHX_ iter, entry);
+			return entry;
+		}
+		iter->bucket++;
+	}
+	wump_element_invalidate(aTHX_ PL_wump_task, (SV *)hv);
+	return NULL;
 }
 
 HV *Perl_wump_hv_iteration(pTHX_ HV *hv, bool reset) {

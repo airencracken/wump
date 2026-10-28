@@ -53,6 +53,8 @@ static void wump_publish_queue(pTHX_ wump_publish_work *work, SV *value) {
 		|| isGV_with_GP(value)) return;
 	MAGIC *mg = wump_publish_marker(value);
 	if (mg && mg->mg_private) return;
+	if (SvTYPE(value) == SVt_PVHV)
+		Perl_wump_hv_publish_cursor(aTHX_ (HV *)value);
 	if (work->used == work->capacity) {
 		size_t capacity = work->capacity ? work->capacity * 2 : 32;
 		if (capacity < work->capacity || capacity > SIZE_MAX / sizeof(SV *))
