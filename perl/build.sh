@@ -7,7 +7,7 @@ if [ "$#" -ne 1 ]; then
 fi
 wump_sanitizer=${PERL_SANITIZER:-}
 case "$wump_sanitizer" in
-	''|address) ;;
+	''|address|thread) ;;
 	*) printf 'Unsupported PERL_SANITIZER: %s\n' "$wump_sanitizer" >&2; exit 1 ;;
 esac
 wump_script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -32,9 +32,9 @@ if [ -n "$wump_runtime_override" ]; then wump_runtime_build=$wump_runtime_overri
 if [ ! -f config.sh ]; then
 	wump_configure=(-des -Dusemultiplicity -Duseithreads -Duse64bitall
 		-Dprefix="$wump_source_dir/../install" -Dman1dir=none -Dman3dir=none)
-	if [ "$wump_sanitizer" = address ]; then
-		wump_configure+=('-Accflags=-fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls'
-			'-Aldflags=-fsanitize=address' '-Alddlflags=-shared -fsanitize=address' '-Doptimize=-O1')
+	if [ -n "$wump_sanitizer" ]; then
+		wump_configure+=("-Accflags=-fsanitize=$wump_sanitizer -fno-omit-frame-pointer -fno-optimize-sibling-calls"
+			"-Aldflags=-fsanitize=$wump_sanitizer" "-Alddlflags=-shared -fsanitize=$wump_sanitizer" '-Doptimize=-O1')
 	fi
 	if ! sh Configure "${wump_configure[@]}"; then
 		printf '%s\n' 'Perl configuration failed; see config.log in the source tree.' >&2
@@ -48,18 +48,20 @@ for wump_option in usemultiplicity useithreads; do
 	fi
 done
 for wump_flag in ccflags ldflags lddlflags; do
-	if grep -q "^$wump_flag='.*-fsanitize=address" config.sh; then
-		if [ "$wump_sanitizer" != address ]; then
-			printf '%s\n' 'Existing Perl configuration uses ASan; select PERL_SANITIZER=address or a separate build directory.' >&2
+	for wump_configured_sanitizer in address thread; do
+		if grep -q "^$wump_flag='.*-fsanitize=$wump_configured_sanitizer" config.sh &&
+			[ "$wump_sanitizer" != "$wump_configured_sanitizer" ]; then
+			printf 'Existing Perl configuration uses %s; select the matching PERL_SANITIZER or a separate build directory.\n' "$wump_configured_sanitizer" >&2
 			exit 1
 		fi
-	elif [ "$wump_sanitizer" = address ]; then
-		printf 'Existing Perl configuration lacks ASan in %s; use a separate build directory.\n' "$wump_flag" >&2
+	done
+	if [ -n "$wump_sanitizer" ] && ! grep -q "^$wump_flag='.*-fsanitize=$wump_sanitizer" config.sh; then
+		printf 'Existing Perl configuration lacks %s in %s; use a separate build directory.\n' "$wump_sanitizer" "$wump_flag" >&2
 		exit 1
 	fi
 done
-if [ "$wump_sanitizer" = address ] && ! grep -q "^lddlflags='.*-shared" config.sh; then
-	printf '%s\n' 'Existing ASan configuration lacks shared-library link flags; use a separate build directory.' >&2
+if [ -n "$wump_sanitizer" ] && ! grep -q "^lddlflags='.*-shared" config.sh; then
+	printf '%s\n' 'Existing sanitizer configuration lacks shared-library link flags; use a separate build directory.' >&2
 	exit 1
 fi
 if ! perl "$wump_script_dir/apply.pl" "$wump_source_dir"; then exit 1; fi

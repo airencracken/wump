@@ -286,7 +286,7 @@ The active-task selector now lives in native thread-local storage rather than
 the shared interpreter header. Every lookup checks interpreter identity and
 reloads TLS across task migration. A two-thread native fixture checks isolated
 task fields and unchanged root state for two interpreter contexts. It does
-not execute Perl opcodes concurrently; shared allocators, interpreter caches,
+not execute Perl opcodes concurrently; remaining allocation paths, interpreter caches,
 publication mutation, and XS serialization still need their own gates.
 
 An SV becomes shared when it escapes. The **escape barrier** runs at:
@@ -405,6 +405,24 @@ lists (`mcentral`) → page heap (`mheap`). Perl's SV/body arenas already
 are size classes, so they become per-P caches refilled from central
 lists. String buffers use the same tiers. An SV freed on another P goes
 to that P's cache; arenas are only memory.
+
+The initial executor arena split is implemented. SV heads, body free lists,
+arena registries, and signed allocation deltas use an interpreter-filtered
+TLS selector independent of task identity. The one-P bridge activates its
+executor cache on dispatch and cleanup, then merges it into the root
+interpreter after scheduler shutdown. Merging retains live SVs and joins all
+arena registries before global destruction. It neither frees arena memory
+early nor requires the freeing executor to be the allocating executor.
+
+A native eight-executor fixture allocates, validates, exchanges and finally
+frees scalars, strings, references, and arrays concurrently against one
+interpreter. It checks root-cache isolation, cross-thread cache handoff,
+post-merge survival/reuse and complete teardown. A separate TSan build
+instruments Perl's full allocation/destruction paths. This is not yet parallel
+opcode execution: shared-key interning, read caches, shared-graph reclamation,
+compiler state and XS still need isolation. Central cache refill is pending.
+Perl memory-tracking builds and `-DD` arena scans are rejected by `use Wump`;
+the initial caches target the private fork's system-malloc configuration.
 
 ### 5.11 XS
 Legacy XS isn't safe to run in parallel, so unaudited XS takes a global

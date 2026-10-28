@@ -119,6 +119,8 @@ make perl-memcheck              # task suite with registered C stacks and full P
 make perl-asan                  # separate instrumented Perl, runtime, and XS fixtures
 make perl-lsan                  # same instrumented suites with leak checks and full teardown
 make perl-source-test           # offline source acquisition failure tests
+make perl-allocator-test        # native allocation and cross-executor final frees
+make perl-allocator-tsan        # instrument the entire private Perl and fixture
 ```
 
 For an existing release archive, use
@@ -139,8 +141,9 @@ against one interpreter while other interpreter contexts retain their root
 state. `make perl-task-context-test` checks 200,000 concurrent state updates
 without executing Perl opcodes or allocating Perl values in those threads;
 `make perl-task-context-tsan` instruments that fixture with TSan. This is a
-state-isolation prerequisite; the allocator and remaining shared interpreter
-state still prevent multi-worker Perl execution.
+state-isolation prerequisite. Executor arena caches are now isolated as
+described below; remaining shared interpreter state still prevents multi-worker
+Perl execution.
 
 `use Wump` enables interpreter-owned scheduling: ordinary top-level Perl runs
 as the main act. The interpreter starts and stops the scheduler automatically,
@@ -356,11 +359,38 @@ both C and C++, without concurrent allocation or value mutation. Run it with
 counter fixture with ThreadSanitizer. C++ XS keeps the original head layout;
 direct legacy XS manipulation of the refcount lvalue still needs serialization.
 
-Perl execution still uses one slot. Atomic counters and explicit locks do not
-make concurrent Perl allocation, destruction, read caching, compiler state,
-or XS safe. Per-worker allocators, deferred reclamation, ownership/publication
-barriers, and the remaining interpreter/XS state split must precede multi-core
-Perl execution. Channel messages copy the outer scalar and retain reference
+The fork now redirects SV-head and value-body arena caches through an
+executor selector, independent of act identity. Each executor has its own
+free lists, arena registry, and signed allocation count. A value freed on
+another executor goes into that executor's cache; its original arena remains
+alive. After all executors stop, their caches and registries merge into the
+interpreter for normal global destruction. Values can survive the merge.
+The current one-slot bridge uses this path during execution and task cleanup;
+ordinary code outside the scheduler retains the root interpreter's caches.
+
+`make perl-allocator-test` runs eight native executors against one interpreter,
+allocating and exchanging 131,072 scalar, string, reference, and array values.
+It checks distinct live allocations, cross-executor final frees, root-cache
+isolation, interpreter identity, cache migration between native threads,
+surviving values, cache reuse, and full interpreter teardown. Its private
+execution stacks isolate temporary values during container destruction.
+`make perl-allocator-tsan` builds a separate interpreter, runtime, and fixture
+with TSan throughout, including the allocator's out-of-line C paths.
+The target also requires TSan to detect a deliberate shared-cache race inside
+`Perl_more_bodies`. `make perl-memcheck` includes the native fixture under
+Valgrind with full leak checking.
+
+These initial caches allocate new arenas directly; central cache refill and
+shared string-key interning remain future work. The fixture does not run Perl
+opcodes concurrently, mutate shared graphs, or execute arbitrary destructors.
+Executor arenas require system malloc without Perl's memory-tracking modes;
+`use Wump` rejects unsupported tracking builds and `-DD` arena scans before
+scheduling starts.
+
+Perl execution still uses one slot. Safe shared-value reads, deferred
+reclamation, publication mutation, compiler and hash caches, and the remaining
+interpreter/XS state split must precede multi-core Perl execution.
+Channel messages copy the outer scalar and retain reference
 identity; pending messages own their references until receive or scheduler cleanup.
 
 The first publication barriers now mark generic Perl value graphs when they

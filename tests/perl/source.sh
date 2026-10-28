@@ -69,31 +69,45 @@ done
 printf '%s\n' 'ok - failed downloads and invalid responses are rejected without leaving cached archives'
 
 if ! touch "$wump_build_dir/perl/perl-5.42.2/.wump-upstream"; then exit 1; fi
-for wump_config in normal address; do
-	if ! printf "usemultiplicity='define'\nuseithreads='define'\n" >"$wump_build_dir/perl/perl-5.42.2/config.sh"; then exit 1; fi
-	if [ "$wump_config" = normal ]; then
-		wump_request=address
-		wump_expected='Existing Perl configuration lacks ASan'
-	else
-		wump_request=
-		wump_expected='Existing Perl configuration uses ASan'
-		if ! printf "ccflags='-fsanitize=address'\n" >>"$wump_build_dir/perl/perl-5.42.2/config.sh"; then exit 1; fi
-	fi
-	if PERL_SANITIZER="$wump_request" bash "$wump_repo/perl/build.sh" "$wump_build_dir" >"$wump_test_dir/output" 2>&1; then
-		printf '%s\n' 'Build accepted mismatched sanitizer configuration.' >&2
-		exit 1
-	fi
-	if ! grep -qF "$wump_expected" "$wump_test_dir/output"; then cat "$wump_test_dir/output"; exit 1; fi
+for wump_config in '' address thread; do
+	for wump_request in '' address thread; do
+		if [ "$wump_config" = "$wump_request" ]; then continue; fi
+		if ! printf "usemultiplicity='define'\nuseithreads='define'\n" >"$wump_build_dir/perl/perl-5.42.2/config.sh"; then exit 1; fi
+		if [ -n "$wump_config" ]; then
+			wump_expected="Existing Perl configuration uses $wump_config"
+			if ! printf "ccflags='-fsanitize=%s'\n" "$wump_config" >>"$wump_build_dir/perl/perl-5.42.2/config.sh"; then exit 1; fi
+		else
+			wump_expected="Existing Perl configuration lacks $wump_request"
+		fi
+		if PERL_SANITIZER="$wump_request" bash "$wump_repo/perl/build.sh" "$wump_build_dir" >"$wump_test_dir/output" 2>&1; then
+			printf '%s\n' 'Build accepted mismatched sanitizer configuration.' >&2
+			exit 1
+		fi
+		if ! grep -qF "$wump_expected" "$wump_test_dir/output"; then cat "$wump_test_dir/output"; exit 1; fi
+	done
 done
 if PERL_SANITIZER=invalid bash "$wump_repo/perl/build.sh" "$wump_build_dir" >"$wump_test_dir/output" 2>&1; then
 	printf '%s\n' 'Build accepted an unsupported sanitizer mode.' >&2
 	exit 1
 fi
 if ! grep -qF 'Unsupported PERL_SANITIZER' "$wump_test_dir/output"; then cat "$wump_test_dir/output"; exit 1; fi
-if ! printf "usemultiplicity='define'\nuseithreads='define'\nccflags='-fsanitize=address'\nldflags='-fsanitize=address'\nlddlflags='-fsanitize=address'\n" >"$wump_build_dir/perl/perl-5.42.2/config.sh"; then exit 1; fi
-if PERL_SANITIZER=address bash "$wump_repo/perl/build.sh" "$wump_build_dir" >"$wump_test_dir/output" 2>&1; then
-	printf '%s\n' 'Build accepted ASan configuration without shared-library flags.' >&2
-	exit 1
-fi
-if ! grep -qF 'lacks shared-library link flags' "$wump_test_dir/output"; then cat "$wump_test_dir/output"; exit 1; fi
-printf '%s\n' 'ok - normal and ASan build configurations cannot be silently mixed'
+for wump_request in address thread; do
+	for wump_missing_flag in ccflags ldflags lddlflags shared; do
+		if ! printf "usemultiplicity='define'\nuseithreads='define'\n" >"$wump_build_dir/perl/perl-5.42.2/config.sh"; then exit 1; fi
+		for wump_flag in ccflags ldflags lddlflags; do
+			if [ "$wump_flag" = "$wump_missing_flag" ]; then continue; fi
+			if ! printf "%s='-fsanitize=%s'\n" "$wump_flag" "$wump_request" >>"$wump_build_dir/perl/perl-5.42.2/config.sh"; then exit 1; fi
+		done
+		if PERL_SANITIZER="$wump_request" bash "$wump_repo/perl/build.sh" "$wump_build_dir" >"$wump_test_dir/output" 2>&1; then
+			printf '%s\n' 'Build accepted an incompletely instrumented sanitizer configuration.' >&2
+			exit 1
+		fi
+		if [ "$wump_missing_flag" = shared ]; then
+			wump_expected='lacks shared-library link flags'
+		else
+			wump_expected="lacks $wump_request in $wump_missing_flag"
+		fi
+		if ! grep -qF "$wump_expected" "$wump_test_dir/output"; then cat "$wump_test_dir/output"; exit 1; fi
+	done
+done
+printf '%s\n' 'ok - normal, ASan, and TSan configurations cannot be mixed or incompletely instrumented'

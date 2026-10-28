@@ -114,6 +114,23 @@ void Perl_wump_publish_snapshot(pTHX_ SV *value);
 void Perl_wump_publish_refresh(pTHX_ SV *value);
 struct wump_perl_task *Perl_wump_task_current(pTHX);
 void Perl_wump_task_activate(pTHX_ struct wump_perl_task *task);
+/* Executor caches are independent of tasks: migrating acts allocate/free
+ * through the destination executor. Merge only after all users stop. */
+struct wump_perl_allocator {
+	PerlInterpreter *interp;
+	SV *Isv_root, *Isv_arenaroot;
+	IV Isv_count;
+	void *Ibody_arenas;
+	void *Ibody_roots[PERL_ARENA_ROOTS_SIZE];
+};
+struct wump_perl_allocator *Perl_wump_allocator_current(pTHX);
+void Perl_wump_allocator_activate(pTHX_ struct wump_perl_allocator *pool);
+void Perl_wump_allocator_merge(pTHX_ struct wump_perl_allocator *pool);
+SV **Perl_wump_allocator_sv_root(pTHX);
+SV **Perl_wump_allocator_sv_arenaroot(pTHX);
+IV *Perl_wump_allocator_sv_count(pTHX);
+void **Perl_wump_allocator_body_arenas(pTHX);
+void *(*Perl_wump_allocator_body_roots(pTHX))[PERL_ARENA_ROOTS_SIZE];
 void Perl_wump_regex_roots(pTHX_ REGEXP *rx,
 	void (*visit)(pTHX_ SV *, void *), void *arg);
 C
@@ -132,6 +149,9 @@ my $vars = "\n/* Wump execution state: root execution retains the upstream field
 $vars .= "#if defined(MULTIPLICITY)\n#define PL_wump_task Perl_wump_task_current(aTHX)\n";
 for my $name (@vars) {
 	$vars .= "#undef PL_$name\n#define PL_$name (*(PL_wump_task && !PL_wump_task->main ? &PL_wump_task->I$name : &aTHX->I$name))\n";
+}
+for my $name (qw(sv_root sv_arenaroot sv_count body_arenas body_roots)) {
+	$vars .= "#undef PL_$name\n#define PL_$name (*Perl_wump_allocator_$name(aTHX))\n";
 }
 $vars .= "#endif\n";
 my $magic_cache_macros = <<'C';
@@ -279,6 +299,12 @@ require "$FindBin::Bin/hooks.pl";
 apply_hooks($source);
 require "$FindBin::Bin/refcount.pl";
 apply_refcount($source);
+edit('sv.c', "    struct arena_desc set[ARENAS_PER_SET];\n};",
+	"    struct arena_desc set[ARENAS_PER_SET];\n};\n#include \"wump_alloc.c\"");
+# Debug builds must not race on the arena table's one-time sanity check.
+edit('sv.c', "    static bool done_sanity_check;\n\n    if (!done_sanity_check) {",
+	"    static _Atomic bool done_sanity_check;\n\n    if (!atomic_exchange_explicit(&done_sanity_check, TRUE, memory_order_relaxed)) {");
+edit('sv.c', '        done_sanity_check = TRUE;', '        /* Claimed atomically above. */');
 require "$FindBin::Bin/publication.pl";
 apply_publication($source);
 edit('regcomp.c', '#include "regcomp_internal.h"',
@@ -290,6 +316,7 @@ edit('pp_hot.c', '    if (!(CvISXSUB(cv))) {',
 edit('pp.c', '    SvLOCK(sv);', '    if (PL_wump_task) Perl_wump_lock(aTHX_ sv); else SvLOCK(sv);');
 for my $pair (
 	["$FindBin::Bin/core/wump_core.c", "$source/wump_core.c"],
+	["$FindBin::Bin/core/wump_alloc.c", "$source/wump_alloc.c"],
 	["$FindBin::Bin/core/wump_local.c", "$source/wump_local.c"],
 	["$FindBin::Bin/core/wump_elements.c", "$source/wump_elements.c"],
 	["$FindBin::Bin/core/wump_magic.c", "$source/wump_magic.c"],

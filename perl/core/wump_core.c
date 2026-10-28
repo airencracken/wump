@@ -179,6 +179,7 @@ typedef struct wump_perl_channel {
 } wump_perl_channel;
 
 typedef struct wump_perl_run {
+	struct wump_perl_allocator allocator;
 	wump_perl_channel *channels;
 	wump_perl_message *messages;
 	struct wump_perl_waitgroup *groups;
@@ -280,12 +281,14 @@ AV **Perl_wump_gv_av(GV *gv) {
 static void wump_perl_enter(void *arg) {
 	struct wump_perl_task *task = arg;
 	PERL_SET_CONTEXT(task->interp);
+	Perl_wump_allocator_activate(task->interp, &wump_perl_active->allocator);
 	Perl_wump_task_activate(task->interp, task);
 }
 
 static void wump_perl_task_free(void *arg) {
 	struct wump_perl_task *task = arg;
 	dTHXa(task->interp);
+	Perl_wump_allocator_activate(aTHX_ &wump_perl_active->allocator);
 	if (!task->initialized) {
 		/* A queued task has no Perl stacks on which to free its CV. */
 		Perl_wump_task_activate(aTHX_ NULL);
@@ -484,7 +487,7 @@ static void wump_perl_task_start(void *arg) {
 
 int Perl_wump_main(pTHX) {
 	if (wump_perl_active != NULL) croak("Wump: another interpreter runtime is active");
-	wump_perl_run run = {0};
+	wump_perl_run run = { .allocator = { .interp = aTHX } };
 	struct wump_perl_task *task;
 	Newxz(task, 1, struct wump_perl_task);
 	wump_perl_active = &run;
@@ -499,6 +502,8 @@ int Perl_wump_main(pTHX) {
 	int error = wump_errno();
 	PL_exit_flags |= destruct_end;
 	Perl_wump_task_activate(aTHX_ NULL);
+	Perl_wump_allocator_activate(aTHX_ NULL);
+	Perl_wump_allocator_merge(aTHX_ &run.allocator);
 	/* Startup can fail before the task has attached its cleanup hook. */
 	if (!run.started) {
 		Safefree(task);
@@ -540,6 +545,14 @@ static void xs_wump_enable(pTHX_ CV *cv) {
 	if (items != 0) croak("Usage: Wump::_enable()");
 	if (PL_phase >= PERL_PHASE_RUN && !PL_wump_task)
 		croak("Wump: enable with use Wump before program execution");
+	/* Reject unsupported allocator diagnostics on Perl's compilation
+	 * stack, before scheduler context hooks can run. */
+#if defined(MYMALLOC) || defined(PERL_TRACK_MEMPOOL) || defined(DEBUG_LEAKING_SCALARS)
+	croak("Wump: executor arenas require system malloc without Perl memory tracking");
+#endif
+#ifdef DEBUGGING
+	if (DEBUG_D_TEST) croak("Wump: executor arenas do not support -DD arena scans");
+#endif
 	aTHX->Iwump_enabled = TRUE;
 	XSRETURN_EMPTY;
 }
