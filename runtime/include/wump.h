@@ -32,6 +32,13 @@ int wump_go(wump_fn fn, void *arg);
  * mutexes across scheduling points. A no-op outside a runtime. */
 void wump_yield(void);
 
+/* Poll at a safe boundary in compute-bound code. Yields after roughly
+ * 10 ms of execution since this dispatch's first poll, or on shutdown.
+ * Returns 1 after yielding, otherwise 0; preserves task-local errno.
+ * A no-op outside a task or inside a marked native call. Like yield,
+ * this can migrate the task. It cannot interrupt code that never polls. */
+int wump_checkpoint(void);
+
 /* Number of execution slots (0 outside a runtime).
  * Current slot index (-1 outside a runtime or during a native call).
  * A slot can move between OS threads after syscall handoff. */

@@ -205,6 +205,57 @@ static void test_parallel(void) {
 	CHECK(wump_run(parallel_program, NULL, 4) == 0);
 }
 
+typedef struct checkpoint_arg {
+	atomic_uint started;
+	wump_chan *done;
+} checkpoint_arg;
+
+static void checkpoint_worker(void *arg) {
+	checkpoint_arg *ctx = arg;
+	unsigned id = atomic_fetch_add(&ctx->started, 1);
+	wump_test_set_errno(100 + (int)id);
+	while (atomic_load(&ctx->started) != 16) {
+		wump_checkpoint();
+		CHECK(wump_test_get_errno() == 100 + (int)id);
+	}
+	CHECK(wump_chan_send(ctx->done, NULL) == 0);
+}
+
+static void checkpoint_program(void *arg) {
+	(void)arg;
+	checkpoint_arg ctx = { .started = ATOMIC_VAR_INIT(0), .done = wump_chan_make(0, 0) };
+	CHECK(ctx.done != NULL);
+	CHECK(wump_checkpoint() == 0); /* A fresh dispatch has its full budget. */
+	for (int i = 0; i < 16; i++) {
+		CHECK(wump_go(checkpoint_worker, &ctx) == 0);
+	}
+	wump_test_set_errno(999);
+	while (atomic_load(&ctx.started) != 16) {
+		int result = wump_checkpoint();
+		CHECK(result == 0 || result == 1);
+		CHECK(wump_test_get_errno() == 999);
+	}
+	for (int i = 0; i < 16; i++) CHECK(wump_chan_recv(ctx.done, NULL) == 1);
+	wump_chan_free(ctx.done);
+}
+
+static void checkpoint_stop(void *arg) {
+	(void)arg;
+	wump_halt(ECANCELED);
+	/* Shutdown must suspend even before the first time budget is started. */
+	wump_checkpoint();
+	abort();
+}
+
+static void test_checkpoint(void) {
+	wump_test_set_errno(123);
+	CHECK(wump_checkpoint() == 0 && wump_test_get_errno() == 123);
+	for (int n = 1; n <= 4; n *= 2) {
+		CHECK(wump_run(checkpoint_program, NULL, n) == 0);
+	}
+	CHECK(wump_run(checkpoint_stop, NULL, 1) == -1 && errno == ECANCELED);
+}
+
 typedef struct fifo_arg {
 	wump_chan *ch, *done;
 	int value;
@@ -625,6 +676,7 @@ int main(int argc, char **argv) {
 		{ "registers, floating point, and errno", test_context },
 		{ "spawn, queue overflow, and stack reuse", test_spawn },
 		{ "four workers execute in parallel", test_parallel },
+		{ "compute checkpoints provide fairness, preserve errno, and stop", test_checkpoint },
 		{ "buffer and waiter FIFO ordering", test_fifo },
 		{ "randomized buffer operations match a FIFO model", test_model },
 		{ "close wakes blocked senders and receivers", test_close },

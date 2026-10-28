@@ -588,6 +588,7 @@ static void schedule(wump_machine *m) {
 		}
 		m->cur = g;
 		g->state = G_RUNNING;
+		g->slice_start = 0;
 		if (g->context_enter != NULL) {
 			g->context_enter(g->context_arg);
 		}
@@ -689,6 +690,25 @@ void wump_yield(void) {
 		g->state = G_RUNNABLE;
 		switch_out();
 	}
+}
+
+int wump_checkpoint(void) {
+	wump_g *g = wump_self();
+	if (g == NULL) {
+		return 0;
+	}
+	if (!atomic_load_explicit(&current_machine()->rt->stopping, memory_order_acquire)) {
+		int64_t now = wump_now();
+		if (g->slice_start == 0) {
+			g->slice_start = now;
+			return 0;
+		}
+		if (now - g->slice_start < INT64_C(10000000)) {
+			return 0;
+		}
+	}
+	wump_yield();
+	return 1;
 }
 
 int wump_go(wump_fn fn, void *arg) {

@@ -60,6 +60,8 @@ PADLIST **Perl_wump_cv_padlist(CV *cv);
 void Perl_wump_cv_prepare(pTHX_ CV *cv);
 void Perl_wump_boot(pTHX);
 int Perl_wump_main(pTHX);
+int Perl_wump_runops(pTHX);
+void Perl_wump_checkpoint(pTHX);
 void Perl_wump_panic(pTHX_ SV *error);
 SV **Perl_wump_gv_sv(GV *gv);
 AV **Perl_wump_gv_av(GV *gv);
@@ -201,6 +203,12 @@ for my $file ('pp.c', 'pp_hot.c') {
 edit('pp.c', "S_do_delete_local(pTHX)\n{",
 	"S_do_delete_local(pTHX)\n{\n    Perl_wump_local_elements_check(aTHX);");
 edit('run.c', '#define PERL_IN_RUN_C', "#define PERL_IN_RUN_C\n/* Wump core implementation is built into both perl and miniperl. */");
+edit('run.c', "Perl_runops_standard(pTHX)\n{",
+	"Perl_runops_standard(pTHX)\n{\n    if (PL_wump_task) return Perl_wump_runops(aTHX);");
+edit('dump.c', "Perl_runops_debug(pTHX)\n{",
+	"Perl_runops_debug(pTHX)\n{\n    unsigned wump_ticks = 256;");
+edit('dump.c', '    } while ((PL_op = PL_op->op_ppaddr(aTHX)));',
+	"        if (--wump_ticks == 0) {\n            wump_ticks = 256;\n            Perl_wump_checkpoint(aTHX);\n        }\n    } while ((PL_op = PL_op->op_ppaddr(aTHX)));");
 my $run = read_file("$source/run.c");
 my $include = "\n#include \"wump_core.c\"\n";
 write_file("$source/run.c", $run . $include) unless index($run, $include) >= 0;

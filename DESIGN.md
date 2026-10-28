@@ -197,6 +197,16 @@ entry (every op if it's cheap enough). The same safe point is used for:
   what Go's GC guarantees: nothing is reused while a racing reader can
   still see it.
 
+The single-P bridge now has an initial safe-point path: its custom runloop
+polls `wump_checkpoint()` every 256 opcodes. The runtime yields through its
+ordinary scheduler after a roughly 10 ms budget, measured from the first poll
+of each dispatch. C tasks can use the same checkpoint API on multiple Ps;
+their resumed work remains stealable. Automatic Perl checks currently defer
+during compilation, auxiliary callback stacks, and teardown. This provides
+compute-loop fairness without a sysmon thread or asynchronous interruption
+of native code.
+It does not yet permit simultaneous Perl execution on multiple Ps.
+
 ### Channels and sel
 Go's `hchan`: mutex, ring buffer, FIFO waiter queues. An unbuffered send
 copies directly into a parked receiver's slot. `sel` locks the involved
@@ -507,6 +517,10 @@ Each one ends in something runnable.
      Wait groups use explicit counters with functional and object calls;
      `scope` is removed. These are still module functions; core feature syntax
      and multi-P Perl remain open.
+   - Initial automatic safe-point scheduling is implemented for ordinary
+     compute loops. Next steps toward many Ps are safe interpreter handoff,
+     allocator/reclamation and remaining shared-state isolation, followed by
+     genuine parallel opcode execution and multi-worker Perl stress tests.
 2. **Many Ps for I/O**: Ms, syscall handoff, netpoller, fork(), signals.
    Perl code still runs on one P at a time behind a runtime lock; that's
    development scaffolding, never a shipped mode.

@@ -152,6 +152,7 @@ static void native_barrier(void *arg) {
 	int result = pthread_barrier_wait(&ctx->barrier);
 	CHECK(result == 0 || result == PTHREAD_BARRIER_SERIAL_THREAD);
 	wump_test_set_errno(4321);
+	CHECK(wump_checkpoint() == 0 && wump_test_get_errno() == 4321);
 }
 
 static void grouped_task(void *arg) {

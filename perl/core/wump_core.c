@@ -20,6 +20,34 @@ void Perl_wump_task_activate(pTHX_ struct wump_perl_task *task) {
 	wump_current_task = task;
 }
 
+void Perl_wump_checkpoint(pTHX) {
+	struct wump_perl_task *task = PL_wump_task;
+	/* The compiler and auxiliary callback stacks still use shared state.
+	 * Only ordinary runtime op boundaries are automatic scheduling points.
+	 * Teardown cannot resume abandoned C frames or schedule destructors. */
+	if (task && task->initialized && !task->finished && PL_phase == PERL_PHASE_RUN
+		&& !PL_parser && PL_curstackinfo->si_type == PERLSI_MAIN
+		&& !aTHX->Iwump_publishing) {
+		wump_checkpoint();
+	}
+}
+
+int Perl_wump_runops(pTHX) {
+	unsigned ticks = 256;
+	OP *op = PL_op;
+	PERL_DTRACE_PROBE_OP(op);
+	while ((PL_op = op = op->op_ppaddr(aTHX))) {
+		if (--ticks == 0) {
+			ticks = 256;
+			Perl_wump_checkpoint(aTHX);
+		}
+		PERL_DTRACE_PROBE_OP(op);
+	}
+	PERL_ASYNC_CHECK();
+	TAINT_NOT;
+	return 0;
+}
+
 #include "wump_publish.c"
 #include "wump_local.c"
 #include "wump_elements.c"

@@ -3,6 +3,14 @@
 #include "XSUB.h"
 #include <stdint.h>
 
+static XS(xs_debug_runops) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items != 0) croak("Usage: RootFixture::debug_runops()");
+	PL_runops = Perl_runops_debug;
+	XSRETURN_EMPTY;
+}
+
 static XS(xs_payload) {
 	dXSARGS;
 	PERL_UNUSED_VAR(items);
@@ -74,5 +82,6 @@ XS_EXTERNAL(boot_RootFixture) {
 	newXS("RootFixture::make", xs_make, __FILE__);
 	newXS("RootFixture::opaque_regex", xs_opaque_regex, __FILE__);
 	newXS("RootFixture::constructor_self", xs_constructor_self, __FILE__);
+	newXS("RootFixture::debug_runops", xs_debug_runops, __FILE__);
 	XSRETURN_YES;
 }

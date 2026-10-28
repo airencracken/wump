@@ -395,9 +395,21 @@ callbacks preserve native magic, localization, and weak-reference lifetimes.
 Run `make perl-publication-example` to see publication through a channel and
 an act capture while retaining the original shared object.
 
-This prototype does not implement `sel`, safe-point
-preemption, or automatic Perl I/O/XS handoff. Ordinary blocking Perl operations
-still occupy the single slot. Compilation/mutation of existing subs while
+Ordinary Perl compute loops now share the execution slot automatically.
+The Wump runloop polls the runtime every 256 opcodes and gives other runnable
+acts a turn after roughly 10 ms since the dispatch's first eligible poll.
+An empty busy loop therefore no longer needs an explicit `yield` to let
+other acts or timers progress. This is safe-point preemption: it does not
+interrupt an opcode or a blocking native call. Compilation, execution on Perl's
+auxiliary callback stacks (including destructors, magic, sort, and regex
+callbacks), and teardown defer automatic switches until ordinary runtime
+execution resumes. Explicit yields
+retain their existing behavior in supported callbacks. Ordinary scripts
+without Wump retain the upstream runloop.
+
+This prototype does not implement `sel` or automatic Perl I/O/XS handoff.
+Ordinary blocking Perl operations still occupy the single slot.
+Compilation/mutation of existing subs while
 tasks are suspended and debugger/general multicall integration are not supported
 yet. Scope-exit destructors see the enclosing binding and can spawn tasks.
 Abandoning a task suspended inside a destructor remains unsupported, and
@@ -567,12 +579,23 @@ work. I/O calls currently take their own timeout argument.
 
 ## Scheduling and lifetime rules
 
-Scheduling is cooperative. Tasks must return, call `wump_yield`, or park in
-a channel operation, sleep, or I/O wait to let their worker run something
+Native C scheduling is cooperative. Tasks must return, call `wump_yield`,
+poll `wump_checkpoint` at safe boundaries, or park in a channel operation,
+sleep, or I/O wait to let their worker run something
 else, or enter a marked native call. An operation
 that succeeds immediately need not yield. Unmarked native blocking calls
 still occupy their execution slot; a task that never yields or a native
 call that never returns can delay shutdown indefinitely.
+
+`wump_checkpoint()` returns 1 after yielding and 0 when it keeps running.
+It preserves task-local errno and is a no-op outside a task or during a
+marked native call. A dispatch gets a fresh budget, starting at its first
+checkpoint; polling after roughly 10 ms yields through the ordinary scheduler,
+so tasks remain eligible for work stealing and migration. Shutdown requests
+yield at the next checkpoint without waiting for the budget to expire.
+Clock reads happen only at checkpoints, avoiding extra clock calls in spawn,
+channel, and explicit-yield paths. The Perl runloop inserts these polls for
+ordinary Perl code; native C and XS code must supply safe boundaries themselves.
 
 Tasks may migrate. Do not retain native TLS addresses, including cached
 `&errno` pointers, or hold native thread-owned locks across scheduling
@@ -630,6 +653,12 @@ socketpair echo, timeout/close races, descriptor reuse, EOF/half-close,
 loopback TCP, runtime ownership, and leak-free shutdown. `make stress`
 repeats all four behavior suites ten
 times, including timeout races at 1/4/16 workers.
+
+Checkpoint tests put more computing tasks than execution slots into busy loops
+at 1/2/4 workers, checking progress, errno preservation, and shutdown before a
+time budget begins. The Perl preemption suite checks tight loops in main and
+spawned acts, timer progress, retained task state, and deferred switching in
+destructors, with alarm-bounded subprocesses that expose starvation failures.
 
 The failure suite injects allocation, mutex/condition initialization,
 stack mapping/protection, and partial thread-start failures. It checks

@@ -50,6 +50,7 @@ typedef struct wump_g {
 	void *arg;
 	enum wump_gstate state;
 	int saved_errno;
+	int64_t slice_start;
 	struct wump_g *next;
 	struct wump_g *all_next, *all_prev;
 	void *map;
