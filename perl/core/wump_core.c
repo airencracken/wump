@@ -461,15 +461,17 @@ static void wump_perl_task_start(void *arg) {
 	JMPENV_BOOTSTRAP;
 	init_stacks();
 	task->initialized = 1;
-	PL_defgv = (GV *)newSV_type(SVt_PVGV);
-	gv_init(PL_defgv, PL_defstash, "_", 1, 0);
+	/* gv_init treats an already typed SV as a subroutine prototype. These
+	 * slots are private cells, with no namespace/backreference membership. */
+	PL_defgv = (GV *)newSV(0);
+	gv_init(PL_defgv, NULL, "_", 1, 0);
 	if (GvGP(PL_defgv)->gp_sv == NULL) GvGP(PL_defgv)->gp_sv = newSV(0);
 	GvGP(PL_defgv)->gp_av = newAV();
-	PL_errgv = (GV *)newSV_type(SVt_PVGV);
-	gv_init(PL_errgv, PL_defstash, "@", 1, 0);
+	PL_errgv = (GV *)newSV(0);
+	gv_init(PL_errgv, NULL, "@", 1, 0);
 	if (GvGP(PL_errgv)->gp_sv == NULL) GvGP(PL_errgv)->gp_sv = newSVpvs("");
-	PL_replgv = (GV *)newSV_type(SVt_PVGV);
-	gv_init(PL_replgv, PL_defstash, "\022", 1, 0);
+	PL_replgv = (GV *)newSV(0);
+	gv_init(PL_replgv, NULL, "\022", 1, 0);
 	if (GvGP(PL_replgv)->gp_sv == NULL) GvGP(PL_replgv)->gp_sv = newSV(0);
 	{
 		dSP;

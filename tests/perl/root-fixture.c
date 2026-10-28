@@ -122,6 +122,30 @@ static XS(xs_read_frame_active) {
 	XSRETURN(1);
 }
 
+static XS(xs_task_globs) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items) croak("Usage: RootFixture::task_globs()");
+	GV *globs[] = {PL_defgv, PL_errgv, PL_replgv};
+	AV *result = newAV();
+	for (int i = 0; i < 3; i++) {
+		AV *record = newAV();
+		av_push(record, newSViv(GvSTASH(globs[i]) == NULL));
+		av_push(record, newSViv(GvCVu(globs[i]) == NULL));
+		av_push(record, newSVpvn(GvNAME(globs[i]), GvNAMELEN(globs[i])));
+		av_push(result, newRV_noinc((SV *)record));
+	}
+	ST(0) = sv_2mortal(newRV_noinc((SV *)result));
+	XSRETURN(1);
+}
+
+static XS(xs_namespace_generation) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items) croak("Usage: RootFixture::namespace_generation()");
+	XSRETURN_UV(HvMROMETA(PL_defstash)->pkg_gen);
+}
+
 static XS(xs_borrow_read) {
 	dXSARGS;
 	PERL_UNUSED_VAR(cv);
@@ -398,6 +422,8 @@ XS_EXTERNAL(boot_RootFixture) {
 	newXS("RootFixture::scalar_state", xs_scalar_state, __FILE__);
 	newXS("RootFixture::scalar_read", xs_scalar_read, __FILE__);
 	newXS("RootFixture::read_frame_active", xs_read_frame_active, __FILE__);
+	newXS("RootFixture::task_globs", xs_task_globs, __FILE__);
+	newXS("RootFixture::namespace_generation", xs_namespace_generation, __FILE__);
 	newXS("RootFixture::borrow_read", xs_borrow_read, __FILE__);
 	newXS("RootFixture::memory_stats", xs_memory_stats, __FILE__);
 	newXS("RootFixture::memory_replace", xs_memory_replace, __FILE__);

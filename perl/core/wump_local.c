@@ -60,8 +60,8 @@ static wump_local *wump_local_add(pTHX_ struct wump_perl_task *task,
 	Newxz(slot, 1, wump_local);
 	slot->origin = (GV *)SvREFCNT_inc(gv);
 	/* Hold the GP independently of symbol-table alias replacement. */
-	slot->anchor = (GV *)newSV_type(SVt_PVGV);
-	gv_init(slot->anchor, PL_defstash, "__wump_local", 12, 0);
+	slot->anchor = (GV *)newSV(0);
+	gv_init(slot->anchor, NULL, "__wump_local", 12, 0);
 	gp_free(slot->anchor);
 	GvGP_set(slot->anchor, gp_ref(GvGP(gv)));
 	slot->kind = kind;

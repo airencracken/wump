@@ -725,7 +725,14 @@ the amount of completed infrastructure is not a reliable time estimate.
      keys/refcounts, graph publication, scalar read claims, deferred storage
      reclamation, and the listed scalar write destinations are implemented.
      Native tests execute actual scalar opcodes with multiple executors. The
-     interpreter bridge remains single-slot until the remaining state gates
+     listed binary arithmetic/comparison entries now snapshot plain published
+     inputs before raw cache reads; native contention tests do not hold an
+     external read claim around those opcode calls. Mixed magic/reference
+     paths and operand lifetimes between container loads and opcode entry
+     remain separate gates.
+     Task-private special globs and localization anchors no longer create
+     prototype CVs or participate in namespace backreference lists.
+     The interpreter bridge remains single-slot until the remaining state gates
      below are closed.
 2. **Many Ps for I/O**: Ms, syscall handoff, netpoller, fork(), signals.
    Perl code still runs on one P at a time behind a runtime lock; that's

@@ -130,6 +130,9 @@ make perl-reads-test            # plain shared-scalar conversions and copies
 make perl-reads-tsan            # eight readers against an instrumented private Perl
 make perl-writes-test           # scalar opcode/API writes, callbacks and native contention
 make perl-writes-tsan           # instrumented opcode tests and allocator race control
+make perl-operands-test         # opcode operand snapshots and native contention
+make perl-operands-tsan         # whole-core concurrent opcode reads/writes
+make perl-operands-memcheck     # operand callbacks, unwind, and native teardown
 make perl-memory-test           # borrowed storage, concurrent publication/writes, migration
 make perl-memory-tsan           # whole-core reclamation stress and deliberate-race control
 ```
@@ -155,6 +158,13 @@ without executing Perl opcodes or allocating Perl values in those threads;
 state-isolation prerequisite. Executor arena caches are now isolated as
 described below; remaining shared interpreter state still prevents multi-worker
 Perl execution.
+
+Spawned acts' default, error, and regex-result globs are private storage cells.
+They keep their special names without namespace backreferences or unintended
+prototype CVs. Localization anchors likewise retain only their target GP;
+creating and retiring these cells does not invalidate shared method caches.
+Real namespace mutation, method caches, and general weak-reference updates
+still require a separate concurrency audit.
 
 `use Wump` enables interpreter-owned scheduling: ordinary top-level Perl runs
 as the main act. The interpreter starts and stops the scheduler automatically,
@@ -534,9 +544,32 @@ fast paths that publication magic would otherwise divert. Bypassing an entry
 guard must fail its old-body regression; real Perl tests independently expose
 the original opcode's unguarded STORE callback window.
 
+Plain scalar pairs now receive stable operand snapshots before arithmetic,
+bitwise, numeric comparison, integer comparison, and string comparison opcodes
+inspect cached flags or raw scalar bodies. A short reader claim protects
+classification and snapshot capture; no reader exclusion spans warning or
+other Perl callbacks. Snapshots retain numeric/string dual values, boolean
+identity, encoding and original-variable diagnostics while leaving source
+caches unchanged. Repeated references to one source reuse its captured value.
+Compound assignment leaves its destination under the existing writer protocol.
+Comparison result pads also enter that protocol.
+
+Operand diagnostic frames and retained source heads belong to the act and
+unwind on exceptions or abandoned callbacks. Mixed reference, overload, and
+magical pairs retain their native aliases and callback order. Those paths
+still need a separate read audit. The native C/C++ fixture executes 3,072 actual
+arithmetic/comparison opcodes on six executors against two writers performing
+1,024 scalar representation changes, with no caller-held read claim around an
+opcode. Disabling operand preparation must expose an unguarded cached read.
+The TSan target instruments Perl and the fixture and checks the deliberate
+allocator-race control.
+
 Perl execution still uses one slot. This is coverage for the listed scalar
-destinations, not a complete opcode or XS audit. Raw operand reads, aggregate
-opcode fast paths, other lvalue magic and direct XS field access remain open.
+destinations and plain binary inputs, not a complete opcode or XS audit.
+Other raw operand reads, aggregate opcode fast paths, other lvalue magic and
+direct XS field access remain open. Shared-container loads also need to retain
+operand heads before placing them on an act's stack; opcode entry protection
+does not establish that earlier lifetime boundary.
 Raw `SvPVX`/`AvARRAY`/`HvARRAY` access needs an explicit borrow or external
 lifetime management. Magical containers, mutable-buffer escapes, element-overlay
 base writes, regex/compiler/method caches, and the remaining interpreter/XS

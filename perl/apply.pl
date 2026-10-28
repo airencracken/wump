@@ -165,6 +165,9 @@ bool Perl_wump_read_bool(pTHX_ SV *value, I32 flags);
 char *Perl_wump_read_pv(pTHX_ SV *value, STRLEN *length, U32 flags, int encoding);
 char *Perl_wump_read_snapshot_pv(pTHX_ SV *value, SV *copy, STRLEN *length, U32 flags, int encoding);
 void Perl_wump_read_copy(pTHX_ SV *target, SV *value, I32 flags);
+struct wump_operands;
+struct wump_operands *Perl_wump_operands_begin(pTHX_ SV *target);
+void Perl_wump_operands_end(pTHX_ struct wump_operands *guard);
 void Perl_wump_publish(pTHX_ SV *value);
 void Perl_wump_publish_store(pTHX_ SV *owner, SV *value);
 void Perl_wump_publish_reference(pTHX_ SV *owner, SV *value);
@@ -402,6 +405,8 @@ require "$FindBin::Bin/memory.pl";
 apply_memory($source);
 require "$FindBin::Bin/opwrites.pl";
 apply_opwrites($source);
+require "$FindBin::Bin/opreads.pl";
+apply_opreads($source);
 edit('regcomp.c', '#include "regcomp_internal.h"',
 	"#include \"regcomp_internal.h\"\n#include \"wump_regex_roots.c\"");
 edit('class.c', '    fields[fieldix] = val;',

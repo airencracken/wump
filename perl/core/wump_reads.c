@@ -171,3 +171,89 @@ void Perl_wump_read_copy(pTHX_ SV *target, SV *value, I32 flags) {
 	 * stack: save_helem_flags can copy a key while assembling a save record. */
 	Perl_sv_setsv_flags(aTHX_ target, copy, flags & ~SV_GMAGIC);
 }
+
+struct wump_operands {
+	struct wump_read_frame frames[2];
+	struct wump_read_frame *previous;
+	SV *sources[2];
+	I32 mark, top;
+	bool active;
+};
+
+static bool wump_operand_plain(pTHX_ SV *value, bool *copy) {
+	struct wump_shared *claim = Perl_wump_read_begin(aTHX_ value);
+	bool plain = value && SvTYPE(value) <= SVt_PVMG && SvTYPE(value) != SVt_INVLIST
+		&& !SvROK(value) && !SvOBJECT(value) && !SvVALID(value);
+	if (plain && SvTYPE(value) >= SVt_PVMG) {
+		for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic) {
+			if (!Perl_wump_publish_magic(mg)) { plain = FALSE; break; }
+		}
+	}
+	*copy = plain && !SvIMMORTAL(value) && Perl_wump_is_shared(aTHX_ value);
+	Perl_wump_read_end(aTHX_ claim);
+	return plain;
+}
+
+static void wump_operands_release(pTHX_ struct wump_operands *guard) {
+	if (!guard->active) return;
+	guard->active = FALSE;
+	*wump_read_frames(aTHX) = guard->previous;
+	SvREFCNT_dec(guard->sources[1]);
+	SvREFCNT_dec(guard->sources[0]);
+}
+
+static void wump_operands_unwind(pTHX_ void *arg) {
+	struct wump_operands *guard = (struct wump_operands *)arg;
+	wump_operands_release(aTHX_ guard);
+	Safefree(guard);
+}
+
+struct wump_operands *Perl_wump_operands_begin(pTHX_ SV *target) {
+	SV *sources[2] = {PL_stack_sp[-1], PL_stack_sp[0]};
+	bool copies[2] = {FALSE, FALSE};
+	/* Check both under short claims, without invoking GET or overload. A
+	 * callback must still receive the original SV aliases on native paths. */
+	bool left = wump_operand_plain(aTHX_ sources[0], &copies[0]);
+	bool right = wump_operand_plain(aTHX_ sources[1], &copies[1]);
+	if (!left || !right) return NULL;
+	/* Publication can complete between the two classifications. Aliased
+	 * stack inputs must still agree on whether they use a captured value. */
+	if (sources[0] == sources[1]) copies[0] = copies[1] = copies[0] || copies[1];
+	for (int i = 0; i < 2; i++) if (sources[i] == target) copies[i] = FALSE;
+	if (!copies[0] && !copies[1]) return NULL;
+
+	SSCHECK(3);
+	struct wump_operands *guard;
+	Newxz(guard, 1, struct wump_operands);
+	guard->previous = *wump_read_frames(aTHX);
+	guard->active = TRUE;
+	guard->mark = PL_savestack_ix;
+	SAVEDESTRUCTOR_X(wump_operands_unwind, guard);
+	guard->top = PL_savestack_ix;
+	/* Capture all inputs before changing the operand stack. Copies retain
+	 * original cache/boolean semantics, but own their bodies and PVs. */
+	for (int i = 0; i < 2; i++) {
+		if (!copies[i]) continue;
+		guard->sources[i] = SvREFCNT_inc(sources[i]);
+		SV *copy = i && sources[0] == sources[1] ? guard->frames[0].copy
+			: sv_2mortal(Perl_wump_scalar_snapshot(aTHX_ sources[i]));
+		struct wump_read_frame *frame = &guard->frames[i];
+		frame->source = sources[i];
+		frame->copy = copy;
+		frame->previous = *wump_read_frames(aTHX);
+		*wump_read_frames(aTHX) = frame;
+	}
+	for (int i = 0; i < 2; i++) {
+		if (copies[i]) rpp_replace_at_NN(PL_stack_sp - 1 + i, guard->frames[i].copy);
+	}
+	return guard;
+}
+
+void Perl_wump_operands_end(pTHX_ struct wump_operands *guard) {
+	if (!guard) return;
+	I32 mark = guard->mark, top = guard->top;
+	wump_operands_release(aTHX_ guard);
+	/* An opcode may leave caller-owned saves. Keep an inactive heap record
+	 * underneath them rather than leaving a C-stack address after return. */
+	if (PL_savestack_ix == top) LEAVE_SCOPE(mark);
+}
