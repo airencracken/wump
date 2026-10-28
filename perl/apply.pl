@@ -252,8 +252,19 @@ edit('inline.h', 'return &((XPVCV*)SvANY(sv))->xcv_depth;',
 	"dTHX;\n    return Perl_wump_cv_depth(aTHX_ sv);");
 edit('cv.h', '&(((XPVCV*)MUTABLE_PTR(SvANY(sv)))->xcv_padlist_u.xcv_padlist)))',
 	'Perl_wump_cv_padlist((CV *)(sv))))');
-edit('inline.h', 'cx->blk_sub.olddepth = CvDEPTH(cv);',
-	"Perl_wump_cv_prepare(aTHX_ cv);\n    cx->blk_sub.olddepth = CvDEPTH(cv);");
+my $inline = read_file("$source/inline.h");
+$inline =~ s/    cx->blk_sub.cv = cv;\n    Perl_wump_cv_prepare\(aTHX_ cv\);\n    cx->blk_sub.olddepth/    cx->blk_sub.cv = cv;\n    cx->blk_sub.olddepth/;
+write_file("$source/inline.h", $inline);
+edit('inline.h', '    PERL_ARGS_ASSERT_CX_PUSHSUB;', <<'C');
+    PERL_ARGS_ASSERT_CX_PUSHSUB;
+
+    /* Publication can throw. Until preparation succeeds this context owns
+     * only cx_pushblock's initialized fields, not a CV, pad or argument AV. */
+    const U8 wump_sub_type = cx->cx_type;
+    cx->cx_type = CXt_NULL;
+    Perl_wump_cv_prepare(aTHX_ cv);
+    cx->cx_type = wump_sub_type;
+C
 edit('gv.h', "#define GvSV(gv)\t(GvGP(gv)->gp_sv)",
 	"#define GvSV(gv)\t(*Perl_wump_gv_sv((GV *)(gv)))");
 edit('gv.h', "#define GvAV(gv)\t(GvGP(gv)->gp_av)",

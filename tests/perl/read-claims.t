@@ -6,6 +6,49 @@ use Scalar::Util 'dualvar';
 use Wump;
 use RootFixture;
 
+my $captured = 42;
+my $first_call = sub { return $captured };
+RootFixture::scalar_publish(\$captured);
+ok(!Wump::is_shared($first_call), 'an uncalled closure begins unpublished');
+my ($prepare_ready, $prepare_release) = (chan, chan);
+my $prepare_group = waitgroup;
+add $prepare_group;
+act {
+	RootFixture::memory_guard(\$captured, sub { $prepare_ready->send(1); $prepare_release->recv });
+	done $prepare_group;
+};
+$prepare_ready->recv;
+for (1..3) {
+	my $caller_pad = 'caller survives';
+	eval { $first_call->() };
+	like($@, qr/publication overlaps mutation/, 'failed subroutine preparation propagates its publication error');
+	is($caller_pad, 'caller survives', 'preparation failure restores the caller pad');
+	ok(!Wump::is_shared($first_call), 'a failed preparation rolls back closure publication');
+}
+$prepare_release->send(1);
+await $prepare_group;
+is($first_call->(), 42, 'the same closure can be prepared after the conflicting writer leaves');
+
+my ($child_begin, $child_result) = (chan, chan);
+my $child_group = waitgroup;
+add $child_group;
+act {
+	$child_begin->recv;
+	my $uncalled = sub { return $captured };
+	my $caller_pad = 'child survives';
+	eval { $uncalled->() };
+	$child_result->send([$@, $caller_pad]);
+	done $child_group;
+};
+my $child_answer;
+RootFixture::memory_guard(\$captured, sub {
+	$child_begin->send(1);
+	$child_answer = $child_result->recv;
+});
+await $child_group;
+like($child_answer->[0], qr/publication overlaps mutation/, 'child preparation failures remain catchable');
+is($child_answer->[1], 'child survives', 'child preparation failure restores its own pad');
+
 my @kinds = (0..7, 10, 12..37);
 for my $initial (42, 18446744073709551615, 42.5, '42', dualvar(7, 'seven')) {
 	my $value = $initial;
