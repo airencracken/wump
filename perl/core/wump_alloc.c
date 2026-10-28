@@ -3,6 +3,15 @@
 #include <stdatomic.h>
 static _Thread_local struct wump_perl_allocator *wump_current_allocator;
 
+void Perl_wump_allocator_init(pTHX_ struct wump_perl_allocator *pool) {
+	assert(pool != Perl_wump_allocator_current(aTHX));
+	Zero(pool, 1, struct wump_perl_allocator);
+	pool->interp = aTHX;
+#ifdef PERL_HASH_RANDOMIZE_KEYS
+	pool->Ihash_rand_bits = PL_hash_rand_bits;
+#endif
+}
+
 __attribute__((noinline)) struct wump_perl_allocator *Perl_wump_allocator_current(pTHX) {
 	__asm__ volatile("" ::: "memory");
 	struct wump_perl_allocator *pool = wump_current_allocator;
@@ -23,6 +32,10 @@ __attribute__((noinline)) type *Perl_wump_allocator_##name(pTHX) { \
 WUMP_ALLOCATOR_FIELD(SV *, sv_root)
 WUMP_ALLOCATOR_FIELD(SV *, sv_arenaroot)
 WUMP_ALLOCATOR_FIELD(IV, sv_count)
+WUMP_ALLOCATOR_FIELD(bool, nomemok)
+#ifdef PERL_HASH_RANDOMIZE_KEYS
+WUMP_ALLOCATOR_FIELD(UV, hash_rand_bits)
+#endif
 WUMP_ALLOCATOR_FIELD(void *, body_arenas)
 #undef WUMP_ALLOCATOR_FIELD
 

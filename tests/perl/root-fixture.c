@@ -3,6 +3,27 @@
 #include "XSUB.h"
 #include <stdint.h>
 
+static XS(xs_key_too_large) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items != 0) croak("Usage: RootFixture::key_too_large()");
+	(void)Perl_share_hek(aTHX_ "x", (SSize_t)I32_MAX + 1, 0);
+	XSRETURN_EMPTY;
+}
+
+static XS(xs_key_missing) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items > 1) croak("Usage: RootFixture::key_missing([UTF8])");
+	bool utf8 = items && SvTRUE(ST(0));
+	const char *text = utf8 ? "wump-missing-\xc3\xa9" : "wump-missing-native-key";
+	I32 len = strlen(text);
+	U32 hash;
+	PERL_HASH(hash, text, len);
+	unsharepvn(text, utf8 ? -len : len, hash);
+	XSRETURN_EMPTY;
+}
+
 static XS(xs_debug_runops) {
 	dXSARGS;
 	PERL_UNUSED_VAR(cv);
@@ -83,5 +104,7 @@ XS_EXTERNAL(boot_RootFixture) {
 	newXS("RootFixture::opaque_regex", xs_opaque_regex, __FILE__);
 	newXS("RootFixture::constructor_self", xs_constructor_self, __FILE__);
 	newXS("RootFixture::debug_runops", xs_debug_runops, __FILE__);
+	newXS("RootFixture::key_too_large", xs_key_too_large, __FILE__);
+	newXS("RootFixture::key_missing", xs_key_missing, __FILE__);
 	XSRETURN_YES;
 }

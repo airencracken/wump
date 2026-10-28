@@ -7,13 +7,17 @@ use Text::ParseWords 'shellwords';
 @ARGV == 2 or die "usage: $0 SOURCE BUILD\n";
 my ($source, $build) = map { abs_path($_) // die "$_: $!\n" } @ARGV;
 my $output = "$build/allocator";
-my @command = (shellwords($Config{cc}), shellwords($Config{ccflags}),
-	'-O2', '-g', '-pthread', "-I$source", 'tests/perl/allocator.c',
-	"$source/libperl.a", shellwords($Config{ldflags}), shellwords($Config{perllibs}), '-o', $output);
-system @command;
-$? == 0 or die "allocator fixture failed to compile: $?\n";
-system 'timeout', '90s', $output;
-$? == 0 or die "allocator fixture failed: $?\n";
+for my $spec (['key-legacy', 'c'], ['key-legacy', 'c++'], ['allocator', 'c']) {
+	my ($fixture, $language) = @$spec;
+	my $target = "$build/$fixture" . ($language eq 'c++' ? '-cpp' : '');
+	my @command = ($language eq 'c++' ? 'c++' : shellwords($Config{cc}), shellwords($Config{ccflags}),
+		'-O2', '-g', '-pthread', "-I$source", '-x', $language, "tests/perl/$fixture.c", '-x', 'none',
+		"$source/libperl.a", shellwords($Config{ldflags}), shellwords($Config{perllibs}), '-o', $target);
+	system @command;
+	$? == 0 or die "$fixture fixture failed to compile: $?\n";
+	system 'timeout', '90s', $target;
+	$? == 0 or die "$fixture fixture failed: $?\n";
+}
 
 if ($Config{ccflags} =~ /-fsanitize=thread\b/) {
 	my $log = "$build/allocator-race.log";

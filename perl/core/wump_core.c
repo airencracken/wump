@@ -487,7 +487,8 @@ static void wump_perl_task_start(void *arg) {
 
 int Perl_wump_main(pTHX) {
 	if (wump_perl_active != NULL) croak("Wump: another interpreter runtime is active");
-	wump_perl_run run = { .allocator = { .interp = aTHX } };
+	wump_perl_run run = {0};
+	Perl_wump_allocator_init(aTHX_ &run.allocator);
 	struct wump_perl_task *task;
 	Newxz(task, 1, struct wump_perl_task);
 	wump_perl_active = &run;

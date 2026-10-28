@@ -415,14 +415,31 @@ arena registries before global destruction. It neither frees arena memory
 early nor requires the freeing executor to be the allocating executor.
 
 A native eight-executor fixture allocates, validates, exchanges and finally
-frees scalars, strings, references, and arrays concurrently against one
+frees scalars, strings, references, arrays, and hashes concurrently against one
 interpreter. It checks root-cache isolation, cross-thread cache handoff,
 post-merge survival/reuse and complete teardown. A separate TSan build
 instruments Perl's full allocation/destruction paths. This is not yet parallel
-opcode execution: shared-key interning, read caches, shared-graph reclamation,
+opcode execution: read caches, shared-graph reclamation,
 compiler state and XS still need isolation. Central cache refill is pending.
 Perl memory-tracking builds and `-DD` arena scans are rejected by `use Wump`;
 the initial caches target the private fork's system-malloc configuration.
+
+Shared-key interning now serializes table lookup, insertion, growth, and
+removal with a mutex per interpreter. Key retains use atomic reference
+counts without changing HE/HEK layout. Candidate allocation and diagnostic
+callbacks run outside the lock, followed by a second lookup before insertion.
+The lock lives from interpreter construction through `perl_free`; cloned
+interpreters initialize their own lock. Shared-key bytes and flags are
+immutable after publication. Direct XS mutation of shared keys still needs
+an audit before concurrent use.
+
+Hash traversal randomness and the `nomemok` allocation-failure flag now
+belong to executor state. The allocator initializer snapshots randomization
+before concurrent execution; its stream does not merge back into the root.
+Native stress keeps hash randomization and shared-key interning enabled,
+forces table resizing with 8,192 live keys, and retires them across executors.
+Legacy key release also normalizes ASCII/UTF-8/Latin-1 inputs consistently
+with sharing, with a regression that fails on the earlier interpreter.
 
 ### 5.11 XS
 Legacy XS isn't safe to run in parallel, so unaudited XS takes a global

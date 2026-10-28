@@ -369,7 +369,7 @@ The current one-slot bridge uses this path during execution and task cleanup;
 ordinary code outside the scheduler retains the root interpreter's caches.
 
 `make perl-allocator-test` runs eight native executors against one interpreter,
-allocating and exchanging 131,072 scalar, string, reference, and array values.
+allocating and exchanging 131,072 scalar, string, reference, array, and hash values.
 It checks distinct live allocations, cross-executor final frees, root-cache
 isolation, interpreter identity, cache migration between native threads,
 surviving values, cache reuse, and full interpreter teardown. Its private
@@ -380,15 +380,34 @@ The target also requires TSan to detect a deliberate shared-cache race inside
 `Perl_more_bodies`. `make perl-memcheck` includes the native fixture under
 Valgrind with full leak checking.
 
-These initial caches allocate new arenas directly; central cache refill and
-shared string-key interning remain future work. The fixture does not run Perl
-opcodes concurrently, mutate shared graphs, or execute arbitrary destructors.
+The shared string-key table now has a mutex per interpreter for lookup,
+insertion, resizing and removal. Shared-key retains use atomic counters,
+including the C/C++ `share_hek_hek` macro path; nonterminal drops use an atomic
+CAS loop. Key bytes and flags stay immutable. Key allocation and warning
+callbacks run outside the mutex, so
+warning hooks can intern keys, yield, or throw. Oversized keys fail before
+locking. Legacy `unsharepvn` now normalizes negative UTF-8 lengths and hashes
+the same way as interning, including ASCII and Latin-1 downgrade cases.
+
+Each executor also owns its hash-order randomization state and the allocation
+failure flag used during hash growth. Fresh caches snapshot the caller's
+randomization state through the internal allocator initializer; no worker
+advances the root interpreter's random stream. The native fixture forces
+table growth with 8,192 live keys, releases keys on other executors, and
+checks ordinary private hashes with shared keys and hash randomization enabled.
+The legacy-key regression runs in C and C++. Separate Perl checks cover
+throwing/yielding warning hooks and key-table mutex setup in ordinary cloned
+interpreters; Wump acts still do not support `threads.pm` integration.
+
+These initial caches allocate new arenas directly; central cache refill
+remains future work. The fixture does not run Perl opcodes concurrently,
+mutate shared graphs, or execute arbitrary destructors.
 Executor arenas require system malloc without Perl's memory-tracking modes;
 `use Wump` rejects unsupported tracking builds and `-DD` arena scans before
 scheduling starts.
 
 Perl execution still uses one slot. Safe shared-value reads, deferred
-reclamation, publication mutation, compiler and hash caches, and the remaining
+reclamation, publication mutation, compiler and method caches, and the remaining
 interpreter/XS state split must precede multi-core Perl execution.
 Channel messages copy the outer scalar and retain reference
 identity; pending messages own their references until receive or scheduler cleanup.

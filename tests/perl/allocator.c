@@ -10,12 +10,14 @@
 
 #define CHECK(expr) do { if (!(expr)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #expr); abort(); } } while (0)
 
-enum { workers = 8, batch = 512, rounds = 32 };
+enum { workers = 8, batch = 512, rounds = 32, key_batch = 1024 };
 typedef struct fixture {
 	PerlInterpreter *interp, *other;
 	pthread_barrier_t barrier;
 	struct wump_perl_allocator pools[workers];
 	SV *values[workers][batch], *survivors[workers], *roots[workers];
+	HEK *keys[workers][key_batch], *common;
+	HEK *canonical[workers];
 } fixture;
 typedef struct thread_arg { fixture *f; int id; } thread_arg;
 
@@ -25,7 +27,7 @@ static void rendezvous(fixture *f) {
 }
 
 static SV *make_value(pTHX_ int value) {
-	switch (value % 4) {
+	switch (value % 6) {
 	case 0: return newSViv(value);
 	case 1: return newSVnv(value + 0.25);
 	case 2: {
@@ -33,24 +35,64 @@ static SV *make_value(pTHX_ int value) {
 		sv_catpvs(sv, "-private string buffer that grows");
 		return sv;
 	}
-	default: {
+	case 3: {
 		AV *av = newAV();
 		for (int i = 0; i < 4; i++) av_push(av, newSViv(value + i));
 		return newRV_noinc((SV *)av);
+	}
+	case 4: {
+		HV *hv = newHV();
+		for (int i = 0; i < 16; i++) {
+			char key[32];
+			int len = snprintf(key, sizeof(key), "slot-%d", i);
+			CHECK(hv_store(hv, key, len, newSViv(value + i), 0));
+		}
+		CHECK(HvSHAREKEYS(hv));
+		CHECK(hv_iterinit(hv) == 16);
+		int seen = 0;
+		while (hv_iternext(hv)) seen++;
+		CHECK(seen == 16);
+		return newRV_noinc((SV *)hv);
+	}
+	default: {
+		char text[32];
+		int len = snprintf(text, sizeof(text), "shared-value-%d", value);
+		SV *shared = newSVpvn_share(text, len, 0);
+		SV *copy = newSVsv(shared);
+		SvREFCNT_dec(shared);
+		return copy;
 	}
 	}
 }
 
 static void check_value(pTHX_ SV *sv, int value) {
-	switch (value % 4) {
+	switch (value % 6) {
 	case 0: CHECK(SvIV(sv) == value); break;
 	case 1: CHECK(SvNV(sv) == value + 0.25); break;
 	case 2: CHECK(strEQ(SvPV_nolen(sv), "executor-private string buffer that grows")); break;
-	default: {
+	case 3: {
 		CHECK(SvROK(sv) && SvTYPE(SvRV(sv)) == SVt_PVAV);
 		AV *av = (AV *)SvRV(sv);
 		CHECK(AvFILL(av) == 3);
 		for (int i = 0; i < 4; i++) CHECK(SvIV(*av_fetch(av, i, 0)) == value + i);
+		break;
+	}
+	case 4: {
+		CHECK(SvROK(sv) && SvTYPE(SvRV(sv)) == SVt_PVHV);
+		HV *hv = (HV *)SvRV(sv);
+		CHECK(HvTOTALKEYS(hv) == 16 && HvSHAREKEYS(hv));
+		for (int i = 0; i < 16; i++) {
+			char key[32];
+			int len = snprintf(key, sizeof(key), "slot-%d", i);
+			SV **item = hv_fetch(hv, key, len, 0);
+			CHECK(item && SvIV(*item) == value + i);
+		}
+		break;
+	}
+	default: {
+		char text[32];
+		snprintf(text, sizeof(text), "shared-value-%d", value);
+		CHECK(strEQ(SvPV_nolen(sv), text));
 	}
 	}
 }
@@ -97,6 +139,27 @@ static void *exercise(void *arg) {
 		CHECK(&PL_sv_root == &f->other->Isv_root);
 	}
 	PERL_SET_CONTEXT(f->interp);
+	for (int i = 0; i < key_batch; i++) {
+		char text[64];
+		int len = snprintf(text, sizeof(text), "executor-%d-key-%d", ctx->id, i);
+		U32 hash;
+		PERL_HASH(hash, text, len);
+		f->keys[ctx->id][i] = share_hek(text, len, hash);
+	}
+	const char canonical[] = "wump\0canonical-key";
+	U32 canonical_hash;
+	PERL_HASH(canonical_hash, canonical, sizeof(canonical) - 1);
+	f->canonical[ctx->id] = share_hek(canonical, sizeof(canonical) - 1, canonical_hash);
+	rendezvous(f);
+	rendezvous(f);
+	for (int i = 0; i < key_batch; i++) {
+		HEK *held = share_hek_hek(f->common);
+		unshare_hek(held);
+		unshare_hek(f->keys[(ctx->id + 1) % workers][i]);
+	}
+	unshare_hek(f->canonical[(ctx->id + 1) % workers]);
+	rendezvous(f);
+	rendezvous(f); /* Keep the table quiescent while main checks retirement. */
 	for (int round = 0; round < rounds; round++) {
 		for (int i = 0; i < batch; i++) f->values[ctx->id][i] = make_value(aTHX_ round * batch + i);
 		rendezvous(f);
@@ -142,7 +205,7 @@ int main(int argc, char **argv, char **env) {
 	perl_construct(f.interp);
 	dTHXa(f.interp);
 	if (argc == 2 && strEQ(argv[1], "--race")) {
-		f.pools[0].interp = aTHX;
+		Perl_wump_allocator_init(aTHX_ &f.pools[0]);
 		CHECK(pthread_barrier_init(&f.barrier, NULL, 2) == 0);
 		pthread_t racers[2];
 		for (int i = 0; i < 2; i++) CHECK(pthread_create(&racers[i], NULL, race_allocator, &f) == 0);
@@ -152,14 +215,23 @@ int main(int argc, char **argv, char **env) {
 	}
 	CHECK(argc == 1);
 	IV baseline = PL_sv_count;
+	STRLEN table_baseline = HvTOTALKEYS(PL_strtab), old_max = HvMAX(PL_strtab);
+	const char common[] = "wump\0shared-key";
+	U32 common_hash;
+	PERL_HASH(common_hash, common, sizeof(common) - 1);
+	f.common = share_hek(common, sizeof(common) - 1, common_hash);
+	table_baseline++;
 	for (int i = 0; i < workers; i++) {
-		f.pools[i].interp = aTHX;
+		Perl_wump_allocator_init(aTHX_ &f.pools[i]);
 		f.roots[i] = newSViv(i);
 	}
 	SV *root = PL_sv_root, *arenas = PL_sv_arenaroot;
 	void *bodies = PL_body_arenas;
 	void *body_roots[PERL_ARENA_ROOTS_SIZE];
 	Copy(PL_body_roots, body_roots, PERL_ARENA_ROOTS_SIZE, void *);
+#ifdef PERL_HASH_RANDOMIZE_KEYS
+	UV root_random = PL_hash_rand_bits;
+#endif
 	CHECK(pthread_barrier_init(&f.barrier, NULL, workers + 1) == 0);
 	pthread_t threads[workers];
 	thread_arg args[workers];
@@ -167,12 +239,24 @@ int main(int argc, char **argv, char **env) {
 		args[i] = (thread_arg){&f, i};
 		CHECK(pthread_create(&threads[i], NULL, exercise, &args[i]) == 0);
 	}
+	rendezvous(&f);
+	CHECK(HvTOTALKEYS(PL_strtab) == table_baseline + workers * key_batch + 1);
+	CHECK(HvMAX(PL_strtab) > old_max);
+	for (int i = 1; i < workers; i++) CHECK(f.canonical[i] == f.canonical[0]);
+	rendezvous(&f);
+	rendezvous(&f);
+	CHECK(HvTOTALKEYS(PL_strtab) == table_baseline);
+	rendezvous(&f);
 	for (int round = 0; round < rounds; round++) {
 		rendezvous(&f);
 		CHECK(Perl_wump_allocator_current(aTHX) == NULL);
 		CHECK(PL_sv_root == root && PL_sv_arenaroot == arenas && PL_body_arenas == bodies);
 		CHECK(PL_sv_count == baseline + workers);
 		CHECK(memEQ(PL_body_roots, body_roots, sizeof(body_roots)));
+		CHECK(!PL_nomemok);
+#ifdef PERL_HASH_RANDOMIZE_KEYS
+		CHECK(PL_hash_rand_bits == root_random);
+#endif
 		SV *live[workers * batch];
 		for (int n = 0; n < workers; n++) {
 			for (int i = 0; i < batch; i++) {
@@ -187,6 +271,8 @@ int main(int argc, char **argv, char **env) {
 	}
 	for (int i = 0; i < workers; i++) CHECK(pthread_join(threads[i], NULL) == 0);
 	CHECK(pthread_barrier_destroy(&f.barrier) == 0);
+	CHECK(HvTOTALKEYS(PL_strtab) == table_baseline);
+	unshare_hek(f.common);
 	/* A quiescent executor cache can move to another native thread. */
 	Perl_wump_allocator_activate(aTHX_ &f.pools[0]);
 	SV *moved = newSViv(42);
@@ -220,6 +306,6 @@ int main(int argc, char **argv, char **env) {
 	CHECK(perl_destruct(f.other) == 0);
 	perl_free(f.other);
 	PERL_SYS_TERM();
-	puts("ok - 8 executors isolate allocation, exchange 131072 values, migrate caches, and merge surviving values for full teardown");
+	puts("ok - 8 executors share and retire 8192 interned keys, exchange 131072 values including hashes, migrate caches, and finish full teardown");
 	return 0;
 }

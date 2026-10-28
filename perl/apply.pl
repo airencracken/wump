@@ -38,6 +38,7 @@ while ($intrp =~ /PERLVAR(?:I|IC)?\(\s*I,\s*(\w+),\s*([^,\)]+)(?:,[^\)]*)?\)/g) 
 	$types{$name} = $type;
 }
 my $header = "/* Generated from Perl's intrpvar.h by perl/apply.pl. */\n";
+$header .= "START_EXTERN_C\n";
 $header .= "struct wump_cv_slot;\nstruct wump_regex_slot;\nstruct wump_local;\nstruct wump_element;\nstruct wump_element_iter;\nstruct wump_perl_task {\n";
 for my $name (@vars) {
 	exists $types{$name} or die "Missing upstream interpreter field: $name\n";
@@ -120,19 +121,30 @@ struct wump_perl_allocator {
 	PerlInterpreter *interp;
 	SV *Isv_root, *Isv_arenaroot;
 	IV Isv_count;
+	bool Inomemok;
+#ifdef PERL_HASH_RANDOMIZE_KEYS
+	UV Ihash_rand_bits;
+#endif
 	void *Ibody_arenas;
 	void *Ibody_roots[PERL_ARENA_ROOTS_SIZE];
 };
 struct wump_perl_allocator *Perl_wump_allocator_current(pTHX);
+void Perl_wump_allocator_init(pTHX_ struct wump_perl_allocator *pool);
 void Perl_wump_allocator_activate(pTHX_ struct wump_perl_allocator *pool);
 void Perl_wump_allocator_merge(pTHX_ struct wump_perl_allocator *pool);
 SV **Perl_wump_allocator_sv_root(pTHX);
 SV **Perl_wump_allocator_sv_arenaroot(pTHX);
 IV *Perl_wump_allocator_sv_count(pTHX);
+bool *Perl_wump_allocator_nomemok(pTHX);
+#ifdef PERL_HASH_RANDOMIZE_KEYS
+UV *Perl_wump_allocator_hash_rand_bits(pTHX);
+#endif
+HEK *Perl_wump_hek_retain(const HEK *hek);
 void **Perl_wump_allocator_body_arenas(pTHX);
 void *(*Perl_wump_allocator_body_roots(pTHX))[PERL_ARENA_ROOTS_SIZE];
 void Perl_wump_regex_roots(pTHX_ REGEXP *rx,
 	void (*visit)(pTHX_ SV *, void *), void *arg);
+END_EXTERN_C
 C
 write_file("$source/wump_task_types.h", $header);
 if (index(read_file("$source/perl.h"), '#include "wump_task_types.h"') < 0) {
@@ -143,6 +155,8 @@ edit('perl.h', "    struct wump_perl_task *Iwump_task;",
 	"    struct wump_perl_task *Iwump_task;\n    bool Iwump_publishing;");
 edit('perl.h', "    bool Iwump_publishing;",
 	"    bool Iwump_publishing;\n    bool Iwump_enabled;");
+edit('perl.h', "    bool Iwump_enabled;",
+	"    bool Iwump_enabled;\n    perl_mutex Iwump_keys_mutex;\n    bool Iwump_keys_ready;");
 # Keep the former task slot reserved for private-layout compatibility;
 # execution selects its task through TLS, never through that shared slot.
 my $vars = "\n/* Wump execution state: root execution retains the upstream fields. */\n";
@@ -150,9 +164,10 @@ $vars .= "#if defined(MULTIPLICITY)\n#define PL_wump_task Perl_wump_task_current
 for my $name (@vars) {
 	$vars .= "#undef PL_$name\n#define PL_$name (*(PL_wump_task && !PL_wump_task->main ? &PL_wump_task->I$name : &aTHX->I$name))\n";
 }
-for my $name (qw(sv_root sv_arenaroot sv_count body_arenas body_roots)) {
+for my $name (qw(sv_root sv_arenaroot sv_count body_arenas body_roots nomemok)) {
 	$vars .= "#undef PL_$name\n#define PL_$name (*Perl_wump_allocator_$name(aTHX))\n";
 }
+$vars .= "#ifdef PERL_HASH_RANDOMIZE_KEYS\n#undef PL_hash_rand_bits\n#define PL_hash_rand_bits (*Perl_wump_allocator_hash_rand_bits(aTHX))\n#endif\n";
 $vars .= "#endif\n";
 my $magic_cache_macros = <<'C';
 #undef PL_rs
@@ -299,6 +314,8 @@ require "$FindBin::Bin/hooks.pl";
 apply_hooks($source);
 require "$FindBin::Bin/refcount.pl";
 apply_refcount($source);
+require "$FindBin::Bin/keys.pl";
+apply_keys($source);
 edit('sv.c', "    struct arena_desc set[ARENAS_PER_SET];\n};",
 	"    struct arena_desc set[ARENAS_PER_SET];\n};\n#include \"wump_alloc.c\"");
 # Debug builds must not race on the arena table's one-time sanity check.
@@ -317,6 +334,7 @@ edit('pp.c', '    SvLOCK(sv);', '    if (PL_wump_task) Perl_wump_lock(aTHX_ sv);
 for my $pair (
 	["$FindBin::Bin/core/wump_core.c", "$source/wump_core.c"],
 	["$FindBin::Bin/core/wump_alloc.c", "$source/wump_alloc.c"],
+	["$FindBin::Bin/core/wump_keys.c", "$source/wump_keys.c"],
 	["$FindBin::Bin/core/wump_local.c", "$source/wump_local.c"],
 	["$FindBin::Bin/core/wump_elements.c", "$source/wump_elements.c"],
 	["$FindBin::Bin/core/wump_magic.c", "$source/wump_magic.c"],
