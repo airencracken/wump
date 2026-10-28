@@ -29,9 +29,6 @@ static int wump_publish_free(pTHX_ SV *value, MAGIC *mg) {
 }
 static const MGVTBL wump_publish_vtbl = {
 	.svt_set = wump_publish_set,
-	/* Keep read magic active when an existing vtable only supplies length
-	 * (notably @- and @+). mg_magical otherwise drops SVs_RMG on adding SET. */
-	.svt_clear = wump_publish_local,
 	.svt_copy = wump_publish_copy,
 	.svt_local = wump_publish_local,
 	.svt_free = wump_publish_free,

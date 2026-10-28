@@ -53,6 +53,8 @@ C
 	edit('hv.c', '    if (!SvMAGICAL((const SV *)ohv)) {',
 		'    if (!SvMAGICAL((const SV *)ohv) || Perl_wump_hv_readable(aTHX_ ohv)) {');
 	edit('hv.c', '    u = HvUSEDKEYS(hv);', '    u = Perl_wump_hv_used(hv);');
+	edit('hv.c', '        Size_t nkeys = HvUSEDKEYS(hv);',
+		'        Size_t nkeys = Perl_wump_hv_used(hv);');
 	edit('hv.c', "Perl_newHVhv(pTHX_ HV *ohv)\n{",
 		"Perl_newHVhv(pTHX_ HV *ohv)\n{\n    HV *wump_copy = Perl_wump_hv_clone(aTHX_ ohv);\n    if (wump_copy) return wump_copy;");
 	for my $file ('pp.c', 'pp_hot.c') {

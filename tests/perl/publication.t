@@ -4,6 +4,7 @@ use warnings;
 use Test::More;
 use Scalar::Util qw(refaddr weaken);
 use XS::APItest ();
+use Hash::Util::FieldHash 'fieldhash';
 use Wump;
 use lib 'tests/perl/lib';
 use WumpTest;
@@ -227,5 +228,25 @@ check_program(q{
 	act { my $owned = bless {}, 'PublicationTeardown'; $park->recv };
 	yield;
 }, 0, qr/\Apublished\n\z/, 'abandoned-task destructors publish values saved in shared storage');
+
+sub field_registry ($object, $name, $value) {
+	state %fields;
+	state $setup = do { fieldhash %fields; 1 };
+	$fields{$object}{$name} = $value;
+	return \%fields;
+}
+my $registry;
+with_tasks {
+	my $object = bless {}, 'FieldHashPublication';
+	$registry = field_registry($object, 'first', 41);
+	field_registry($object, 'second', 42);
+	is_deeply($registry->{$object}, {first => 41, second => 42},
+		'published state fieldhash retains reference keys and nested lvalues');
+	ok(exists $registry->{$object}, 'published fieldhash supports exists');
+	is(scalar(keys %$registry), 1, 'fieldhash has one live object key');
+	delete $registry->{$object}{first};
+	is($registry->{$object}{second}, 42, 'nested delete preserves other fields');
+};
+is(scalar(keys %$registry), 0, 'fieldhash removes its entry when the key object dies');
 
 done_testing;

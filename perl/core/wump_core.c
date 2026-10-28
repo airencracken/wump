@@ -423,6 +423,7 @@ static struct wump_perl_task *wump_perl_task_new(pTHX_ SV *callback) {
 	task->Icurcop = PL_curcop;
 	task->Icurstash = PL_curstash;
 	task->Idefoutgv = PL_defoutgv;
+	task->Imaxsysfd = PL_maxsysfd;
 	I32 mark = PL_savestack_ix;
 	SAVEDESTRUCTOR_X(wump_perl_new_abort, task);
 	wump_local_snapshot(aTHX_ task);

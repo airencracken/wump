@@ -256,6 +256,90 @@ with_tasks {
 like($tied_error, qr/magic variable localization/, 'spawn rejects magic inside an inherited binding');
 is($fetches, 0, 'snapshot validation does not run tied FETCH');
 
+check_program(q{
+	use Wump;
+	'outer 11' =~ /(outer) (11)/;
+	my $done = chan;
+	{
+		local ($1, $2);
+		die "local lost current capture\n" unless $1 eq 'outer' && $2 eq '11';
+		act { 'child 22' =~ /(child) (22)/; yield; $done->send("$1 $2") };
+		'inner 33' =~ /(inner) (33)/;
+		die "other act overwrote local captures\n" unless $done->recv eq 'child 22' && $1 eq 'inner' && $2 eq '33';
+		eval { local $1; 'exception' =~ /(exception)/; die "unwind\n" };
+		die "unwind lost captures\n" unless $1 eq 'inner';
+	}
+	die "scope lost outer captures\n" unless $1 eq 'outer' && $2 eq '11';
+	print "explicit capture localization restored\n";
+}, 0, qr/\Aexplicit capture localization restored\n\z/,
+	'explicit numbered capture localization survives task switches and exception unwinding');
+
+check_program(q{
+	use Wump;
+	my $done = chan;
+	for my $count (2, 4) {
+		act {
+			my $text = "line\n" x $count;
+			open my $fh, '<', \$text or die $!;
+			scalar <$fh> for 1..$count;
+			yield;
+			die "other act changed last-read handle\n" unless $. == $count;
+			{
+				local $.;
+				my $inner = "inner\n";
+				open my $other, '<', \$inner or die $!;
+				scalar <$other>;
+				yield;
+				die "localized last-read handle lost\n" unless $. == 1;
+			}
+			die "last-read handle not restored\n" unless $. == $count;
+			$done->send(1);
+		};
+	}
+	$done->recv for 1..2;
+	print "last-read handles isolated and restored\n";
+}, 0, qr/\Alast-read handles isolated and restored\n\z/,
+	'line counter localization restores each act last-read handle after parking');
+
+check_program(q{
+	use Wump;
+	use Fcntl qw(F_GETFD FD_CLOEXEC);
+	my $original = $^F;
+	my $pocket_error;
+	eval { pocket $^F = 99 };
+	$pocket_error = $@;
+	die "unsupported pocket boundary was accepted\n" unless $pocket_error =~ /pocket descriptor boundary/ && $^F == $original;
+	my $ready = chan;
+	my $release = chan;
+	my $finished = chan;
+	{
+		local $^F = 1023;
+		act {
+			die "child did not inherit descriptor boundary\n" unless $^F == 1023;
+			{
+				local $^F = -1;
+				$ready->send(1);
+				$release->recv;
+				pipe my $r, my $w or die $!;
+				die "child boundary not used to open handles\n" unless fcntl($r, F_GETFD, 0) & FD_CLOEXEC;
+			}
+			die "child boundary not restored\n" unless $^F == 1023;
+			$finished->send(1);
+		};
+		$ready->recv;
+		die "child boundary leaked into parent\n" unless $^F == 1023;
+		pipe my $r, my $w or die $!;
+		die "parent boundary not used to open handles\n" if fcntl($r, F_GETFD, 0) & FD_CLOEXEC;
+		$release->send(1);
+		$finished->recv;
+		eval { local $^F = 23; die "unwind\n" };
+		die "exception lost boundary\n" unless $^F == 1023;
+	}
+	die "parent boundary not restored\n" unless $^F == $original;
+	print "descriptor boundary isolated and restored\n";
+}, 0, qr/\Adescriptor boundary isolated and restored\n\z/,
+	'descriptor inheritance boundary is task local across spawn, parking, opening, and unwind');
+
 with_tasks { local $mode = 'healthy'; yield; push @seen, $mode };
 is($seen[-1], 'healthy', 'later scopes remain usable after all failure paths');
 {

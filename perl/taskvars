@@ -53,3 +53,5 @@ in_diehook
 in_warnhook
 statusvalue
 statusvalue_posix
+maxsysfd
+last_in_gv

@@ -115,13 +115,14 @@ void Perl_wump_save_defsv(pTHX) {
 	SAVEDESTRUCTOR_X(wump_local_pop, slot);
 }
 
-static char wump_error_magic(pTHX_ SV *value) {
+static char wump_native_magic(pTHX_ SV *value) {
 	char found = 0;
 	if (!value || !SvMAGICAL(value)) return 0;
 	for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic) {
 		if (mg->mg_type == PERL_MAGIC_sv && mg->mg_virtual == &PL_vtbl_sv
 			&& mg->mg_len == 1 && mg->mg_ptr
-			&& (mg->mg_ptr[0] == '!' || mg->mg_ptr[0] == '\005' || mg->mg_ptr[0] == '?'))
+			&& (mg->mg_ptr[0] == '!' || mg->mg_ptr[0] == '\005'
+				|| mg->mg_ptr[0] == '?' || mg->mg_ptr[0] == '\006' || mg->mg_ptr[0] == '.'))
 			found = mg->mg_ptr[0];
 		else if (mg->mg_type != PERL_MAGIC_backref && mg->mg_type != PERL_MAGIC_taint
 			&& !Perl_wump_publish_magic(mg)) return 0;
@@ -136,8 +137,20 @@ static void wump_errno_restore(pTHX_ void *arg) {
 
 SV *Perl_wump_localize(pTHX_ GV *gv, char kind) {
 	SV *old = kind == 's' ? GvSV(gv) : kind == 'a' ? (SV *)GvAV(gv) : (SV *)GvHV(gv);
-	char error_magic = kind == 's' ? wump_error_magic(aTHX_ old) : 0;
-	if (error_magic) {
+	/* Numbered captures read the task's current match. Like the regex
+	 * engine's internal save_re_context, explicit local needs a fresh
+	 * magical cell without treating it as an inheritable ordinary value. */
+	MAGIC *capture = kind == 's' && old && SvMAGICAL(old)
+		? mg_find(old, PERL_MAGIC_sv) : NULL;
+	if (capture && capture->mg_virtual == &PL_vtbl_sv
+		&& !capture->mg_ptr && capture->mg_len > 0) {
+		Perl_wump_save_capture(aTHX_ gv);
+		return GvSV(gv);
+	}
+	char native_magic = kind == 's' ? wump_native_magic(aTHX_ old) : 0;
+	if (native_magic) {
+		if (native_magic == '\006' && PL_op && PL_op->op_wump_pocket)
+			croak("Wump: pocket descriptor boundary is not supported yet; use local");
 		/* Linux $! and $^E read native errno, which the scheduler already
 		 * preserves per act. Restore its value, never a native TLS address. */
 		int saved = errno;
@@ -145,10 +158,16 @@ SV *Perl_wump_localize(pTHX_ GV *gv, char kind) {
 		mg_localize(old, value, FALSE);
 		wump_local *slot = wump_local_add(aTHX_ PL_wump_task, gv, 's', value);
 		slot->pocket = TRUE;
-		if (error_magic == '?') {
+		if (native_magic == '?') {
 			SAVEI32(PL_statusvalue);
 			SAVEI32(PL_statusvalue_posix);
-		} else SAVEDESTRUCTOR_X(wump_errno_restore, INT2PTR(void *, (IV)saved));
+		} else if (native_magic == '\006') {
+			/* Socket libraries localize $^F while opening inheritable handles.
+			 * maxsysfd is task state; save its value in this act's scope. */
+			SAVEI32(PL_maxsysfd);
+		} else if (native_magic != '.') {
+			SAVEDESTRUCTOR_X(wump_errno_restore, INT2PTR(void *, (IV)saved));
+		}
 		SAVEDESTRUCTOR_X(wump_local_pop, slot);
 		int localizing = PL_localizing;
 		PL_localizing = 1;

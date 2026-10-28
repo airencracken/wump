@@ -362,4 +362,21 @@ delete $hash{name};
 $hash{new_root} = 1;
 is_deeply(\@array, ['root splice', 'new shared', 'root push'], 'retired overlay markers preserve ordinary root array operations');
 is_deeply(\%hash, {shared => 'new shared', new_root => 1}, 'retired overlay markers preserve ordinary root hash operations');
+with_tasks {
+	for my $base ({}, {base => 'outer', replace => 'old'}) {
+		my $callback = sub { 'callback result' };
+		{
+			local @{$base}{qw(cb replace extra)} = ($callback, 'inner', 23);
+			my %flat = %$base;
+			my $expected = {cb => $callback, replace => 'inner', extra => 23};
+			$expected->{base} = 'outer' if exists $base->{base};
+			is_deeply(\%flat, $expected,
+				'hash flattening counts localized elements, including an empty base');
+			is($flat{cb}->(), 'callback result', 'flattened localized callback retains identity');
+			is(scalar(keys %flat), exists($base->{base}) ? 4 : 3, 'flattening keeps every merged key');
+		}
+		ok(!exists $base->{cb}, 'flattening leaves overlay scope restoration intact');
+	}
+};
+
 done_testing;
