@@ -34,6 +34,10 @@ static bool wump_element_has(pTHX_ const SV *origin) {
 	return FALSE;
 }
 
+bool Perl_wump_overlay_active(pTHX_ const SV *value) {
+	return wump_element_has(aTHX_ value);
+}
+
 static wump_element *wump_element_av(pTHX_ AV *av, SSize_t index, bool inherit) {
 	if (!PL_wump_task) return NULL;
 	for (wump_element *slot = PL_wump_task->elements; slot; slot = slot->next) {

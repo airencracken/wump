@@ -123,6 +123,8 @@ make perl-allocator-test        # native allocation and cross-executor final fre
 make perl-allocator-tsan        # instrument the entire private Perl and fixture
 make perl-reads-test            # plain shared-scalar conversions and copies
 make perl-reads-tsan            # eight readers against an instrumented private Perl
+make perl-memory-test           # borrowed storage, concurrent publication/writes, migration
+make perl-memory-tsan           # whole-core reclamation stress and deliberate-race control
 ```
 
 For an existing release archive, use
@@ -457,11 +459,39 @@ check unchanged source flags, storage, cursor and randomization state. Perl
 checks interleaving, reset contexts, deletions, aliases, weak lifetimes, tied
 hooks and abandoned iterators.
 
-Perl execution still uses one slot. Remaining shared-value read paths, deferred
-reclamation, publication mutation, compiler and method caches, and the remaining
-interpreter/XS state split must precede multi-core Perl execution.
-Cached string pointers still borrow source storage, so this stage does not
-support concurrent writers or remove the need for deferred reclamation.
+Ordinary cached string reads now pin the published scalar's current storage
+until the caller's temporary scope ends. Audited scalar mutation APIs detach
+the body and PV before writing; old storage remains alive for existing
+borrowers. Native array-slot and hash-entry borrowers use the same protocol.
+Array storage and hash buckets/HE chains detach without changing live value
+identity. Removed elements remain owned by the retired storage until reclamation.
+Pins belong to task stacks and survive yields, parking and executor migration.
+
+Graph publication is serialized by a per-interpreter metadata mutex, with
+thread-local recursion suppression. Publication completes every reachable
+descendant before another publisher can return. Mutation claims are atomic,
+owned by acts, nest within one act, and unwind after exceptions or abandonment.
+Conflicting writers, publishers and readers using the borrow protocol fail
+before accessing guarded storage. No OS mutex remains held while a mutation
+invokes Perl callbacks.
+
+`make perl-memory-test` exercises eight native executors, synchronized writes,
+cached buffers, array slots, deleted hash entries, COW aliases and migration.
+Allocation-failure tests verify that failed retirement preparation leaves live
+scalar/array/hash storage unchanged and releases the writer claim. Retirement
+uses a conservative interpreter-wide pin count: one long-lived borrower can
+delay collection of unrelated retired storage. Cloning requires quiescent pins
+and mutation claims; clones rebuild their own metadata registry.
+
+Perl execution still uses one slot. These guards cover the patched C APIs and
+ordinary storage, rather than every inline opcode or direct XS field access.
+Raw `SvPVX`/`AvARRAY`/`HvARRAY` access needs an explicit borrow or external
+lifetime management. Magical containers, mutable-buffer escapes, element-overlay
+base writes, regex/compiler/method caches, and the remaining interpreter/XS
+state split still need audits before multi-core Perl execution.
+Numeric cache macros and conversion-snapshot capture still require synchronized
+writes. Read-only COW diagnostics are rejected when enabling Wump because their
+page protection changes cannot share the concurrent byte-counter protocol.
 Channel messages copy the outer scalar and retain reference
 identity; pending messages own their references until receive or scheduler cleanup.
 

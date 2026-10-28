@@ -40,6 +40,7 @@ while ($intrp =~ /PERLVAR(?:I|IC)?\(\s*I,\s*(\w+),\s*([^,\)]+)(?:,[^\)]*)?\)/g) 
 my $header = "/* Generated from Perl's intrpvar.h by perl/apply.pl. */\n";
 $header .= "START_EXTERN_C\n";
 $header .= "struct wump_read_frame;\n";
+$header .= "struct wump_memory;\nstruct wump_mutation;\nstruct wump_retired;\n";
 $header .= "struct wump_cv_slot;\nstruct wump_regex_slot;\nstruct wump_local;\nstruct wump_element;\nstruct wump_element_iter;\nstruct wump_perl_task {\n";
 for my $name (@vars) {
 	exists $types{$name} or die "Missing upstream interpreter field: $name\n";
@@ -113,6 +114,34 @@ void Perl_wump_lock(pTHX_ SV *value);
 void Perl_wump_save_capture(pTHX_ GV *gv);
 void Perl_wump_hook_store(pTHX_ SV *value, char kind);
 bool Perl_wump_publish_magic(const MAGIC *mg);
+void Perl_wump_memory_init(pTHX);
+void Perl_wump_memory_destroy(pTHX);
+void Perl_wump_memory_lock(pTHX);
+void Perl_wump_memory_unlock(pTHX);
+void Perl_wump_memory_mark(pTHX_ SV *value, unsigned state);
+int Perl_wump_memory_shared(pTHX_ const SV *value);
+void Perl_wump_memory_check(pTHX_ const SV *value);
+void Perl_wump_memory_forget(pTHX_ SV *value);
+void Perl_wump_memory_collect(pTHX);
+void Perl_wump_memory_stats(pTHX_ size_t *pins, size_t *retired, size_t *nodes);
+void Perl_wump_memory_clone(pTHX);
+void Perl_wump_memory_clone_check(pTHX);
+struct wump_retired *Perl_wump_retire_prepare(pTHX_ SV *value);
+void Perl_wump_retire_commit(pTHX_ struct wump_retired *retired);
+struct wump_mutation *Perl_wump_mutation_begin(pTHX_ SV *value);
+void Perl_wump_mutation_end(pTHX_ struct wump_mutation *guard);
+const char *Perl_wump_mutation_pointer(pTHX_ struct wump_mutation *guard, const char *pointer);
+void Perl_wump_mutation_keep(pTHX_ SV *value, SV *retained);
+void Perl_wump_storage_changed(pTHX_ SV *value);
+bool Perl_wump_overlay_active(pTHX_ const SV *value);
+bool Perl_wump_publish_active(pTHX);
+char *Perl_wump_pv(pTHX_ SV *value, STRLEN *length, U32 flags);
+SV **Perl_wump_borrow_av(pTHX_ AV *value, SSize_t index);
+HE *Perl_wump_borrow_hv(pTHX_ HV *value, const char *key, STRLEN length, U32 hash);
+void Perl_wump_sv_detach(pTHX_ SV *value);
+bool Perl_wump_cow_retain(pTHX_ SV *value);
+void Perl_wump_av_detach(pTHX_ AV *value);
+void Perl_wump_hv_detach(pTHX_ HV *value);
 bool Perl_wump_is_shared(pTHX_ const SV *value);
 bool Perl_wump_readable(pTHX_ const SV *value);
 SV *Perl_wump_scalar_snapshot(pTHX_ const SV *value);
@@ -122,6 +151,7 @@ UV Perl_wump_read_uv(pTHX_ SV *value, I32 flags);
 NV Perl_wump_read_nv(pTHX_ SV *value, I32 flags);
 bool Perl_wump_read_bool(pTHX_ SV *value, I32 flags);
 char *Perl_wump_read_pv(pTHX_ SV *value, STRLEN *length, U32 flags, int encoding);
+char *Perl_wump_read_snapshot_pv(pTHX_ SV *value, SV *copy, STRLEN *length, U32 flags, int encoding);
 void Perl_wump_read_copy(pTHX_ SV *target, SV *value, I32 flags);
 void Perl_wump_publish(pTHX_ SV *value);
 void Perl_wump_publish_store(pTHX_ SV *owner, SV *value);
@@ -174,6 +204,8 @@ edit('perl.h', "    bool Iwump_enabled;",
 	"    bool Iwump_enabled;\n    perl_mutex Iwump_keys_mutex;\n    bool Iwump_keys_ready;");
 edit('perl.h', "    bool Iwump_keys_ready;",
 	"    bool Iwump_keys_ready;\n    struct wump_read_frame *Iwump_read_frame;");
+edit('perl.h', "    struct wump_read_frame *Iwump_read_frame;",
+	"    struct wump_read_frame *Iwump_read_frame;\n    struct wump_memory *Iwump_memory;");
 # Keep the former task slot reserved for private-layout compatibility;
 # execution selects its task through TLS, never through that shared slot.
 my $vars = "\n/* Wump execution state: root execution retains the upstream fields. */\n";
@@ -343,6 +375,8 @@ edit('sv.c', "    static bool done_sanity_check;\n\n    if (!done_sanity_check) 
 edit('sv.c', '        done_sanity_check = TRUE;', '        /* Claimed atomically above. */');
 require "$FindBin::Bin/publication.pl";
 apply_publication($source);
+require "$FindBin::Bin/memory.pl";
+apply_memory($source);
 edit('regcomp.c', '#include "regcomp_internal.h"',
 	"#include \"regcomp_internal.h\"\n#include \"wump_regex_roots.c\"");
 edit('class.c', '    fields[fieldix] = val;',
@@ -354,6 +388,10 @@ for my $pair (
 	["$FindBin::Bin/core/wump_core.c", "$source/wump_core.c"],
 	["$FindBin::Bin/core/wump_alloc.c", "$source/wump_alloc.c"],
 	["$FindBin::Bin/core/wump_reads.c", "$source/wump_reads.c"],
+	["$FindBin::Bin/core/wump_memory.c", "$source/wump_memory.c"],
+	["$FindBin::Bin/core/wump_storage_sv.c", "$source/wump_storage_sv.c"],
+	["$FindBin::Bin/core/wump_storage_av.c", "$source/wump_storage_av.c"],
+	["$FindBin::Bin/core/wump_storage_hv.c", "$source/wump_storage_hv.c"],
 	["$FindBin::Bin/core/wump_keys.c", "$source/wump_keys.c"],
 	["$FindBin::Bin/core/wump_local.c", "$source/wump_local.c"],
 	["$FindBin::Bin/core/wump_elements.c", "$source/wump_elements.c"],

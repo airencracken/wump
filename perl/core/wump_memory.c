@@ -1,0 +1,508 @@
+/* One conservative reclamation domain per interpreter. Only short metadata
+ * operations hold this mutex. A logical mutation claim belongs to an act,
+ * survives parking/migration, and never holds an OS mutex across a callback. */
+#include <stdatomic.h>
+#include <pthread.h>
+
+enum { WUMP_MEMORY_BUCKETS = 4096, WUMP_WRITER = 0x80000000U };
+typedef struct wump_shared {
+	SV *value;
+	struct wump_mutation *guard;
+	unsigned state, borrows, current_borrows, depth;
+	UV generation;
+	_Atomic unsigned access;
+	const void *writer;
+	struct wump_shared *next;
+} wump_shared;
+
+struct wump_retired {
+	SV *value;
+	struct wump_retired *next;
+};
+
+struct wump_memory {
+	pthread_mutex_t mutex;
+	wump_shared *buckets[WUMP_MEMORY_BUCKETS];
+	struct wump_retired *retired;
+	size_t nodes, pins, pending;
+};
+
+struct wump_mutation {
+	wump_shared *node;
+	SV *value;
+	SV *retained;
+	const void *actor;
+	I32 mark, top;
+	bool active;
+};
+
+typedef struct wump_borrow {
+	wump_shared *node;
+	SV *owner;
+	UV generation;
+	bool active, reading;
+} wump_borrow;
+
+static _Thread_local unsigned char wump_root_actor;
+static const void *wump_memory_actor(pTHX) {
+	struct wump_perl_task *task = PL_wump_task;
+	return task ? (const void *)task : (const void *)&wump_root_actor;
+}
+
+static size_t wump_memory_bucket(const SV *value) {
+	return ((PTR2UV(value) >> 4) * (UV)2654435761U) & (WUMP_MEMORY_BUCKETS - 1);
+}
+
+static wump_shared *wump_memory_find(struct wump_memory *memory, const SV *value) {
+	for (wump_shared *node = memory->buckets[wump_memory_bucket(value)]; node; node = node->next)
+		if (node->value == value) return node;
+	return NULL;
+}
+
+void Perl_wump_memory_lock(pTHX) {
+	if (pthread_mutex_lock(&aTHX->Iwump_memory->mutex)) abort();
+}
+
+void Perl_wump_memory_unlock(pTHX) {
+	if (pthread_mutex_unlock(&aTHX->Iwump_memory->mutex)) abort();
+}
+
+void Perl_wump_memory_init(pTHX) {
+	if (aTHX->Iwump_memory) return;
+	struct wump_memory *memory = calloc(1, sizeof(*memory));
+	if (!memory) croak("Wump: cannot allocate reclamation domain");
+	pthread_mutexattr_t attr;
+	int result = pthread_mutexattr_init(&attr);
+	if (!result) {
+		result = pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+		if (!result) result = pthread_mutex_init(&memory->mutex, &attr);
+		pthread_mutexattr_destroy(&attr);
+	}
+	if (result) { free(memory); croak("Wump: cannot initialize reclamation domain"); }
+	aTHX->Iwump_memory = memory;
+}
+
+void Perl_wump_memory_mark(pTHX_ SV *value, unsigned state) {
+	struct wump_memory *memory = aTHX->Iwump_memory;
+	Perl_wump_memory_lock(aTHX);
+	wump_shared *node = wump_memory_find(memory, value);
+	if (!node && !state) {
+		Perl_wump_memory_unlock(aTHX);
+		return;
+	}
+	if (!node) {
+		node = calloc(1, sizeof(*node));
+		if (!node) {
+			Perl_wump_memory_unlock(aTHX);
+			croak("Wump: cannot allocate publication metadata");
+		}
+		node->value = value;
+		atomic_init(&node->access, 0);
+		size_t bucket = wump_memory_bucket(value);
+		node->next = memory->buckets[bucket];
+		memory->buckets[bucket] = node;
+		memory->nodes++;
+	}
+	node->state = state;
+	Perl_wump_memory_unlock(aTHX);
+}
+
+int Perl_wump_memory_shared(pTHX_ const SV *value) {
+	if (!aTHX->Iwump_memory) return -1;
+	Perl_wump_memory_lock(aTHX);
+	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
+	int result = node && node->state ? node->state == 2 : -1;
+	Perl_wump_memory_unlock(aTHX);
+	return result;
+}
+
+void Perl_wump_memory_check(pTHX_ const SV *value) {
+	if (!aTHX->Iwump_memory) return;
+	Perl_wump_memory_lock(aTHX);
+	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
+	bool busy = node && (atomic_load_explicit(&node->access, memory_order_acquire) & WUMP_WRITER)
+		&& node->writer != wump_memory_actor(aTHX);
+	Perl_wump_memory_unlock(aTHX);
+	if (busy) croak("Wump: publication overlaps mutation of a shared value");
+}
+
+void Perl_wump_memory_forget(pTHX_ SV *value) {
+	struct wump_memory *memory = aTHX->Iwump_memory;
+	if (!memory) return;
+	Perl_wump_memory_lock(aTHX);
+	wump_shared **link = &memory->buckets[wump_memory_bucket(value)];
+	while (*link && (*link)->value != value) link = &(*link)->next;
+	if (*link) {
+		wump_shared *node = *link;
+		assert(!node->borrows && !atomic_load_explicit(&node->access, memory_order_relaxed));
+		*link = node->next;
+		memory->nodes--;
+		free(node);
+	}
+	Perl_wump_memory_unlock(aTHX);
+}
+
+static void wump_memory_requeue(pTHX_ void *arg) {
+	struct wump_retired **remaining = arg;
+	Perl_wump_memory_lock(aTHX);
+	while (*remaining) {
+		struct wump_retired *record = *remaining;
+		*remaining = record->next;
+		record->next = aTHX->Iwump_memory->retired;
+		aTHX->Iwump_memory->retired = record;
+		aTHX->Iwump_memory->pending++;
+	}
+	Perl_wump_memory_unlock(aTHX);
+}
+
+static void wump_memory_drain(pTHX_ struct wump_retired *retired) {
+	if (!retired) return;
+	ENTER;
+	SAVEDESTRUCTOR_X(wump_memory_requeue, &retired);
+	while (retired) {
+		struct wump_retired *record = retired;
+		SV *value = record->value;
+		retired = record->next;
+		free(record);
+		/* Destructors and key releases run with no metadata mutex held. */
+		SvREFCNT_dec(value);
+	}
+	LEAVE;
+}
+
+void Perl_wump_memory_collect(pTHX) {
+	struct wump_memory *memory = aTHX->Iwump_memory;
+	if (!memory) return;
+	Perl_wump_memory_lock(aTHX);
+	struct wump_retired *retired = NULL;
+	if (!memory->pins) {
+		retired = memory->retired;
+		memory->retired = NULL;
+		memory->pending = 0;
+	}
+	Perl_wump_memory_unlock(aTHX);
+	wump_memory_drain(aTHX_ retired);
+}
+
+struct wump_retired *Perl_wump_retire_prepare(pTHX_ SV *value) {
+	struct wump_retired *retired = malloc(sizeof(*retired));
+	if (!retired) croak("Wump: cannot allocate retirement record");
+	retired->value = SvREFCNT_inc(value);
+	retired->next = NULL;
+	return retired;
+}
+
+void Perl_wump_retire_commit(pTHX_ struct wump_retired *retired) {
+	struct wump_memory *memory = aTHX->Iwump_memory;
+	Perl_wump_memory_lock(aTHX);
+	bool defer = memory->pins != 0;
+	if (defer) {
+		retired->next = memory->retired;
+		memory->retired = retired;
+		memory->pending++;
+	}
+	Perl_wump_memory_unlock(aTHX);
+	if (!defer) wump_memory_drain(aTHX_ retired);
+}
+
+void Perl_wump_memory_stats(pTHX_ size_t *pins, size_t *retired, size_t *nodes) {
+	Perl_wump_memory_lock(aTHX);
+	*pins = aTHX->Iwump_memory->pins;
+	*retired = aTHX->Iwump_memory->pending;
+	*nodes = aTHX->Iwump_memory->nodes;
+	Perl_wump_memory_unlock(aTHX);
+}
+
+void Perl_wump_memory_destroy(pTHX) {
+	struct wump_memory *memory = aTHX->Iwump_memory;
+	if (!memory) return;
+	Perl_wump_memory_collect(aTHX);
+	assert(!memory->pins && !memory->retired);
+	for (size_t i = 0; i < WUMP_MEMORY_BUCKETS; i++) {
+		wump_shared *node = memory->buckets[i];
+		while (node) {
+			wump_shared *next = node->next;
+			assert(!node->borrows && !atomic_load_explicit(&node->access, memory_order_relaxed));
+			free(node);
+			node = next;
+		}
+	}
+	aTHX->Iwump_memory = NULL;
+	if (pthread_mutex_destroy(&memory->mutex)) abort();
+	free(memory);
+}
+
+void Perl_wump_memory_clone_check(pTHX) {
+	if (!aTHX->Iwump_memory) return;
+	Perl_wump_memory_lock(aTHX);
+	bool busy = aTHX->Iwump_memory->pins != 0;
+	for (size_t i = 0; !busy && i < WUMP_MEMORY_BUCKETS; i++)
+		for (wump_shared *node = aTHX->Iwump_memory->buckets[i]; node; node = node->next)
+			if (atomic_load_explicit(&node->access, memory_order_acquire)) { busy = TRUE; break; }
+	Perl_wump_memory_unlock(aTHX);
+	if (busy) croak("Wump: cannot clone an interpreter with active borrows or mutations");
+}
+
+static void wump_mutation_release(pTHX_ struct wump_mutation *guard) {
+	if (!guard || !guard->active) return;
+	guard->active = FALSE;
+	Perl_wump_memory_lock(aTHX);
+	wump_shared *node = guard->node;
+	assert(node->writer == guard->actor && node->depth);
+	if (!--node->depth) {
+		node->writer = NULL;
+		node->guard = NULL;
+		atomic_store_explicit(&node->access, 0, memory_order_release);
+	}
+	Perl_wump_memory_unlock(aTHX);
+	SvREFCNT_dec(guard->retained);
+	SvREFCNT_dec(guard->value);
+}
+
+static void wump_mutation_unwind(pTHX_ void *arg) {
+	struct wump_mutation *guard = arg;
+	wump_mutation_release(aTHX_ guard);
+	free(guard);
+}
+
+struct wump_mutation *Perl_wump_mutation_begin(pTHX_ SV *value) {
+	if (!value || !PL_wump_task || !aTHX->Iwump_memory || PL_phase == PERL_PHASE_DESTRUCT) return NULL;
+	/* Interning grows strtab under its own mutex. It is not a user graph;
+	 * do not introduce the reverse keys-mutex -> metadata-mutex order. */
+	if (value == (SV *)PL_strtab) return NULL;
+	if (Perl_wump_overlay_active(aTHX_ value)) return NULL;
+	Perl_wump_memory_lock(aTHX);
+	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
+	bool shared = node && node->state == 2;
+	Perl_wump_memory_unlock(aTHX);
+	if (!shared || !SvREFCNT(value)) return NULL;
+	/* Reserve save-stack capacity before taking the claim, so an allocation
+	 * exception cannot strand a writer without its unwind callback. */
+	SSCHECK(3);
+	struct wump_mutation *guard = malloc(sizeof(*guard));
+	if (!guard) croak("Wump: cannot allocate mutation guard");
+	const void *actor = wump_memory_actor(aTHX);
+	Perl_wump_memory_lock(aTHX);
+	unsigned access = atomic_load_explicit(&node->access, memory_order_acquire);
+	if (access && (!(access & WUMP_WRITER) || node->writer != actor)) {
+		Perl_wump_memory_unlock(aTHX);
+		free(guard);
+		croak("Wump: concurrent mutation of a shared value");
+	}
+	bool detach = !access && node->current_borrows;
+	atomic_store_explicit(&node->access, WUMP_WRITER, memory_order_release);
+	node->writer = actor;
+	node->depth++;
+	guard->node = node;
+	guard->retained = NULL;
+	guard->actor = actor;
+	guard->value = SvREFCNT_inc(value);
+	guard->active = TRUE;
+	if (!access) node->guard = guard;
+	Perl_wump_memory_unlock(aTHX);
+	guard->mark = PL_savestack_ix;
+	SAVEDESTRUCTOR_X(wump_mutation_unwind, guard);
+	guard->top = PL_savestack_ix;
+	if (detach && !SvREADONLY(value)) {
+		if (SvTYPE(value) == SVt_PVAV) Perl_wump_av_detach(aTHX_ (AV *)value);
+		else if (SvTYPE(value) == SVt_PVHV) Perl_wump_hv_detach(aTHX_ (HV *)value);
+		else Perl_wump_sv_detach(aTHX_ value);
+	}
+	return guard;
+}
+
+void Perl_wump_mutation_keep(pTHX_ SV *value, SV *retained) {
+	/* The outer guard is the first SAVEDESTRUCTOR record for this mutation.
+	 * Keep the source argument's old storage alive until the C API returns,
+	 * even if the last long-lived borrower leaves during preparation. */
+	Perl_wump_memory_lock(aTHX);
+	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
+	assert(node && node->writer == wump_memory_actor(aTHX) && node->depth);
+	struct wump_mutation *guard = node->guard;
+	assert(guard && !guard->retained);
+	guard->retained = SvREFCNT_inc(retained);
+	Perl_wump_memory_unlock(aTHX);
+}
+
+void Perl_wump_storage_changed(pTHX_ SV *value) {
+	Perl_wump_memory_lock(aTHX);
+	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
+	assert(node && node->writer == wump_memory_actor(aTHX));
+	node->generation++;
+	node->current_borrows = 0;
+	Perl_wump_memory_unlock(aTHX);
+}
+
+void Perl_wump_mutation_end(pTHX_ struct wump_mutation *guard) {
+	if (!guard) return;
+	I32 mark = guard->mark, top = guard->top;
+	wump_mutation_release(aTHX_ guard);
+	/* Preserve saves deliberately left for the caller by the core API. An
+	 * inactive guard underneath them is freed on ordinary scope unwind. */
+	if (PL_savestack_ix == top) LEAVE_SCOPE(mark);
+}
+
+const char *Perl_wump_mutation_pointer(pTHX_ struct wump_mutation *guard, const char *pointer) {
+	if (!guard) return pointer;
+	SV *old = guard->node->guard->retained;
+	if (!old || SvTYPE(old) != SVt_PVMG || !SvPVX_const(old)) return pointer;
+	UV offset = PTR2UV(pointer) - PTR2UV(SvPVX_const(old));
+	return offset <= SvCUR(old) ? SvPVX_const(guard->value) + offset : pointer;
+}
+
+static SV *wump_borrow_release(pTHX_ wump_borrow *borrow) {
+	if (!borrow) return NULL;
+	if (borrow->active) {
+		borrow->active = FALSE;
+		Perl_wump_memory_lock(aTHX);
+		if (borrow->reading)
+			atomic_fetch_sub_explicit(&borrow->node->access, 1, memory_order_release);
+		assert(borrow->node->borrows && aTHX->Iwump_memory->pins);
+		borrow->node->borrows--;
+		if (borrow->generation == borrow->node->generation) {
+			assert(borrow->node->current_borrows);
+			borrow->node->current_borrows--;
+		}
+		aTHX->Iwump_memory->pins--;
+		Perl_wump_memory_unlock(aTHX);
+		return borrow->owner;
+	}
+	return NULL;
+}
+
+static void wump_borrow_cancel(pTHX_ wump_borrow *borrow) {
+	SV *owner = wump_borrow_release(aTHX_ borrow);
+	SvREFCNT_dec(owner);
+	Perl_wump_memory_collect(aTHX);
+}
+
+static int wump_borrow_free(pTHX_ SV *token, MAGIC *mg) {
+	PERL_UNUSED_ARG(token);
+	wump_borrow *borrow = (wump_borrow *)mg->mg_ptr;
+	mg->mg_ptr = NULL;
+	SV *owner = wump_borrow_release(aTHX_ borrow);
+	free(borrow);
+	SvREFCNT_dec(owner);
+	Perl_wump_memory_collect(aTHX);
+	return 0;
+}
+
+static const MGVTBL wump_borrow_vtbl = { .svt_free = wump_borrow_free };
+
+/* Pin creation has no save-stack effects on the cached-PV path. In
+ * particular, it is valid while a caller assembles a localization record. */
+static wump_borrow *wump_borrow_new(pTHX) {
+	SV *token = sv_2mortal(newSV_type(SVt_PVMG));
+	MAGIC *mg = sv_magicext(token, NULL, PERL_MAGIC_ext, &wump_borrow_vtbl, NULL, 0);
+	wump_borrow *borrow = calloc(1, sizeof(*borrow));
+	if (!borrow) croak("Wump: cannot allocate lifetime pin");
+	mg->mg_ptr = (char *)borrow;
+	mg->mg_len = -1;
+	return borrow;
+}
+
+static wump_borrow *wump_borrow_start(pTHX_ SV *value) {
+	if (!value || !aTHX->Iwump_memory || !PL_curstackinfo || PL_phase == PERL_PHASE_DESTRUCT)
+		return NULL;
+	Perl_wump_memory_lock(aTHX);
+	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
+	bool shared = node && node->state == 2;
+	Perl_wump_memory_unlock(aTHX);
+	if (!shared) return NULL;
+	wump_borrow *borrow = wump_borrow_new(aTHX);
+	Perl_wump_memory_lock(aTHX);
+	unsigned access = atomic_load_explicit(&node->access, memory_order_acquire);
+	if (access & WUMP_WRITER) {
+		if (node->writer != wump_memory_actor(aTHX)) {
+			Perl_wump_memory_unlock(aTHX);
+			croak("Wump: read overlaps mutation of a shared value");
+		}
+	} else {
+		atomic_fetch_add_explicit(&node->access, 1, memory_order_acquire);
+		borrow->reading = TRUE;
+	}
+	borrow->node = node;
+	borrow->owner = SvREFCNT_inc(value);
+	borrow->generation = node->generation;
+	borrow->active = TRUE;
+	node->borrows++;
+	node->current_borrows++;
+	aTHX->Iwump_memory->pins++;
+	Perl_wump_memory_unlock(aTHX);
+	return borrow;
+}
+
+static void wump_borrow_read_end(pTHX_ wump_borrow *borrow) {
+	if (!borrow || !borrow->reading) return;
+	Perl_wump_memory_lock(aTHX);
+	atomic_fetch_sub_explicit(&borrow->node->access, 1, memory_order_release);
+	borrow->reading = FALSE;
+	Perl_wump_memory_unlock(aTHX);
+}
+
+static bool wump_borrow_plain(pTHX_ const SV *value) {
+	if (SvTYPE(value) != SVt_PVMG || SvROK(value) || SvOBJECT(value) || SvVALID(value)) return FALSE;
+	for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic)
+		if (!Perl_wump_publish_magic(mg)) return FALSE;
+	return TRUE;
+}
+
+char *Perl_wump_pv(pTHX_ SV *value, STRLEN *length, U32 flags) {
+	/* Ordinary interpreter execution has no migrating C frame to protect.
+	 * Preserve its upstream cached-PV fast path, including build tools. */
+	if (!PL_wump_task)
+		return Perl_SvPV_helper(aTHX_ value, length, flags, SvPVnormal_type_,
+			Perl_sv_2pv_flags, FALSE, flags & (SV_CONST_RETURN | SV_MUTABLE_RETURN));
+	if (flags & SV_MUTABLE_RETURN) return Perl_sv_2pv_flags(aTHX_ value, length, flags);
+	wump_borrow *borrow = wump_borrow_start(aTHX_ value);
+	if (!borrow) return Perl_SvPV_helper(aTHX_ value, length, flags, SvPVnormal_type_,
+		Perl_sv_2pv_flags, FALSE, flags & SV_CONST_RETURN);
+	if (!wump_borrow_plain(aTHX_ value)) {
+		wump_borrow_cancel(aTHX_ borrow);
+		return Perl_sv_2pv_flags(aTHX_ value, length, flags);
+	}
+	if (SvPOKp(value) && borrow->reading) {
+		char *result = (char *)SvPVX_const(value);
+		if (length) *length = SvCUR(value);
+		wump_borrow_read_end(aTHX_ borrow);
+		return result;
+	}
+	SV *copy = sv_2mortal(Perl_wump_scalar_snapshot(aTHX_ value));
+	wump_borrow_read_end(aTHX_ borrow);
+	return Perl_wump_read_snapshot_pv(aTHX_ value, copy, length, flags, 0);
+}
+
+SV **Perl_wump_borrow_av(pTHX_ AV *value, SSize_t index) {
+	wump_borrow *borrow = wump_borrow_start(aTHX_ (SV *)value);
+	if (!borrow) croak("Wump: array borrowing requires a published array");
+	if (!borrow->reading) croak("Wump: cannot borrow array storage inside its mutation");
+	if (SvTYPE(value) != SVt_PVAV || !AvREAL(value)) {
+		wump_borrow_read_end(aTHX_ borrow);
+		croak("Wump: array borrowing requires ordinary real storage");
+	}
+	for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic) {
+		if (!Perl_wump_publish_magic(mg)) {
+			wump_borrow_read_end(aTHX_ borrow);
+			croak("Wump: magical array borrowing is not supported");
+		}
+	}
+	if (index < 0) index += AvFILLp(value) + 1;
+	SV **result = index >= 0 && index <= AvFILLp(value) ? &AvARRAY(value)[index] : NULL;
+	wump_borrow_read_end(aTHX_ borrow);
+	if (!result) wump_borrow_cancel(aTHX_ borrow);
+	return result;
+}
+
+HE *Perl_wump_borrow_hv(pTHX_ HV *value, const char *key, STRLEN length, U32 hash) {
+	wump_borrow *borrow = wump_borrow_start(aTHX_ (SV *)value);
+	if (!borrow) croak("Wump: hash borrowing requires a published hash");
+	if (!borrow->reading) croak("Wump: cannot borrow hash storage inside its mutation");
+	if (!Perl_wump_hv_readable(aTHX_ value)) {
+		wump_borrow_read_end(aTHX_ borrow);
+		croak("Wump: magical hash borrowing is not supported");
+	}
+	HE *result = (HE *)hv_common(value, NULL, key, length, 0, 0, NULL, hash);
+	wump_borrow_read_end(aTHX_ borrow);
+	if (!result) wump_borrow_cancel(aTHX_ borrow);
+	return result;
+}

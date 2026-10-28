@@ -27,7 +27,7 @@ void Perl_wump_checkpoint(pTHX) {
 	 * Teardown cannot resume abandoned C frames or schedule destructors. */
 	if (task && task->initialized && !task->finished && PL_phase == PERL_PHASE_RUN
 		&& !PL_parser && PL_curstackinfo->si_type == PERLSI_MAIN
-		&& !aTHX->Iwump_publishing) {
+		&& !Perl_wump_publish_active(aTHX)) {
 		wump_checkpoint();
 	}
 }
@@ -48,6 +48,7 @@ int Perl_wump_runops(pTHX) {
 	return 0;
 }
 
+#include "wump_memory.c"
 #include "wump_publish.c"
 #include "wump_local.c"
 #include "wump_elements.c"
@@ -550,6 +551,9 @@ static void xs_wump_enable(pTHX_ CV *cv) {
 	 * stack, before scheduler context hooks can run. */
 #if defined(MYMALLOC) || defined(PERL_TRACK_MEMPOOL) || defined(DEBUG_LEAKING_SCALARS)
 	croak("Wump: executor arenas require system malloc without Perl memory tracking");
+#endif
+#ifdef PERL_DEBUG_READONLY_COW
+	croak("Wump: concurrent COW ownership does not support read-only COW diagnostics");
 #endif
 #ifdef DEBUGGING
 	if (DEBUG_D_TEST) croak("Wump: executor arenas do not support -DD arena scans");

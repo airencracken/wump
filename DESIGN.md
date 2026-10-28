@@ -364,9 +364,52 @@ allowing callers to copy keys while assembling localization save records.
 Native C/C++ regressions check unchanged source flags, bodies, PVs and COW
 counts. Eight native readers exercise immutable, already published sources
 using separate executor allocators and task stacks; full-core TSan and
-Valgrind cover concurrency and teardown. This does not yet provide concurrent
-publication or writers, regex read-cache isolation,
-or lifetime protection for cached pointers borrowed directly from a source.
+Valgrind cover concurrency and teardown. Cached PV macros now acquire lifetime
+pins as described below; regex read-cache isolation remains a separate gate.
+
+The interpreter owns a reclamation domain with a side registry keyed by SV
+head, a recursive metadata mutex, and a list of retired private SV owners.
+Publication holds this mutex for its callback-free graph walk. Its recursion
+suppression is native-thread-local, so another publisher cannot mistake an
+unfinished graph for a completed one. Publication-marker removal invalidates
+the classification even when a CV pad reuses its head without allocator free.
+Returning a head to the allocator removes its registry node before reuse.
+
+A borrow briefly claims a reader count while capturing storage, then leaves
+a private mortal token in the caller's temporary scope. Tokens pin the source
+head and current generation; they follow the task's stacks across migration.
+The short reader claim prevents overlapping capture and mutation. A logical
+writer claim belongs to the act, supports nested C APIs, rejects another act,
+and has save-stack cleanup for throws and abandonment. Claims hold no pthread
+mutex across a potentially yielding callback.
+
+If the current generation has borrowers, the outer writer first builds fresh
+storage and prepares a retirement record. Only then does it swap resources.
+Scalars preserve their head, magic and stash while an unmagical private shell
+owns the old XPVMG body and PV. Real arrays copy pointer storage and retain
+elements. Ordinary hashes copy bucket chains, keys and value ownership,
+including lazy-deleted iterator entries. The live container retains original
+element SV identities. Old slots and HEs continue to own removed values.
+The writer also retains the old shell until its C API returns, protecting
+aliased source arguments. Pointer-relative `sv_chop` arguments are translated
+to the fresh buffer. Byte-COW counters use bounded atomic retains and atomic
+last-owner drops; splitting retains its old reference until copying finishes.
+
+Generation counts prevent repeated detachment for borrowers of older storage.
+Collection waits for every domain pin to leave, detaches the retirement list
+under the mutex, then runs final decrements without it. A throwing destructor
+requeues unprocessed records. This deliberately conservative policy can retain
+unrelated storage behind a parked borrower. Quiescent interpreter clones get
+fresh domains; cloning with outstanding borrows or mutations is rejected.
+
+Native tests exercise concurrent publication, synchronized C API writes,
+cross-executor reclamation/migration, COW aliases, allocation-failure atomicity,
+and full teardown under TSan/Valgrind. Explicit AV/HV borrowing accepts ordinary
+storage only and rejects borrows inside the owner's active mutation. Cached
+plain PV reads inside the writer use private snapshots. This is not a general
+lock for all Perl operations: direct opcode/XS fields, mutable-pointer lifetime,
+magical storage, element-overlay base writes and other shared caches remain
+audit boundaries. The Perl scheduler retains its single execution slot.
 
 Ordinary published hash iteration now has act-local cursors. These share the
 existing task iterator registry, but store visited keys rather than a cloned

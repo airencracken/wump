@@ -2,16 +2,31 @@
  * FETCH, overloaded conversion, hash iteration, or scheduler callbacks.
  * All counters remain atomic while this barrier is being brought up. */
 enum { WUMP_PUBLISH_PENDING = 1, WUMP_PUBLISH_SHARED = 2 };
+static _Thread_local PerlInterpreter *wump_publisher;
+
+bool Perl_wump_publish_active(pTHX) {
+	return wump_publisher == aTHX;
+}
+
 typedef struct wump_publish_work {
 	SV **values;
 	size_t used, capacity;
 	bool complete;
+	bool locked;
+	PerlInterpreter *previous;
 } wump_publish_work;
 
 static int wump_publish_set(pTHX_ SV *value, MAGIC *mg);
 static int wump_publish_copy(pTHX_ SV *value, MAGIC *mg, SV *copy,
 	const char *key, I32 length);
 static int wump_publish_local(pTHX_ SV *value, MAGIC *mg);
+static int wump_publish_free(pTHX_ SV *value, MAGIC *mg) {
+	PERL_UNUSED_ARG(mg);
+	/* Pad CVs can be cleared and reused without returning their head to the
+	 * allocator. Their old publication classification ends with the marker. */
+	Perl_wump_memory_mark(aTHX_ value, 0);
+	return 0;
+}
 static const MGVTBL wump_publish_vtbl = {
 	.svt_set = wump_publish_set,
 	/* Keep read magic active when an existing vtable only supplies length
@@ -19,6 +34,7 @@ static const MGVTBL wump_publish_vtbl = {
 	.svt_clear = wump_publish_local,
 	.svt_copy = wump_publish_copy,
 	.svt_local = wump_publish_local,
+	.svt_free = wump_publish_free,
 };
 
 bool Perl_wump_publish_magic(const MAGIC *mg) {
@@ -34,17 +50,31 @@ static MAGIC *wump_publish_marker(const SV *value) {
 
 bool Perl_wump_is_shared(pTHX_ const SV *value) {
 	if (!value) return FALSE;
-	if (SvIMMORTAL(value)) return TRUE;
+	if (aTHX->Iwump_memory) Perl_wump_memory_lock(aTHX);
+	int shared = Perl_wump_memory_shared(aTHX_ value);
+	if (shared >= 0) {
+		Perl_wump_memory_unlock(aTHX);
+		return shared;
+	}
+	bool result;
+	if (SvIMMORTAL(value)) result = TRUE;
 	/* Native inversion lists contain no SV edges and cannot carry magic. */
-	if (SvTYPE(value) == SVt_INVLIST) return TRUE;
+	else if (SvTYPE(value) == SVt_INVLIST) result = TRUE;
+	else
 	if ((SvTYPE(value) == SVt_PVHV && HvNAME_HEK((HV *)value))
-		|| isGV_with_GP(value)) return TRUE;
-	MAGIC *mg = wump_publish_marker(value);
-	return mg && mg->mg_private == WUMP_PUBLISH_SHARED;
+		|| isGV_with_GP(value)) result = TRUE;
+	else {
+		MAGIC *mg = wump_publish_marker(value);
+		result = mg && mg->mg_private == WUMP_PUBLISH_SHARED;
+	}
+	if (aTHX->Iwump_memory) Perl_wump_memory_unlock(aTHX);
+	return result;
 }
 
 static void wump_publish_queue(pTHX_ wump_publish_work *work, SV *value) {
-	if (!value || SvIS_FREED(value) || SvIMMORTAL(value)) return;
+	if (!value) return;
+	Perl_wump_memory_check(aTHX_ value);
+	if (SvIS_FREED(value) || SvIMMORTAL(value)) return;
 	if (SvTYPE(value) == SVt_INVLIST) return;
 	/* Stash entry types encode compiler state (NULL versus a forward
 	 * declaration). Never upgrade them merely to attach metadata. Package
@@ -63,11 +93,13 @@ static void wump_publish_queue(pTHX_ wump_publish_work *work, SV *value) {
 		work->capacity = capacity;
 	}
 	if (!mg) {
+		Perl_wump_memory_mark(aTHX_ value, 0);
 		mg = sv_magicext(value, NULL, PERL_MAGIC_ext, &wump_publish_vtbl, NULL, 0);
 		mg->mg_flags |= MGf_COPY | MGf_LOCAL;
 	}
 	work->values[work->used++] = SvREFCNT_inc(value);
 	mg->mg_private = WUMP_PUBLISH_PENDING;
+	Perl_wump_memory_mark(aTHX_ value, WUMP_PUBLISH_PENDING);
 }
 
 static void wump_publish_visit(pTHX_ SV *value, void *arg) {
@@ -133,19 +165,28 @@ static void wump_publish_finish(pTHX_ void *arg) {
 		MAGIC *mg = wump_publish_marker(work->values[i]);
 		assert(mg && mg->mg_private == WUMP_PUBLISH_PENDING);
 		mg->mg_private = work->complete ? WUMP_PUBLISH_SHARED : 0;
+		Perl_wump_memory_mark(aTHX_ work->values[i], work->complete ? WUMP_PUBLISH_SHARED : 0);
+	}
+	/* Reset suppression and release the mutex before dropping temporary
+	 * roots: their final drops can execute Perl destructors. */
+	if (work->locked) {
+		wump_publisher = work->previous;
+		Perl_wump_memory_unlock(aTHX);
 	}
 	for (size_t i = 0; i < work->used; i++) SvREFCNT_dec(work->values[i]);
 	Safefree(work->values);
 }
 
 void Perl_wump_publish(pTHX_ SV *value) {
-	if (aTHX->Iwump_publishing || PL_phase == PERL_PHASE_DESTRUCT || !value)
+	if (Perl_wump_publish_active(aTHX) || PL_phase == PERL_PHASE_DESTRUCT || !value)
 		return;
 	I32 mark = PL_savestack_ix;
 	wump_publish_work work = {0};
-	SAVEBOOL(aTHX->Iwump_publishing);
-	aTHX->Iwump_publishing = TRUE;
 	SAVEDESTRUCTOR_X(wump_publish_finish, &work);
+	Perl_wump_memory_lock(aTHX);
+	work.locked = TRUE;
+	work.previous = wump_publisher;
+	wump_publisher = aTHX;
 	wump_publish_queue(aTHX_ &work, value);
 	for (size_t i = 0; i < work.used; i++)
 		wump_publish_edges(aTHX_ &work, work.values[i]);
@@ -155,7 +196,7 @@ void Perl_wump_publish(pTHX_ SV *value) {
 
 void Perl_wump_publish_store(pTHX_ SV *owner, SV *value) {
 	if (owner && SvTYPE(owner) == SVt_PVHV && HvNAME_HEK((HV *)owner)) return;
-	if (!aTHX->Iwump_publishing && Perl_wump_is_shared(aTHX_ owner))
+	if (!Perl_wump_publish_active(aTHX) && Perl_wump_is_shared(aTHX_ owner))
 		Perl_wump_publish(aTHX_ value);
 }
 
@@ -179,16 +220,21 @@ void Perl_wump_publish_snapshot(pTHX_ SV *value) {
 }
 
 static int wump_publish_set(pTHX_ SV *value, MAGIC *mg) {
-	if (mg->mg_private != WUMP_PUBLISH_SHARED || aTHX->Iwump_publishing
+	PERL_UNUSED_ARG(mg);
+	if (Perl_wump_publish_active(aTHX)
 		|| PL_phase == PERL_PHASE_DESTRUCT)
 		return 0;
+	if (!Perl_wump_is_shared(aTHX_ value)) return 0;
 	/* Rescan immediate outgoing edges after bulk mutation; already shared
 	 * subgraphs stop at their markers. The owner stays shared throughout. */
 	I32 mark = PL_savestack_ix;
 	wump_publish_work work = {0};
-	SAVEBOOL(aTHX->Iwump_publishing);
-	aTHX->Iwump_publishing = TRUE;
 	SAVEDESTRUCTOR_X(wump_publish_finish, &work);
+	Perl_wump_memory_lock(aTHX);
+	work.locked = TRUE;
+	work.previous = wump_publisher;
+	wump_publisher = aTHX;
+	Perl_wump_memory_check(aTHX_ value);
 	wump_publish_edges(aTHX_ &work, value);
 	for (size_t i = 0; i < work.used; i++)
 		wump_publish_edges(aTHX_ &work, work.values[i]);

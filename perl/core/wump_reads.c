@@ -1,6 +1,7 @@
-/* Included by sv.c. This first read barrier covers published plain scalars.
- * References, overload, non-publication magic and concurrent writers still
- * need their own protocols. Publication must finish before readers start. */
+/* Included by sv.c. Plain-scalar conversion snapshots own their storage.
+ * Cached PV lifetime uses the separate borrow protocol. Numeric cache macros,
+ * reference/overload paths and snapshot capture still need writer-overlap
+ * audits; callers synchronize writes with these conversion paths. */
 struct wump_read_frame {
 	const SV *source;
 	SV *copy;
@@ -81,6 +82,10 @@ WUMP_SCALAR_READ(bool, bool, Perl_sv_2bool_flags)
 
 char *Perl_wump_read_pv(pTHX_ SV *value, STRLEN *length, U32 flags, int encoding) {
 	SV *copy = sv_2mortal(Perl_wump_scalar_snapshot(aTHX_ value));
+	return Perl_wump_read_snapshot_pv(aTHX_ value, copy, length, flags, encoding);
+}
+
+char *Perl_wump_read_snapshot_pv(pTHX_ SV *value, SV *copy, STRLEN *length, U32 flags, int encoding) {
 	struct wump_read_frame frame;
 	ENTER;
 	wump_read_enter(aTHX_ &frame, value, copy);

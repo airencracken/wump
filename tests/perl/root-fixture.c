@@ -101,6 +101,99 @@ static XS(xs_borrow_read) {
 	XSRETURN(1);
 }
 
+static void memory_callback(pTHX_ SV *code) {
+	dSP;
+	ENTER;
+	SAVETMPS;
+	PUSHMARK(SP);
+	PUTBACK;
+	call_sv(code, G_DISCARD);
+	FREETMPS;
+	LEAVE;
+}
+
+static XS(xs_memory_stats) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items) croak("Usage: RootFixture::memory_stats()");
+	size_t pins, retired, nodes;
+	Perl_wump_memory_stats(aTHX_ &pins, &retired, &nodes);
+	AV *result = newAV();
+	av_push(result, newSVuv(pins));
+	av_push(result, newSVuv(retired));
+	av_push(result, newSVuv(nodes));
+	ST(0) = sv_2mortal(newRV_noinc((SV *)result));
+	XSRETURN(1);
+}
+
+static XS(xs_memory_replace) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items < 2 || items > 3) croak("Usage: RootFixture::memory_replace(REFERENCE, VALUE [, MAGIC])");
+	SV *target = read_target(aTHX_ ST(0));
+	STRLEN length;
+	const char *text = SvPV_const(ST(1), length);
+	if (items == 3 && SvTRUE(ST(2))) sv_setpvn_mg(target, text, length);
+	else sv_setpvn(target, text, length);
+	XSRETURN_EMPTY;
+}
+
+static XS(xs_memory_guard) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items != 2) croak("Usage: RootFixture::memory_guard(REFERENCE, CODE)");
+	struct wump_mutation *guard = Perl_wump_mutation_begin(aTHX_ read_target(aTHX_ ST(0)));
+	memory_callback(aTHX_ ST(1));
+	Perl_wump_mutation_end(aTHX_ guard);
+	XSRETURN_EMPTY;
+}
+
+static XS(xs_memory_borrow) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items != 3) croak("Usage: RootFixture::memory_borrow(REFERENCE, KIND, CODE)");
+	SV *value = read_target(aTHX_ ST(0));
+	IV kind = SvIV(ST(1));
+	SV *result;
+	if (kind == 0) {
+		STRLEN length;
+		const char *text = SvPV_const(value, length);
+		memory_callback(aTHX_ ST(2));
+		result = newSVpvn(text, length);
+	} else if (kind == 1) {
+		SV **slot = Perl_wump_borrow_av(aTHX_ (AV *)value, 0);
+		memory_callback(aTHX_ ST(2));
+		result = slot && *slot ? newSVsv(*slot) : newSV(0);
+	} else if (kind == 2) {
+		HE *entry = Perl_wump_borrow_hv(aTHX_ (HV *)value, "key", 3, 0);
+		memory_callback(aTHX_ ST(2));
+		result = entry && HeVAL(entry) ? newSVsv(HeVAL(entry)) : newSV(0);
+	} else croak("unknown memory borrow kind");
+	ST(0) = sv_2mortal(result);
+	XSRETURN(1);
+}
+
+static XS(xs_memory_container) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items != 2) croak("Usage: RootFixture::memory_container(REFERENCE, KIND)");
+	SV *target = read_target(aTHX_ ST(0));
+	IV kind = SvIV(ST(1));
+	if (kind == 0) av_store((AV *)target, 0, newSVpvs("new array"));
+	else if (kind == 1) {
+		SV *removed = av_shift((AV *)target);
+		SvREFCNT_dec(removed);
+		av_extend((AV *)target, 4096);
+	} else if (kind == 2) {
+		hv_delete((HV *)target, "key", 3, G_DISCARD);
+		hv_store((HV *)target, "key", 3, newSVpvs("new hash"), 0);
+		hv_ksplit((HV *)target, 4096);
+	} else if (kind == 3) av_clear((AV *)target);
+	else if (kind == 4) hv_clear((HV *)target);
+	else croak("unknown container mutation kind");
+	XSRETURN_EMPTY;
+}
+
 static XS(xs_key_too_large) {
 	dXSARGS;
 	PERL_UNUSED_VAR(cv);
@@ -209,5 +302,10 @@ XS_EXTERNAL(boot_RootFixture) {
 	newXS("RootFixture::scalar_read", xs_scalar_read, __FILE__);
 	newXS("RootFixture::read_frame_active", xs_read_frame_active, __FILE__);
 	newXS("RootFixture::borrow_read", xs_borrow_read, __FILE__);
+	newXS("RootFixture::memory_stats", xs_memory_stats, __FILE__);
+	newXS("RootFixture::memory_replace", xs_memory_replace, __FILE__);
+	newXS("RootFixture::memory_guard", xs_memory_guard, __FILE__);
+	newXS("RootFixture::memory_borrow", xs_memory_borrow, __FILE__);
+	newXS("RootFixture::memory_container", xs_memory_container, __FILE__);
 	XSRETURN_YES;
 }
