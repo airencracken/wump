@@ -94,6 +94,7 @@ typedef struct wump_worker {
 	wump_runtime *rt;
 	int id;
 	unsigned tick;
+	int64_t global_poll;
 	unsigned steal_start;
 	uint64_t rng;
 	wump_g *gcache;

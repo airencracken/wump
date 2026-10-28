@@ -345,13 +345,19 @@ static wump_g *steal(wump_worker *w) {
 
 static wump_g *find_work(wump_worker *w) {
 	wump_g *g = NULL;
-	if (++w->tick % 61 == 0) {
+	int64_t now = wump_now();
+	/* A dispatch can consume a whole compute quantum. Keep the cheap tick
+	 * rule for short tasks, but do not leave expired timers or external
+	 * wakeups behind sixty long-running local dispatches. */
+	if (++w->tick % 61 == 0 || now - w->global_poll >= INT64_C(10000000)) {
+		w->global_poll = now;
 		g = global_pop(w->rt);
 	}
 	if (g == NULL) {
 		g = local_pop(w);
 	}
 	if (g == NULL) {
+		w->global_poll = now;
 		g = global_pop(w->rt);
 	}
 	if (g == NULL) {

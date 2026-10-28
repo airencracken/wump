@@ -256,6 +256,40 @@ static void test_checkpoint(void) {
 	CHECK(wump_run(checkpoint_stop, NULL, 1) == -1 && errno == ECANCELED);
 }
 
+typedef struct timer_fairness_arg {
+	atomic_uint switches;
+	atomic_int stop;
+	wump_chan *done;
+} timer_fairness_arg;
+
+static void timer_fairness_worker(void *arg) {
+	timer_fairness_arg *ctx = arg;
+	while (!atomic_load(&ctx->stop)) {
+		if (wump_checkpoint()) atomic_fetch_add(&ctx->switches, 1);
+	}
+	CHECK(wump_chan_send(ctx->done, NULL) == 0);
+}
+
+static void timer_fairness_program(void *arg) {
+	(void)arg;
+	timer_fairness_arg ctx = { .switches = ATOMIC_VAR_INIT(0), .stop = ATOMIC_VAR_INIT(0),
+		.done = wump_chan_make(0, 0) };
+	CHECK(ctx.done != NULL);
+	CHECK(wump_go(timer_fairness_worker, &ctx) == 0);
+	CHECK(wump_sleep(INT64_C(1000000)) == 0);
+	/* Count dispatches instead of imposing a tight host latency threshold.
+	 * The old 61-dispatch polling rule kept an expired timer behind 60
+	 * complete CPU quanta, even with just one runnable competitor. */
+	CHECK(atomic_load(&ctx.switches) < 8);
+	atomic_store(&ctx.stop, 1);
+	CHECK(wump_chan_recv(ctx.done, NULL) == 1);
+	wump_chan_free(ctx.done);
+}
+
+static void test_timer_fairness(void) {
+	CHECK(wump_run(timer_fairness_program, NULL, 1) == 0);
+}
+
 typedef struct fifo_arg {
 	wump_chan *ch, *done;
 	int value;
@@ -677,6 +711,7 @@ int main(int argc, char **argv) {
 		{ "spawn, queue overflow, and stack reuse", test_spawn },
 		{ "four workers execute in parallel", test_parallel },
 		{ "compute checkpoints provide fairness, preserve errno, and stop", test_checkpoint },
+		{ "expired timers compete with compute quanta promptly", test_timer_fairness },
 		{ "buffer and waiter FIFO ordering", test_fifo },
 		{ "randomized buffer operations match a FIFO model", test_model },
 		{ "close wakes blocked senders and receivers", test_close },

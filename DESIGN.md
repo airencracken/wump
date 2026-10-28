@@ -205,6 +205,9 @@ their resumed work remains stealable. Automatic Perl checks currently defer
 during compilation, auxiliary callback stacks, and teardown. This provides
 compute-loop fairness without a sysmon thread or asynchronous interruption
 of native code.
+Global-queue polling occurs at least every 61 dispatches or after 10 ms of
+elapsed scheduler time, whichever comes first. Expired timers and external
+wakeups therefore do not wait behind sixty full compute quanta on a busy P.
 It does not yet permit simultaneous Perl execution on multiple Ps.
 
 ### Channels and sel
