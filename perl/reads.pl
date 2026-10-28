@@ -1,5 +1,24 @@
 sub apply_reads {
 	my ($source) = @_;
+	for my $kind (qw(IV UV NV)) {
+		for my $nomg ('', '_nomg') {
+			my $name = "Sv$kind$nomg";
+			my $flags = $nomg ? '0' : 'SV_GMAGIC';
+			my $signature = "Perl_$name(pTHX_ SV *sv) {";
+			edit('sv_inline.h', $signature,
+				"$signature\n    if (PL_wump_task) return Perl_wump_cache_" . lc($kind) . "(aTHX_ sv, $flags);");
+		}
+	}
+	for my $spec (
+		['Perl_SvTRUE(pTHX_ SV *sv)', 'SV_GMAGIC', 'TRUE'],
+		['Perl_SvTRUE_nomg(pTHX_ SV *sv)', '0', 'TRUE'],
+		['Perl_SvTRUE_NN(pTHX_ SV *sv)', 'SV_GMAGIC', 'TRUE'],
+		['Perl_SvTRUE_common(pTHX_ SV * sv, const bool sv_2bool_is_fallback)', '0', 'sv_2bool_is_fallback'],
+	) {
+		my ($signature, $flags, $fallback) = @$spec;
+		edit('sv_inline.h', "$signature\n{",
+			"$signature\n{\n    if (PL_wump_task) return Perl_wump_cache_truth(aTHX_ sv, $flags, $fallback);");
+	}
 	edit('sv.c', '#define PERL_IN_SV_C', "#define PERL_IN_SV_C\n/* Shared scalar reads use private conversion storage. */");
 	# All function prototypes are available through the generated private header.
 	edit('sv.c', '#include "perl.h"', "#include \"perl.h\"\n#include \"wump_reads.c\"");

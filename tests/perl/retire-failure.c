@@ -7,15 +7,33 @@
 #define CHECK(expr) do { if (!(expr)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #expr); abort(); } } while (0)
 
 static _Thread_local int reject_record;
+static _Thread_local int reject_snapshot;
 static SV *target;
 static int kind;
 extern void *__real_malloc(size_t);
 void *__wrap_malloc(size_t size) {
+	if (reject_snapshot && size >= 16385) {
+		reject_snapshot = 0;
+		/* Perl's real system-malloc failure exits the process. Throw here to
+		 * test unwinding at the same allocation point after a copy is rooted. */
+		Perl_croak_nocontext("injected snapshot allocation exception");
+	}
 	if (reject_record && size == 2 * sizeof(void *)) {
 		reject_record = 0;
 		return NULL;
 	}
 	return __real_malloc(size);
+}
+
+static XS(native_snapshot) {
+	dXSARGS;
+	PERL_UNUSED_ARG(cv);
+	PERL_UNUSED_VAR(items);
+	reject_snapshot = 1;
+	SV *copy = Perl_wump_scalar_snapshot(aTHX_ target);
+	reject_snapshot = 0;
+	SvREFCNT_dec(copy);
+	XSRETURN_EMPTY;
 }
 
 static XS(native_write) {
@@ -45,6 +63,7 @@ static XS(native_clone) {
 static void xs_init(pTHX) {
 	newXS("NativeFail::write", native_write, __FILE__);
 	newXS("NativeFail::clone", native_clone, __FILE__);
+	newXS("NativeFail::snapshot", native_snapshot, __FILE__);
 }
 
 int main(int argc, char **argv, char **env) {
@@ -108,6 +127,42 @@ int main(int argc, char **argv, char **env) {
 		Perl_wump_memory_stats(aTHX_ &pins, &pending, &nodes);
 		CHECK(!pins && !pending);
 	}
+	ENTER;
+	SAVETMPS;
+	char *large;
+	Newx(large, 16385, char);
+	memset(large, 'x', 16384);
+	large[16384] = '\0';
+	target = newSVpvn(large, 16384);
+	Safefree(large);
+	Perl_wump_publish(aTHX_ target);
+	void *original_body = SvANY(target);
+	const char *original_buffer = SvPVX_const(target);
+	IV settled_heads = 0;
+	for (int pass = 0; pass < 3; pass++) {
+		ENTER;
+		SAVETMPS;
+		SV *error = eval_pv("eval { NativeFail::snapshot() }; $@", FALSE);
+		reject_snapshot = 0;
+		CHECK(strstr(SvPV_nolen(error), "injected snapshot allocation exception"));
+		FREETMPS;
+		LEAVE;
+		if (!pass) settled_heads = PL_sv_count;
+		else CHECK(PL_sv_count == settled_heads);
+	}
+	CHECK(SvANY(target) == original_body && SvPVX_const(target) == original_buffer);
+	size_t pins, pending, nodes;
+	Perl_wump_memory_stats(aTHX_ &pins, &pending, &nodes);
+	CHECK(!pins && !pending);
+	struct wump_mutation *guard = Perl_wump_mutation_begin(aTHX_ target);
+	CHECK(guard);
+	SV *snapshot = Perl_wump_scalar_snapshot(aTHX_ target);
+	CHECK(SvCUR(snapshot) == 16384 && memEQ(SvPVX_const(snapshot), original_buffer, 16384));
+	SvREFCNT_dec(snapshot);
+	Perl_wump_mutation_end(aTHX_ guard);
+	SvREFCNT_dec(target);
+	FREETMPS;
+	LEAVE;
 	Perl_wump_task_activate(aTHX_ NULL);
 	/* A quiescent clone gets its own domain and recognizes copied markers. */
 	SV *published = get_sv("NativeFail::published", GV_ADD);
@@ -130,5 +185,6 @@ int main(int argc, char **argv, char **env) {
 	perl_free(interp);
 	PERL_SYS_TERM();
 	puts("ok - failed retirement allocation preserves scalar/array/hash storage, releases writer claims, and permits retry");
+	puts("ok - a snapshot allocation exception releases its capture and partial copy, preserving source storage and future writes");
 	return 0;
 }

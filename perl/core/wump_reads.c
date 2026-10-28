@@ -1,7 +1,6 @@
-/* Included by sv.c. Plain-scalar conversion snapshots own their storage.
- * Cached PV lifetime uses the separate borrow protocol. Numeric cache macros,
- * reference/overload paths and snapshot capture still need writer-overlap
- * audits; callers synchronize writes with these conversion paths. */
+/* Included by sv.c. Short claims protect cache fields and eligibility tests.
+ * Exception-safe capture tokens protect allocating snapshots without adding
+ * save records while core callers assemble localization records. */
 struct wump_read_frame {
 	const SV *source;
 	SV *copy;
@@ -13,7 +12,7 @@ static struct wump_read_frame **wump_read_frames(pTHX) {
 	return task ? &task->read_frame : &aTHX->Iwump_read_frame;
 }
 
-bool Perl_wump_readable(pTHX_ const SV *value) {
+static bool wump_readable_raw(pTHX_ const SV *value) {
 	if (!value || SvTYPE(value) > SVt_PVMG || SvTYPE(value) == SVt_INVLIST
 		|| SvROK(value) || SvOBJECT(value)
 		|| SvIMMORTAL(value) || SvVALID(value) || PL_phase == PERL_PHASE_DESTRUCT
@@ -26,10 +25,71 @@ bool Perl_wump_readable(pTHX_ const SV *value) {
 	return TRUE;
 }
 
+bool Perl_wump_readable(pTHX_ const SV *value) {
+	struct wump_shared *claim = Perl_wump_read_begin(aTHX_ value);
+	bool result = wump_readable_raw(aTHX_ value);
+	Perl_wump_read_end(aTHX_ claim);
+	return result;
+}
+
+#define WUMP_CACHE_READ(type, name, predicate, raw, backend) \
+type Perl_wump_cache_##name(pTHX_ SV *value, I32 flags) { \
+	struct wump_shared *claim = Perl_wump_read_begin(aTHX_ value); \
+	bool cached = flags & SV_GMAGIC ? predicate##_nog(value) : predicate(value); \
+	if (cached) { \
+		type result = raw(value); \
+		Perl_wump_read_end(aTHX_ claim); \
+		return result; \
+	} \
+	Perl_wump_read_end(aTHX_ claim); \
+	return backend(aTHX_ value, flags); \
+}
+WUMP_CACHE_READ(IV, iv, SvIOK, SvIVX, Perl_sv_2iv_flags)
+WUMP_CACHE_READ(UV, uv, SvUOK, SvUVX, Perl_sv_2uv_flags)
+WUMP_CACHE_READ(NV, nv, SvNOK, SvNVX, Perl_sv_2nv_flags)
+#undef WUMP_CACHE_READ
+
+bool Perl_wump_cache_truth(pTHX_ SV *value, I32 flags, bool fallback) {
+	if (!value) return FALSE;
+	struct wump_shared *claim = Perl_wump_read_begin(aTHX_ value);
+	if ((flags & SV_GMAGIC) && SvGMAGICAL(value)) {
+		Perl_wump_read_end(aTHX_ claim);
+		/* FETCH may throw, park, or mutate the scalar. Reacquire only after
+		 * it returns; the short claim never spans a user callback. */
+		SvGETMAGIC(value);
+		claim = Perl_wump_read_begin(aTHX_ value);
+	}
+	bool result;
+	if (SvIMMORTAL_INTERP(value)) result = SvIMMORTAL_TRUE(value);
+	else if (!SvOK(value)) result = FALSE;
+	else if (SvPOK(value)) result = SvPVXtrue(value);
+	else if (SvIOK(value)) result = SvIVX(value) != 0;
+	else if (SvROK(value) && !(SvOBJECT(SvRV(value)) && HvAMAGIC(SvSTASH(SvRV(value))))) result = TRUE;
+	else {
+		result = isGV_with_GP(value);
+		Perl_wump_read_end(aTHX_ claim);
+		return fallback ? Perl_sv_2bool_flags(aTHX_ value, 0) : result;
+	}
+	Perl_wump_read_end(aTHX_ claim);
+	return result;
+}
+
 SV *Perl_wump_scalar_snapshot(pTHX_ const SV *value) {
-	assert(Perl_wump_readable(aTHX_ value));
-	if (SvIsBOOL(value)) return newSVsv(boolSV(SvTRUE_nomg((SV *)value)));
-	SV *copy = newSV_type(SVt_PVNV);
+	struct wump_borrow *capture = Perl_wump_capture_begin(aTHX_ value);
+	if (!wump_readable_raw(aTHX_ value)) {
+		Perl_wump_capture_end(aTHX_ capture);
+		croak("Wump: shared scalar representation changed during snapshot capture");
+	}
+	/* Root the new copy before allocating its PV. The holder keeps failure
+	 * cleanup on the temporary stack, preserving the no-save-record contract. */
+	SV *holder = sv_2mortal(newSV_type(SVt_IV));
+	SV *copy = SvIsBOOL(value) ? newSVsv(boolSV(SvTRUE_nomg((SV *)value))) : newSV_type(SVt_PVNV);
+	SvRV_set(holder, copy);
+	SvROK_on(holder);
+	if (SvIsBOOL(value)) {
+		Perl_wump_capture_end(aTHX_ capture);
+		return SvREFCNT_inc(copy);
+	}
 	U32 flags = SvFLAGS(value);
 	if (SvPOKp(value))
 		sv_setpvn(copy, SvPVX_const(value) ? SvPVX_const(value) : "", SvCUR(value));
@@ -43,7 +103,8 @@ SV *Perl_wump_scalar_snapshot(pTHX_ const SV *value) {
 	const U32 cache = SVf_IOK | SVp_IOK | SVf_NOK | SVp_NOK
 		| SVf_POK | SVp_POK | SVf_IVisUV | SVf_UTF8;
 	SvFLAGS(copy) = (SvFLAGS(copy) & ~cache) | (flags & cache);
-	return copy;
+	Perl_wump_capture_end(aTHX_ capture);
+	return SvREFCNT_inc(copy);
 }
 
 const SV *Perl_wump_read_origin(pTHX_ const SV *value) {

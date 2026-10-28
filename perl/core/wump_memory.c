@@ -126,6 +126,42 @@ void Perl_wump_memory_check(pTHX_ const SV *value) {
 	if (busy) croak("Wump: publication overlaps mutation of a shared value");
 }
 
+bool Perl_wump_read_try_begin(pTHX_ const SV *value, struct wump_shared **claim) {
+	*claim = NULL;
+	if (!value || !PL_wump_task || !aTHX->Iwump_memory || PL_phase == PERL_PHASE_DESTRUCT) return TRUE;
+	Perl_wump_memory_lock(aTHX);
+	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
+	if (!node || node->state != 2) {
+		Perl_wump_memory_unlock(aTHX);
+		return TRUE;
+	}
+	unsigned access = atomic_load_explicit(&node->access, memory_order_acquire);
+	if (access & WUMP_WRITER) {
+		bool own = node->writer == wump_memory_actor(aTHX);
+		Perl_wump_memory_unlock(aTHX);
+		return own;
+	}
+	atomic_fetch_add_explicit(&node->access, 1, memory_order_acquire);
+	Perl_wump_memory_unlock(aTHX);
+	*claim = node;
+	return TRUE;
+}
+
+struct wump_shared *Perl_wump_read_begin(pTHX_ const SV *value) {
+	struct wump_shared *claim;
+	if (!Perl_wump_read_try_begin(aTHX_ value, &claim))
+		croak("Wump: read overlaps mutation of a shared value");
+	return claim;
+}
+
+void Perl_wump_read_end(pTHX_ struct wump_shared *claim) {
+	if (!claim) return;
+	Perl_wump_memory_lock(aTHX);
+	unsigned before = atomic_fetch_sub_explicit(&claim->access, 1, memory_order_release);
+	assert(before && !(before & WUMP_WRITER));
+	Perl_wump_memory_unlock(aTHX);
+}
+
 void Perl_wump_memory_forget(pTHX_ SV *value) {
 	struct wump_memory *memory = aTHX->Iwump_memory;
 	if (!memory) return;
@@ -265,7 +301,8 @@ static void wump_mutation_unwind(pTHX_ void *arg) {
 	free(guard);
 }
 
-struct wump_mutation *Perl_wump_mutation_begin(pTHX_ SV *value) {
+static struct wump_mutation *wump_mutation_begin(pTHX_ SV *value, bool *busy) {
+	if (busy) *busy = FALSE;
 	if (!value || !PL_wump_task || !aTHX->Iwump_memory || PL_phase == PERL_PHASE_DESTRUCT) return NULL;
 	/* Interning grows strtab under its own mutex. It is not a user graph;
 	 * do not introduce the reverse keys-mutex -> metadata-mutex order. */
@@ -287,6 +324,7 @@ struct wump_mutation *Perl_wump_mutation_begin(pTHX_ SV *value) {
 	if (access && (!(access & WUMP_WRITER) || node->writer != actor)) {
 		Perl_wump_memory_unlock(aTHX);
 		free(guard);
+		if (busy) { *busy = TRUE; return NULL; }
 		croak("Wump: concurrent mutation of a shared value");
 	}
 	bool detach = !access && node->current_borrows;
@@ -309,6 +347,15 @@ struct wump_mutation *Perl_wump_mutation_begin(pTHX_ SV *value) {
 		else Perl_wump_sv_detach(aTHX_ value);
 	}
 	return guard;
+}
+
+struct wump_mutation *Perl_wump_mutation_begin(pTHX_ SV *value) {
+	return wump_mutation_begin(aTHX_ value, NULL);
+}
+
+struct wump_mutation *Perl_wump_mutation_try_begin(pTHX_ SV *value, bool *busy) {
+	assert(busy);
+	return wump_mutation_begin(aTHX_ value, busy);
 }
 
 void Perl_wump_mutation_keep(pTHX_ SV *value, SV *retained) {
@@ -440,6 +487,17 @@ static void wump_borrow_read_end(pTHX_ wump_borrow *borrow) {
 	Perl_wump_memory_unlock(aTHX);
 }
 
+struct wump_borrow *Perl_wump_capture_begin(pTHX_ const SV *value) {
+	return PL_wump_task ? wump_borrow_start(aTHX_ (SV *)value) : NULL;
+}
+
+void Perl_wump_capture_end(pTHX_ struct wump_borrow *capture) {
+	SV *owner = wump_borrow_release(aTHX_ capture);
+	SvREFCNT_dec(owner);
+	/* The now-inactive mortal token collects later. Do not run destructors
+	 * or add save entries while a core caller assembles a localization record. */
+}
+
 static bool wump_borrow_plain(pTHX_ const SV *value) {
 	if (SvTYPE(value) != SVt_PVMG || SvROK(value) || SvOBJECT(value) || SvVALID(value)) return FALSE;
 	for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic)
@@ -448,20 +506,33 @@ static bool wump_borrow_plain(pTHX_ const SV *value) {
 }
 
 char *Perl_wump_pv(pTHX_ SV *value, STRLEN *length, U32 flags) {
+	return Perl_wump_pv_encoded(aTHX_ value, length, flags, 0, FALSE);
+}
+
+char *Perl_wump_pv_encoded(pTHX_ SV *value, STRLEN *length, U32 flags, int encoding, bool or_null) {
+	char *(*convert)(pTHX_ SV *, STRLEN *const, const U32) = encoding == 1
+		? Perl_sv_2pvbyte_flags : encoding == 2 ? Perl_sv_2pvutf8_flags : Perl_sv_2pv_flags;
+	PL_SvPVtype type = encoding == 1 ? SvPVbyte_type_ : encoding == 2 ? SvPVutf8_type_ : SvPVnormal_type_;
 	/* Ordinary interpreter execution has no migrating C frame to protect.
 	 * Preserve its upstream cached-PV fast path, including build tools. */
 	if (!PL_wump_task)
-		return Perl_SvPV_helper(aTHX_ value, length, flags, SvPVnormal_type_,
-			Perl_sv_2pv_flags, FALSE, flags & (SV_CONST_RETURN | SV_MUTABLE_RETURN));
-	if (flags & SV_MUTABLE_RETURN) return Perl_sv_2pv_flags(aTHX_ value, length, flags);
+		return Perl_SvPV_helper(aTHX_ value, length, flags, type,
+			convert, or_null, flags & (SV_CONST_RETURN | SV_MUTABLE_RETURN));
+	if (flags & SV_MUTABLE_RETURN) return convert(aTHX_ value, length, flags);
 	wump_borrow *borrow = wump_borrow_start(aTHX_ value);
-	if (!borrow) return Perl_SvPV_helper(aTHX_ value, length, flags, SvPVnormal_type_,
-		Perl_sv_2pv_flags, FALSE, flags & SV_CONST_RETURN);
+	if (!borrow) return Perl_SvPV_helper(aTHX_ value, length, flags, type,
+		convert, or_null, flags & SV_CONST_RETURN);
 	if (!wump_borrow_plain(aTHX_ value)) {
 		wump_borrow_cancel(aTHX_ borrow);
-		return Perl_sv_2pv_flags(aTHX_ value, length, flags);
+		return Perl_SvPV_helper(aTHX_ value, length, flags, type, convert, or_null, flags & SV_CONST_RETURN);
 	}
-	if (SvPOKp(value) && borrow->reading) {
+	if (or_null && !SvOK(value)) {
+		if (length) *length = 0;
+		wump_borrow_read_end(aTHX_ borrow);
+		return NULL;
+	}
+	bool compatible = !encoding || (SvPOK(value) && (encoding == 2) == !!SvUTF8(value));
+	if (SvPOKp(value) && compatible && borrow->reading) {
 		char *result = (char *)SvPVX_const(value);
 		if (length) *length = SvCUR(value);
 		wump_borrow_read_end(aTHX_ borrow);
@@ -469,7 +540,7 @@ char *Perl_wump_pv(pTHX_ SV *value, STRLEN *length, U32 flags) {
 	}
 	SV *copy = sv_2mortal(Perl_wump_scalar_snapshot(aTHX_ value));
 	wump_borrow_read_end(aTHX_ borrow);
-	return Perl_wump_read_snapshot_pv(aTHX_ value, copy, length, flags, 0);
+	return Perl_wump_read_snapshot_pv(aTHX_ value, copy, length, flags, encoding);
 }
 
 SV **Perl_wump_borrow_av(pTHX_ AV *value, SSize_t index) {

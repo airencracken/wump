@@ -345,8 +345,8 @@ SVs carrying only publication magic. Conversion backends for IV, UV, NV,
 truth, PV, bytes and UTF-8 convert a deep private snapshot; scalar copies use
 the same snapshot to avoid modifying source COW bookkeeping. Snapshots copy
 valid raw representations and their public/private cache distinctions,
-including dual values, unsigned numbers and boolean identity. Existing macro
-fast paths can read already cached representations without taking a snapshot.
+including dual values, unsigned numbers and boolean identity. Numeric/truth
+macro fast paths read already cached fields under short reader claims.
 Explicit mutable-buffer requests and internal string-force/UTF-8-upgrade paths
 continue to operate on the original SV.
 
@@ -360,6 +360,29 @@ Reference/overload conversion and other magic still follow upstream paths.
 Native inversion lists also retain their native conversion/copy paths despite
 their low SV type number. Plain scalar copies add no save-stack entries,
 allowing callers to copy keys while assembling localization save records.
+
+Eligibility checks claim a published head before inspecting mutable flags or
+magic. Snapshot capture uses an exception-safe mortal token for its read claim,
+and roots the new copy through a private mortal owner before allocating its PV.
+Successful copies release the source pin immediately. The inactive token later
+collects deferred storage at the caller's normal temporary cleanup, so capture
+completion cannot insert save records or invoke unrelated destructors during
+native localization setup. An allocation exception releases both the reader
+claim and the partially built copy on unwind.
+
+All IV/UV/NV helpers, with and without GET magic, join the claim protocol before
+their first flag test. Truth helpers do likewise, releasing their short claim
+before FETCH or fallback conversion and reacquiring after FETCH returns. The
+writer's own act may read and snapshot its value without a conflicting reader
+claim. Foreign writers are rejected before any guarded header or buffer access.
+Reference and magical callback internals retain their separate audit boundary.
+
+Encoded PV macros share the cached-PV borrow path. Compatible byte/UTF-8 buffers
+remain borrowed through the caller's temporary scope; mismatches convert owned
+snapshots. `or_null` tests definedness under the claim and preserves null/length
+and warning behavior. Cached numeric reads allocate no lifetime token. Native
+try-claim APIs report logical contention without throwing, allowing explicit
+retry loops; their metadata mutex can still serialize with publication.
 
 Native C/C++ regressions check unchanged source flags, bodies, PVs and COW
 counts. Eight native readers exercise immutable, already published sources

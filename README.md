@@ -415,8 +415,9 @@ to compute a representation. This batch covers signed/unsigned integers,
 floating-point and truth conversion, computed string buffers, byte/UTF-8
 conversion, and scalar copies. Snapshots preserve dual values, private versus
 public cache flags, and boolean identity without changing the source's flags,
-body, string buffer, or COW count. Numeric and string macro fast paths can
-still use already cached representations directly.
+body, string buffer, or COW count. Numeric and truth macro fast paths take a
+short reader claim before inspecting caches. Plain-scalar snapshot capture
+holds the same exclusion against writers through its allocating copy.
 
 Computed string buffers survive nested conversions and yields until the
 caller's current temporary scope ends. Read frames belong to the current act,
@@ -433,7 +434,11 @@ the native threads run. `make perl-reads-tsan` instruments the whole private
 Perl and also checks the allocator's deliberate-race control. Perl tests cover
 warnings, throws, yields, encoding failures, explicit mutators and abandoned
 read callbacks; `make perl-memcheck` checks these paths and native readers with
-full leak checking.
+full leak checking. The native suite also runs six readers and two writers
+against one scalar through 1,024 IV/UV/NV/PV representation changes and 3,072
+numeric/copy/encoding captures. Contending native callers can request a claim
+with a contention result and retry; ordinary read APIs throw before accessing
+a value owned by another writer.
 
 Published ordinary hashes now keep `each`/`keys`/`values` cursors in the
 current act. One act's iteration and resets leave other acts' cursors alone;
@@ -459,13 +464,19 @@ check unchanged source flags, storage, cursor and randomization state. Perl
 checks interleaving, reset contexts, deletions, aliases, weak lifetimes, tied
 hooks and abandoned iterators.
 
-Ordinary cached string reads now pin the published scalar's current storage
+Ordinary and encoded cached string reads pin the published scalar's current storage
 until the caller's temporary scope ends. Audited scalar mutation APIs detach
 the body and PV before writing; old storage remains alive for existing
 borrowers. Native array-slot and hash-entry borrowers use the same protocol.
 Array storage and hash buckets/HE chains detach without changing live value
 identity. Removed elements remain owned by the retired storage until reclamation.
 Pins belong to task stacks and survive yields, parking and executor migration.
+Byte and UTF-8 macro variants, including `nomg`, `nolen` and `or_null`, use this
+capture path. Encoding mismatches convert private snapshots; undefined
+`or_null` reads return null without invoking warning hooks. Snapshot-only
+captures release their source pins as soon as copying finishes. Their temporary
+cleanup tokens remain available for allocation exceptions without adding save
+records inside native localization operations.
 
 Graph publication is serialized by a per-interpreter metadata mutex, with
 thread-local recursion suppression. Publication completes every reachable
@@ -489,8 +500,8 @@ Raw `SvPVX`/`AvARRAY`/`HvARRAY` access needs an explicit borrow or external
 lifetime management. Magical containers, mutable-buffer escapes, element-overlay
 base writes, regex/compiler/method caches, and the remaining interpreter/XS
 state split still need audits before multi-core Perl execution.
-Numeric cache macros and conversion-snapshot capture still require synchronized
-writes. Read-only COW diagnostics are rejected when enabling Wump because their
+Raw cache predicates and direct field access still require explicit claims or
+external synchronization. Read-only COW diagnostics are rejected when enabling Wump because their
 page protection changes cannot share the concurrent byte-counter protocol.
 Channel messages copy the outer scalar and retain reference
 identity; pending messages own their references until receive or scheduler cleanup.

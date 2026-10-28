@@ -6,7 +6,7 @@ use Text::ParseWords 'shellwords';
 
 @ARGV == 2 or die "usage: $0 SOURCE BUILD\n";
 my ($source, $build) = map { abs_path($_) // die "$_: $!\n" } @ARGV;
-for my $spec (['read-cache', 'c'], ['read-cache', 'c++'], ['readers', 'c']) {
+for my $spec (['read-cache', 'c'], ['read-cache', 'c++'], ['readers', 'c'], ['read-claims', 'c']) {
 	my ($fixture, $language) = @$spec;
 	my $target = "$build/$fixture" . ($language eq 'c++' ? '-cpp' : '');
 	my @command = ($language eq 'c++' ? 'c++' : shellwords($Config{cc}), shellwords($Config{ccflags}),

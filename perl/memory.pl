@@ -121,7 +121,18 @@ C
 		['SvPV_flags_const(sv, len, flags)', '((const char *)Perl_wump_pv(aTHX_ (sv), &(len), (flags) | SV_CONST_RETURN))'],
 		['SvPV_flags_const_nolen(sv, flags)', '((const char *)Perl_wump_pv(aTHX_ (sv), NULL, (flags) | SV_CONST_RETURN))'],
 		['SvPV_nolen(sv)', 'Perl_wump_pv(aTHX_ (sv), NULL, SV_GMAGIC)'],
+		['SvPV_nomg_nolen(sv)', 'Perl_wump_pv(aTHX_ (sv), NULL, 0)'],
 	);
+	for my $encoding (['byte', 1], ['utf8', 2]) {
+		my ($name, $kind) = @$encoding;
+		for my $form ('', '_nomg', '_nolen', '_or_null', '_or_null_nomg') {
+			my $length = $form eq '_nolen' ? 'NULL' : '&(len)';
+			my $flags = $form =~ /nomg/ ? '0' : 'SV_GMAGIC';
+			my $null = $form =~ /or_null/ ? 'TRUE' : 'FALSE';
+			my $macro = "SvPV$name$form(sv" . ($length eq 'NULL' ? ')' : ', len)');
+			push @macros, [$macro, "Perl_wump_pv_encoded(aTHX_ (sv), $length, $flags, $kind, $null)"];
+		}
+	}
 	for my $spec (@macros) {
 		my ($macro, $replacement) = @$spec;
 		my $start = index($header, "#define $macro");

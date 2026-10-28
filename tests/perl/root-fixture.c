@@ -72,8 +72,41 @@ static XS(xs_scalar_read) {
 		result = Perl_wump_scalar_snapshot(aTHX_ value);
 		break;
 	case 11: result = newSVsv(boolSV(SvIsBOOL(value))); break;
+	case 12: result = newSViv(SvIV_nomg(value)); break;
+	case 13: result = newSVuv(SvUV_nomg(value)); break;
+	case 14: result = newSVnv(SvNV_nomg(value)); break;
+	case 15: result = newSVsv(boolSV(SvTRUE_nomg(value))); break;
+	case 16: result = newSVsv(boolSV(SvTRUE_NN(value))); break;
+	case 17: result = newSVsv(boolSV(SvTRUE_nomg_NN(value))); break;
+	case 18: result = newSViv(sv_2iv_flags(value, 0)); break;
+	case 19: result = newSVuv(sv_2uv_flags(value, 0)); break;
+	case 20: result = newSVnv(sv_2nv_flags(value, 0)); break;
+	case 21: result = newSVsv(boolSV(sv_2bool_flags(value, 0))); break;
+	case 22: text = SvPVbyte(value, length); goto bytes;
+	case 23: text = SvPVutf8(value, length); goto encoded;
+	case 24: text = SvPV_nomg_nolen(value); length = strlen(text); goto bytes;
+	case 25: text = SvPVbyte_or_null(value, length); goto bytes;
+	case 26: text = SvPVutf8_or_null(value, length); goto encoded;
+	case 27: text = SvPVbyte_nomg(value, length); goto bytes;
+	case 28: text = SvPVutf8_nomg(value, length); goto encoded;
+	case 29: text = SvPVbyte_nolen(value); length = strlen(text); goto bytes;
+	case 30: text = SvPVutf8_nolen(value); length = strlen(text); goto encoded;
+	case 31: text = SvPVbyte_or_null_nomg(value, length); goto bytes;
+	case 32: text = SvPVutf8_or_null_nomg(value, length); goto encoded;
+	case 33: text = (char *)SvPV_const(value, length); goto bytes;
+	case 34: text = SvPV_nomg(value, length); goto bytes;
+	case 35: result = Perl_wump_scalar_snapshot(aTHX_ value); break;
+	case 36: result = newSViv(Perl_wump_readable(aTHX_ value)); break;
+	case 37: result = newSVsv(boolSV(Perl_SvTRUE_common(aTHX_ value, FALSE))); break;
 	default: croak("unknown scalar read kind");
 	}
+	goto finish;
+bytes:
+	result = text ? newSVpvn(text, length) : newSV(0);
+	goto finish;
+encoded:
+	result = text ? newSVpvn_flags(text, length, SVf_UTF8) : newSV(0);
+finish:
 	ST(0) = sv_2mortal(result);
 	XSRETURN(1);
 }
@@ -155,11 +188,12 @@ static XS(xs_memory_borrow) {
 	SV *value = read_target(aTHX_ ST(0));
 	IV kind = SvIV(ST(1));
 	SV *result;
-	if (kind == 0) {
+	if (kind == 0 || kind == 3 || kind == 4) {
 		STRLEN length;
-		const char *text = SvPV_const(value, length);
+		const char *text = kind == 3 ? SvPVbyte(value, length)
+			: kind == 4 ? SvPVutf8(value, length) : SvPV_const(value, length);
 		memory_callback(aTHX_ ST(2));
-		result = newSVpvn(text, length);
+		result = newSVpvn_flags(text, length, kind == 4 ? SVf_UTF8 : 0);
 	} else if (kind == 1) {
 		SV **slot = Perl_wump_borrow_av(aTHX_ (AV *)value, 0);
 		memory_callback(aTHX_ ST(2));

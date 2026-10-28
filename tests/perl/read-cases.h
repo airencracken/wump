@@ -106,8 +106,12 @@ static void exercise_case(pTHX_ const read_case *test) {
 	/* A later conversion must not replace the earlier returned buffer. */
 	pv = sv_2pvutf8_flags(sv, &length, 0);
 	CHECK(length == test->utf8_length && memEQ(pv, test->utf8, length));
+	pv = SvPVutf8(sv, length);
+	CHECK(length == test->utf8_length && memEQ(pv, test->utf8, length));
 	if (test->bytes) {
 		pv = sv_2pvbyte_flags(sv, &length, 0);
+		CHECK(length == test->byte_length && memEQ(pv, test->bytes, length));
+		pv = SvPVbyte(sv, length);
 		CHECK(length == test->byte_length && memEQ(pv, test->bytes, length));
 	}
 	CHECK(memEQ(first, test->pv, test->length));
