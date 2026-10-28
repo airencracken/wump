@@ -26,7 +26,12 @@ sub apply_reads {
 		my $signature = $kind eq 'bool'
 			? 'Perl_sv_2bool_flags(pTHX_ SV *sv, I32 flags)'
 			: "Perl_sv_2${kind}_flags(pTHX_ SV *const sv, const I32 flags)";
-		edit('sv.c', "$signature\n{", "$signature\n{\n    if (Perl_wump_readable(aTHX_ sv)) return Perl_wump_read_$kind(aTHX_ sv, flags);");
+		my $old = "$signature\n{\n    if (Perl_wump_readable(aTHX_ sv)) return Perl_wump_read_$kind(aTHX_ sv, flags);";
+		my $new = $kind eq 'bool' ? $old
+			: "$signature\n{\n    if (!(flags & SV_MUTABLE_RETURN) && Perl_wump_readable(aTHX_ sv)) return Perl_wump_read_$kind(aTHX_ sv, flags);";
+		my $text = read_file("$source/sv.c");
+		if (index($text, $new) < 0 && $text =~ s/\Q$old\E/$new/) { write_file("$source/sv.c", $text) }
+		edit('sv.c', "$signature\n{", $new);
 	}
 	for my $spec (
 		['Perl_sv_2pv_flags(pTHX_ SV *const sv, STRLEN *const lp, const U32 flags)', 0],

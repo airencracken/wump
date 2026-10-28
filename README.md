@@ -123,6 +123,8 @@ make perl-allocator-test        # native allocation and cross-executor final fre
 make perl-allocator-tsan        # instrument the entire private Perl and fixture
 make perl-reads-test            # plain shared-scalar conversions and copies
 make perl-reads-tsan            # eight readers against an instrumented private Perl
+make perl-writes-test           # scalar opcode/API writes, callbacks and native contention
+make perl-writes-tsan           # instrumented opcode tests and allocator race control
 make perl-memory-test           # borrowed storage, concurrent publication/writes, migration
 make perl-memory-tsan           # whole-core reclamation stress and deliberate-race control
 ```
@@ -494,8 +496,33 @@ uses a conservative interpreter-wide pin count: one long-lived borrower can
 delay collection of unrelated retired storage. Cloning requires quiescent pins
 and mutation claims; clones rebuild their own metadata registry.
 
-Perl execution still uses one slot. These guards cover the patched C APIs and
-ordinary storage, rather than every inline opcode or direct XS field access.
+Audited scalar opcodes now enter the mutation protocol before their original
+bodies inspect the destination. This covers assignment, prefix/postfix
+increment and decrement, arithmetic and bitwise compound assignment, concat
+and optimized multiconcat, and recursive chop/chomp. Postfix operations also
+guard the result pad. Substring and vector lvalue setters guard their original
+referents, including aliases created before another act starts mutating them.
+Claims span GET/SET and overload callbacks and unwind after throws or abandoned
+acts. The C API coverage includes increment/decrement, UTF-8 encode/decode and
+downgrade, scalar replacement, and explicitly mutable numeric conversions.
+
+Core mutation code can install conversion caches while its act owns the
+exclusive writer claim. Explicit snapshots remain available during a write;
+ordinary external reads still avoid changing source caches. In-place encoding
+and chop/chomp request writable buffers so they edit the live scalar rather
+than a private read snapshot.
+
+`make perl-writes-test` compares published writes with private-scalar controls,
+checks borrowed storage and callback cleanup, and runs C/C++ fixtures with six
+readers and two writers performing 4,096 actual opcode mutations. Plain scalar
+leaves are registered directly in the native fixture's side registry to reach
+fast paths that publication magic would otherwise divert. Bypassing an entry
+guard must fail its old-body regression; real Perl tests independently expose
+the original opcode's unguarded STORE callback window.
+
+Perl execution still uses one slot. This is coverage for the listed scalar
+destinations, not a complete opcode or XS audit. Raw operand reads, aggregate
+opcode fast paths, other lvalue magic and direct XS field access remain open.
 Raw `SvPVX`/`AvARRAY`/`HvARRAY` access needs an explicit borrow or external
 lifetime management. Magical containers, mutable-buffer escapes, element-overlay
 base writes, regex/compiler/method caches, and the remaining interpreter/XS

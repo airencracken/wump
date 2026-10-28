@@ -91,6 +91,19 @@ C
 		sv_setpvn_mg sv_setpv_mg sv_setrv_noinc_mg sv_setrv_inc_mg)) {
 		memory_guard($source, 'sv.c', $name, 'void', 'sv');
 	}
+	for my $name (qw(sv_inc sv_inc_nomg sv_dec sv_dec_nomg sv_utf8_encode sv_replace)) {
+		memory_guard($source, 'sv.c', $name, 'void', 'sv');
+	}
+	for my $name (qw(sv_utf8_downgrade_flags sv_utf8_decode)) {
+		memory_guard($source, 'sv.c', $name, 'bool', 'sv');
+	}
+	for my $spec (['iv', 'IV'], ['uv', 'UV'], ['nv', 'NV']) {
+		my ($name, $type) = @$spec;
+		memory_guard($source, 'sv.c', "sv_2${name}_flags", $type, 'sv', 'flags & SV_MUTABLE_RETURN');
+	}
+	edit('sv.c', '            s = (U8 *) SvPV_flags(sv, len, mg_flags);',
+		'            s = (U8 *) SvPV_flags_mutable(sv, len, mg_flags);');
+	edit('sv.c', '        (void) SvIV(sv);', '        (void) sv_2iv_flags(sv, SV_GMAGIC | SV_MUTABLE_RETURN);');
 	for my $name (qw(sv_catpvn_flags sv_catsv_flags)) {
 		memory_guard($source, 'sv.c', $name, 'void', 'dsv');
 	}

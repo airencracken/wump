@@ -400,6 +400,8 @@ require "$FindBin::Bin/publication.pl";
 apply_publication($source);
 require "$FindBin::Bin/memory.pl";
 apply_memory($source);
+require "$FindBin::Bin/opwrites.pl";
+apply_opwrites($source);
 edit('regcomp.c', '#include "regcomp_internal.h"',
 	"#include \"regcomp_internal.h\"\n#include \"wump_regex_roots.c\"");
 edit('class.c', '    fields[fieldix] = val;',

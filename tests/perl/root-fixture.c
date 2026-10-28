@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include "wump.h"
 
+extern OP *Perl_wump_write_impl_preinc(pTHX);
+
 static SV *read_target(pTHX_ SV *reference) {
 	if (!SvROK(reference)) croak("scalar reference required");
 	return SvRV(reference);
@@ -168,6 +170,67 @@ static XS(xs_memory_replace) {
 	const char *text = SvPV_const(ST(1), length);
 	if (items == 3 && SvTRUE(ST(2))) sv_setpvn_mg(target, text, length);
 	else sv_setpvn(target, text, length);
+	XSRETURN_EMPTY;
+}
+
+static void memory_free_replacement(pTHX_ void *arg) {
+	SvREFCNT_dec(*(SV **)arg);
+}
+
+static XS(xs_scalar_write) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items < 2 || items > 3) croak("Usage: RootFixture::scalar_write(REFERENCE, KIND [, VALUE])");
+	SV *value = read_target(aTHX_ ST(0));
+	IV kind = SvIV(ST(1));
+	SV *result = NULL;
+	switch (kind) {
+	case 0: sv_inc(value); break;
+	case 1: sv_dec(value); break;
+	case 2: sv_inc_nomg(value); break;
+	case 3: sv_dec_nomg(value); break;
+	case 4: sv_utf8_encode(value); break;
+	case 5: result = newSVsv(boolSV(sv_utf8_decode(value))); break;
+	case 6: result = newSVsv(boolSV(sv_utf8_downgrade_flags(value, FALSE, SV_GMAGIC))); break;
+	case 7: {
+		if (items != 3) croak("replacement value required");
+		SV *replacement = NULL;
+		ENTER;
+		SAVEDESTRUCTOR_X(memory_free_replacement, &replacement);
+		replacement = newSVsv(ST(2));
+		sv_replace(value, replacement);
+		replacement = NULL;
+		LEAVE;
+		break;
+	}
+	case 8: result = newSViv(sv_2iv_flags(value, SV_GMAGIC | SV_MUTABLE_RETURN)); break;
+	case 9: result = newSVuv(sv_2uv_flags(value, SV_GMAGIC | SV_MUTABLE_RETURN)); break;
+	case 10: result = newSVnv(sv_2nv_flags(value, SV_GMAGIC | SV_MUTABLE_RETURN)); break;
+	case 11: result = newSVsv(boolSV(sv_utf8_downgrade_flags(value, TRUE, SV_GMAGIC))); break;
+	default: croak("unknown scalar write kind");
+	}
+	ST(0) = sv_2mortal(result ? result : newSVsv(value));
+	XSRETURN(1);
+}
+
+static XS(xs_unguarded_increment) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items != 1) croak("Usage: RootFixture::unguarded_increment(REFERENCE)");
+	SV *value = read_target(aTHX_ ST(0));
+	OP op;
+	Zero(&op, 1, OP);
+	op.op_type = OP_PREINC;
+	op.op_flags = OPf_WANT_SCALAR;
+	SSize_t opcode_stack_mark = SP - PL_stack_base;
+	ENTER;
+	SAVEVPTR(PL_op);
+	XPUSHs(value);
+	PUTBACK;
+	PL_op = &op;
+	(void)Perl_wump_write_impl_preinc(aTHX);
+	PL_stack_sp = PL_stack_base + opcode_stack_mark;
+	LEAVE;
 	XSRETURN_EMPTY;
 }
 
@@ -338,6 +401,8 @@ XS_EXTERNAL(boot_RootFixture) {
 	newXS("RootFixture::borrow_read", xs_borrow_read, __FILE__);
 	newXS("RootFixture::memory_stats", xs_memory_stats, __FILE__);
 	newXS("RootFixture::memory_replace", xs_memory_replace, __FILE__);
+	newXS("RootFixture::scalar_write", xs_scalar_write, __FILE__);
+	newXS("RootFixture::unguarded_increment", xs_unguarded_increment, __FILE__);
 	newXS("RootFixture::memory_guard", xs_memory_guard, __FILE__);
 	newXS("RootFixture::memory_borrow", xs_memory_borrow, __FILE__);
 	newXS("RootFixture::memory_container", xs_memory_container, __FILE__);

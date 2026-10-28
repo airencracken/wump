@@ -377,6 +377,36 @@ writer's own act may read and snapshot its value without a conflicting reader
 claim. Foreign writers are rejected before any guarded header or buffer access.
 Reference and magical callback internals retain their separate audit boundary.
 
+Audited scalar write opcodes have entry wrappers that identify destinations
+from the stack/pad before any original flag tests. The wrapped implementation
+keeps its original control flow, including early returns and callbacks.
+Assignment, inc/dec (including integer aliases), arithmetic and bitwise
+assignment, concat and multiconcat participate. Postfix operations guard both
+the input scalar and result pad. Multiconcat accounts for its lexical, stacked,
+append and assignment target layouts. Recursive chop/chomp reenters a wrapper
+for each child value; substring/vec setters claim the proxy's original target.
+
+The mutation claim spans GET/SET and overload callbacks. Nested C API claims
+belong to the same act; completion releases claims in reverse order and leaves
+intentional core saves for their normal scope. Save-stack cleanup handles
+exceptions and abandonment. This is destination coverage, not read exclusion
+for every raw operand access or a transactional lock across multiple scalars.
+
+Subroutine preparation can itself reject publication of a closure whose
+captured value has a foreign writer. The just-pushed block remains `CXt_NULL`
+until preparation succeeds, before installing subroutine-specific fields or
+changing the subcontext index. Exception unwinding therefore sees initialized
+block state and cannot restore an uninitialized caller pad or argument array.
+Regressions retry failed first calls in both the main act and child acts.
+
+Mutators that depend on conversion caches must be allowed to install them on
+their original destination while owning its exclusive writer claim. Read-barrier
+eligibility therefore excludes that owned destination, while explicit snapshot
+capture continues to accept it. Mutable numeric conversion flags acquire a
+writer claim; increment's integer probe uses that explicit path. In-place
+downgrade and chop/chomp request mutable PVs. This preserves the upstream
+algorithms rather than accidentally editing an owned read snapshot.
+
 Encoded PV macros share the cached-PV borrow path. Compatible byte/UTF-8 buffers
 remain borrowed through the caller's temporary scope; mismatches convert owned
 snapshots. `or_null` tests definedness under the claim and preserves null/length
@@ -653,6 +683,21 @@ extracts to disk. perlcc/B::Bytecode are dead.
 ## 8. Milestones
 Each one ends in something runnable.
 
+The first usable parallel preview should run an ordinary Perl worker pool:
+closures share work through channels, compute across several executors, use
+scoped locks for shared updates, and finish through wait groups. It must retain
+Perl's numeric, string, magic and exception behavior, survive repeated startup
+and shutdown, and demonstrate measured CPU scaling with correct results.
+
+The remaining gates for that preview are operand and aggregate opcode audits,
+regex/compiler/method-cache isolation, a compile gate and a defined policy for
+unaudited XS, followed by enabling multiple interpreter execution slots and
+testing real programs under migration and contention. Native opcode fixtures
+validate parts of this path; they do not substitute for a parallel interpreter
+run. General network-service usability additionally needs the Perl I/O handoff,
+`sel`, and explicit signal/fork behavior. Assess readiness against these gates;
+the amount of completed infrastructure is not a reliable time estimate.
+
 0. **Runtime in C**: tasks, stacks, scheduler, channels, `sel`, timers,
    netpoller, sysmon. Benchmarked against Go.
 1. **Fork, one P** (Go pre-1.5 defaulted to `GOMAXPROCS=1` too): interpvar
@@ -673,10 +718,12 @@ Each one ends in something runnable.
      Wait groups use explicit counters with functional and object calls;
      `scope` is removed. These are still module functions; core feature syntax
      and multi-P Perl remain open.
-   - Initial automatic safe-point scheduling is implemented for ordinary
-     compute loops. Next steps toward many Ps are safe interpreter handoff,
-     allocator/reclamation and remaining shared-state isolation, followed by
-     genuine parallel opcode execution and multi-worker Perl stress tests.
+   - Automatic safe-point scheduling, executor allocator caches, atomic shared
+     keys/refcounts, graph publication, scalar read claims, deferred storage
+     reclamation, and the listed scalar write destinations are implemented.
+     Native tests execute actual scalar opcodes with multiple executors. The
+     interpreter bridge remains single-slot until the remaining state gates
+     below are closed.
 2. **Many Ps for I/O**: Ms, syscall handoff, netpoller, fork(), signals.
    Perl code still runs on one P at a time behind a runtime lock; that's
    development scaffolding, never a shipped mode.

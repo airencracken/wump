@@ -7,7 +7,7 @@ CPPFLAGS = -Iruntime/include -Iruntime/src
 CFLAGS = -O2 -g -std=c11 -Wall -Wextra -Werror -pthread
 LDFLAGS = -pthread
 LDLIBS = -lm
-PERL_SUITES = entry waitgroup preempt tasks regex local elements pocket pocket-deparse separators hooks locks shared keys reads read-claims iteration memory publication hidden-roots
+PERL_SUITES = entry waitgroup preempt tasks regex local elements pocket pocket-deparse separators hooks locks shared keys reads read-claims scalar-writes iteration memory publication hidden-roots
 
 RUNTIME = stack sched chan io error
 OBJECTS = $(addprefix $(BUILD)/,$(addsuffix .o,$(RUNTIME))) $(BUILD)/ctx_x86_64.o
@@ -48,6 +48,7 @@ perl-test: perl-build perl-source-test
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/keys.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/reads.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/read-claims.t
+	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/scalar-writes.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/iteration.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/memory.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/publication.t
@@ -58,6 +59,7 @@ perl-test: perl-build perl-source-test
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/allocator.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/reads.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/memory.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
+	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/writes.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/entry.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 
 perl-refcount-test: perl-build
@@ -85,6 +87,16 @@ perl-reads-test: perl-build
 
 perl-reads-tsan:
 	PERL_SANITIZER=thread $(MAKE) BUILD='$(BUILD)/perl-tsan' PERL_TARBALL='$(abspath $(PERL_TARBALL))' CFLAGS='$(CFLAGS) -O1 -fsanitize=thread -fno-omit-frame-pointer' LDFLAGS='$(LDFLAGS) -fsanitize=thread' perl-reads-test perl-allocator-test
+
+.PHONY: perl-writes-test perl-writes-tsan
+perl-writes-test: perl-build
+	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/root-fixture.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
+	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/read-claims.t
+	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/scalar-writes.t
+	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/writes.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
+
+perl-writes-tsan:
+	PERL_SANITIZER=thread $(MAKE) BUILD='$(BUILD)/perl-tsan' PERL_TARBALL='$(abspath $(PERL_TARBALL))' CFLAGS='$(CFLAGS) -O1 -fsanitize=thread -fno-omit-frame-pointer' LDFLAGS='$(LDFLAGS) -fsanitize=thread' perl-writes-test perl-allocator-test
 
 .PHONY: perl-memory-test perl-memory-tsan
 perl-memory-test: perl-build
@@ -172,6 +184,9 @@ perl-memcheck: perl-source $(BUILD)/libwump.a
 	timeout 120s valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/reclamation-memcheck.%p.log' $(BUILD)/reclamation
 	timeout 90s valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/borrowed-memcheck.%p.log' $(BUILD)/borrowed
 	timeout 90s valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/retire-failure-memcheck.%p.log' $(BUILD)/retire-failure
+	PERL_DESTRUCT_LEVEL=2 timeout 300s valgrind --trace-children=yes --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/scalar-writes-memcheck.%p.log' $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/scalar-writes.t
+	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/writes.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
+	timeout 120s valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/opcode-writes-memcheck.%p.log' $(BUILD)/opcode-writes
 
 perl-upstream-test: perl-build
 	$(MAKE) -C $(BUILD)/perl/perl-5.42.2 test_prep
