@@ -101,6 +101,11 @@ The Perl integration targets Perl 5.42.2, matching the installed Perl
 and the design's 5.42 base. The private fork can run Perl closures as runtime
 tasks, send scalar values and references through channels, yield, and sleep.
 This is a single-slot prototype; Perl code does not yet run on multiple cores.
+
+The optional [Mojolicious job dashboard](examples/mojo/README.md) exercises
+HTTP, WebSocket progress, bounded work queues, cancellation, and shutdown while
+Wump coroutines perform CPU work. Run `make perl-mojo-example` after installing
+its optional dependency, or `make perl-mojo-test` for service and TCP load tests.
 The build does not install or replace system Perl.
 
 ```sh
@@ -314,6 +319,14 @@ hooks. Localizing a whole plain aggregate
 and then assigning its elements is supported. Symbol-table replacement while a
 binding is active is not supported. These limits keep the remaining shared-state
 paths explicit while their isolation is developed.
+
+Numbered capture localization (`local $1`, `local ($1, $2)`) preserves the act's
+current regex state. `local $^F` restores the act's descriptor inheritance
+boundary; child acts inherit its current value (`pocket $^F` is rejected).
+`local $.` restores the act's
+last-read handle. A new child begins without a last-read handle; line counters
+remain properties of their actual filehandles. Sharing a filehandle still
+requires coordinating its I/O between acts.
 Native code that accesses AV/HV storage directly or uses stock element
 save-stack APIs still needs adaptation to the task's views.
 

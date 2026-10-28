@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Wump / Jobs</title>
+	<link rel="stylesheet" href="/dashboard.css">
+	<script src="/dashboard.js" defer></script>
+</head>
+<body>
+	<header><a href="/" class="brand">wump<span> / jobs</span></a><span class="badge">1 process · 1 execution slot</span><span id="connection">Connecting…</span></header>
+	<main>
+		<section class="intro"><p class="eyebrow">PERL COROUTINES, REAL HTTP</p><h1>Keep the work moving.</h1><p>Queue a log analysis. Watch coroutines share the runtime while this page keeps talking to the server.</p></section>
+		<section class="metrics" aria-label="Service counters"><div><strong id="active">0</strong><span>Active jobs</span></div><div><strong id="completed">0</strong><span>Completed</span></div><div><strong id="rejected">0</strong><span>Queue full</span></div><div><strong id="latency">—</strong><span>Health round trip</span></div></section>
+		<div class="layout"><section class="panel"><h2>New analysis</h2><p class="muted">Unicode word counts and log levels. Repeated passes add CPU work.</p>
+			<form id="submit"><label for="text">Log text</label><textarea id="text" rows="12" required spellcheck="false"></textarea><div class="form-footer"><label for="passes">Passes <input id="passes" type="number" min="1" max="100" value="40" required></label><button type="submit">Queue analysis</button></div></form>
+			<p id="notice" role="status"></p><div class="workers-heading"><h2>Workers</h2><span id="limits" class="muted"></span></div><div id="workers" class="workers"></div><p class="footnote">Workers use bounded channels. CPU loops rely on Wump preemption. More workers currently means more coroutines sharing one slot.</p>
+		</section><section class="panel"><div class="jobs-heading"><h2>Recent jobs</h2><span class="live">Live via WebSocket</span></div><div id="jobs"><p class="muted">Your first job goes here.</p></div></section></div>
+		<footer>Wump × Mojolicious · Poll reactor bridge · In-memory history · Refreshing this page keeps server jobs running.</footer>
+	</main>
+</body>
+</html>

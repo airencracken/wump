@@ -18,6 +18,23 @@ SYSCALL_WRAPPED = calloc pthread_cond_init pthread_cond_destroy pthread_cond_bro
 .PHONY: all test stress ubsan asan lsan asan-control lsan-control tsan tsan-control memcheck bench bench-compare clean perl-source perl-fetch perl-build perl-source-test perl-test perl-asan perl-lsan perl-leak-test perl-task-context-test perl-task-context-tsan perl-example perl-regex-example perl-local-example perl-elements-example perl-pocket-example perl-separators-example perl-safety-example perl-publication-example perl-refcount-test perl-refcount-tsan perl-memcheck perl-upstream-test
 all: $(BUILD)/libwump.a $(BUILD)/hello $(BUILD)/select $(BUILD)/echo $(BUILD)/blocking
 
+.PHONY: perl-mojo-test perl-mojo-example perl-mojo-memcheck
+perl-mojo-test: perl-build
+	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -MMojolicious -e 'die "Install the tested Mojolicious 9.37 from examples/mojo/cpanfile\n" unless $$Mojolicious::VERSION eq "9.37"'
+	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -Iexamples/mojo/lib tests/perl/mojo-jobs.t
+	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -Iexamples/mojo/lib tests/perl/mojo.t
+	timeout 120s perl tests/perl/mojo-live.t '$(abspath $(BUILD))/perl/perl-5.42.2/perl'
+
+perl-mojo-example: perl-build
+	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib examples/mojo/dashboard.pl
+
+perl-mojo-memcheck: perl-source $(BUILD)/libwump.a
+	$(MAKE) BUILD='$(BUILD)/perl-valgrind' CPPFLAGS='$(CPPFLAGS) -DWUMP_VALGRIND' '$(BUILD)/perl-valgrind/libwump.a'
+	PERL_RUNTIME_BUILD='$(BUILD)/perl-valgrind' bash perl/build.sh '$(BUILD)'
+	@for suite in local elements publication mojo-jobs mojo; do \
+		PERL_DESTRUCT_LEVEL=2 timeout 300s valgrind --trace-children=yes --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/mojo-'$$suite'-memcheck.%p.log' $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -Iexamples/mojo/lib tests/perl/$$suite.t || exit $$?; \
+	done
+
 perl-source:
 	bash perl/source.sh '$(BUILD)' '$(PERL_TARBALL)'
 
