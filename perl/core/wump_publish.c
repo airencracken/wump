@@ -45,6 +45,24 @@ static MAGIC *wump_publish_marker(const SV *value) {
 	return NULL;
 }
 
+static bool wump_memory_published(pTHX_ const SV *value) {
+	if (wump_memory_untracked(aTHX->Iwump_memory, value)) return FALSE;
+	Perl_wump_memory_lock(aTHX);
+	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
+	bool published = node && node->state == WUMP_PUBLISH_SHARED;
+	bool busy = node && (atomic_load_explicit(&node->access, memory_order_acquire) & WUMP_WRITER)
+		&& node->writer != wump_memory_actor(aTHX);
+	if (published && !busy) {
+		/* Native registration can install claims without a graph walk.
+		 * Only the completed publication marker certifies outgoing edges. */
+		MAGIC *marker = wump_publish_marker(value);
+		published = marker && marker->mg_private == WUMP_PUBLISH_SHARED;
+	}
+	Perl_wump_memory_unlock(aTHX);
+	if (busy) croak("Wump: publication overlaps mutation of a shared value");
+	return published;
+}
+
 bool Perl_wump_is_shared(pTHX_ const SV *value) {
 	if (!value) return FALSE;
 	if (aTHX->Iwump_memory) Perl_wump_memory_lock(aTHX);
@@ -182,6 +200,10 @@ static void wump_publish_finish(pTHX_ void *arg) {
 void Perl_wump_publish(pTHX_ SV *value) {
 	if (Perl_wump_publish_active(aTHX) || PL_phase == PERL_PHASE_DESTRUCT || !value)
 		return;
+	/* Completed publications already stop at this head. Check the registry
+	 * and active writer before constructing an empty graph walk, without
+	 * reading flags or magic which another act may be mutating. */
+	if (wump_memory_published(aTHX_ value)) return;
 	I32 mark = PL_savestack_ix;
 	wump_publish_work work = {0};
 	SAVEDESTRUCTOR_X(wump_publish_finish, &work);

@@ -4,7 +4,9 @@
 #include <stdatomic.h>
 #include <pthread.h>
 
-enum { WUMP_MEMORY_BUCKETS = 4096, WUMP_WRITER = 0x80000000U };
+enum { WUMP_MEMORY_BUCKETS = 4096, WUMP_MEMORY_FILTER_SHIFT = 14,
+	WUMP_MEMORY_FILTER_WORDS = 1 << WUMP_MEMORY_FILTER_SHIFT,
+	WUMP_WRITER = 0x80000000U };
 typedef struct wump_shared {
 	SV *value;
 	struct wump_mutation *guard;
@@ -22,6 +24,7 @@ struct wump_retired {
 
 struct wump_memory {
 	pthread_mutex_t mutex;
+	_Atomic uint64_t published[WUMP_MEMORY_FILTER_WORDS];
 	wump_shared *buckets[WUMP_MEMORY_BUCKETS];
 	struct wump_retired *retired;
 	size_t nodes, pins, pending;
@@ -58,6 +61,27 @@ bool Perl_wump_parallel(pTHX) {
 	return PL_wump_task && wump_nprocs() > 1;
 }
 
+U32 Perl_wump_stash_amagic(HV *stash, int operation) {
+	dTHX;
+	bool parallel = Perl_wump_parallel(aTHX);
+	if (parallel) Perl_wump_memory_lock(aTHX);
+	U32 flags = SvFLAGS(stash);
+	if (operation) {
+		flags = operation > 0 ? flags | SVf_AMAGIC : flags & ~SVf_AMAGIC;
+		SvFLAGS(stash) = flags;
+	}
+	if (parallel) Perl_wump_memory_unlock(aTHX);
+	return operation ? flags : flags & SVf_AMAGIC;
+}
+
+bool Perl_wump_stash_amg(pTHX_ HV *stash) {
+	struct wump_mutation *guard = Perl_wump_parallel(aTHX) ? Perl_wump_metadata_begin(aTHX) : NULL;
+	bool result = HvNAME(stash) && Gv_AMupdate(stash, FALSE);
+	if (!result) SvFLAGS(stash) &= ~SVf_AMAGIC;
+	Perl_wump_mutation_end(aTHX_ guard);
+	return result;
+}
+
 struct wump_mutation {
 	wump_shared *node;
 	SV *value;
@@ -90,6 +114,27 @@ static wump_shared *wump_memory_find(struct wump_memory *memory, const SV *value
 	return NULL;
 }
 
+static UV wump_memory_filter_hash(const SV *value) {
+	return (PTR2UV(value) >> 3) * UINT64_C(0x9e3779b97f4a7c15);
+}
+
+static void wump_memory_filter_mark(struct wump_memory *memory, const SV *value) {
+	UV hash = wump_memory_filter_hash(value);
+	atomic_fetch_or_explicit(&memory->published[hash & (WUMP_MEMORY_FILTER_WORDS - 1)],
+		UINT64_C(1) << ((hash >> WUMP_MEMORY_FILTER_SHIFT) & 63), memory_order_release);
+}
+
+static bool wump_memory_untracked(struct wump_memory *memory, const SV *value) {
+	/* Bits only accumulate, including after rollback and address reuse.
+	 * A positive result always goes through the authoritative registry.
+	 * This only classifies registry membership; implicit shared values and
+	 * native class-cache fields still require their own metadata guards. */
+	UV hash = wump_memory_filter_hash(value);
+	uint64_t word = atomic_load_explicit(
+		&memory->published[hash & (WUMP_MEMORY_FILTER_WORDS - 1)], memory_order_acquire);
+	return !(word & (UINT64_C(1) << ((hash >> WUMP_MEMORY_FILTER_SHIFT) & 63)));
+}
+
 void Perl_wump_memory_lock(pTHX) {
 	if (pthread_mutex_lock(&aTHX->Iwump_memory->mutex)) abort();
 }
@@ -102,6 +147,8 @@ void Perl_wump_memory_init(pTHX) {
 	if (aTHX->Iwump_memory) return;
 	struct wump_memory *memory = calloc(1, sizeof(*memory));
 	if (!memory) croak("Wump: cannot allocate reclamation domain");
+	for (size_t i = 0; i < WUMP_MEMORY_FILTER_WORDS; i++)
+		atomic_init(&memory->published[i], 0);
 	pthread_mutexattr_t attr;
 	int result = pthread_mutexattr_init(&attr);
 	if (!result) {
@@ -116,6 +163,10 @@ void Perl_wump_memory_init(pTHX) {
 void Perl_wump_memory_mark(pTHX_ SV *value, unsigned state) {
 	struct wump_memory *memory = aTHX->Iwump_memory;
 	Perl_wump_memory_lock(aTHX);
+	/* Announce the address before installing metadata. Publication completes
+	 * before a value escapes to another act, so its acquire probe cannot
+	 * mistake a registered value for an untracked one. Never clear this bit. */
+	wump_memory_filter_mark(memory, value);
 	wump_shared *node = wump_memory_find(memory, value);
 	if (!node && !state) {
 		Perl_wump_memory_unlock(aTHX);
@@ -140,6 +191,7 @@ void Perl_wump_memory_mark(pTHX_ SV *value, unsigned state) {
 
 int Perl_wump_memory_shared(pTHX_ const SV *value) {
 	if (!aTHX->Iwump_memory) return -1;
+	if (wump_memory_untracked(aTHX->Iwump_memory, value)) return -1;
 	Perl_wump_memory_lock(aTHX);
 	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
 	int result = node && node->state ? node->state == 2 : -1;
@@ -149,6 +201,7 @@ int Perl_wump_memory_shared(pTHX_ const SV *value) {
 
 void Perl_wump_memory_check(pTHX_ const SV *value) {
 	if (!aTHX->Iwump_memory) return;
+	if (wump_memory_untracked(aTHX->Iwump_memory, value)) return;
 	Perl_wump_memory_lock(aTHX);
 	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
 	bool busy = node && (atomic_load_explicit(&node->access, memory_order_acquire) & WUMP_WRITER)
@@ -160,6 +213,7 @@ void Perl_wump_memory_check(pTHX_ const SV *value) {
 bool Perl_wump_read_try_begin(pTHX_ const SV *value, struct wump_shared **claim) {
 	*claim = NULL;
 	if (!value || !PL_wump_task || !aTHX->Iwump_memory || PL_phase == PERL_PHASE_DESTRUCT) return TRUE;
+	if (wump_memory_untracked(aTHX->Iwump_memory, value)) return TRUE;
 	Perl_wump_memory_lock(aTHX);
 	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
 	if (!node || node->state != 2) {
@@ -196,6 +250,7 @@ void Perl_wump_read_end(pTHX_ struct wump_shared *claim) {
 void Perl_wump_memory_forget(pTHX_ SV *value) {
 	struct wump_memory *memory = aTHX->Iwump_memory;
 	if (!memory) return;
+	if (wump_memory_untracked(memory, value)) return;
 	Perl_wump_memory_lock(aTHX);
 	wump_shared **link = &memory->buckets[wump_memory_bucket(value)];
 	while (*link && (*link)->value != value) link = &(*link)->next;
@@ -367,6 +422,7 @@ static void wump_schedule_check(pTHX) {
 static struct wump_mutation *wump_mutation_begin(pTHX_ SV *value, bool *busy) {
 	if (busy) *busy = FALSE;
 	if (!value || !PL_wump_task || !aTHX->Iwump_memory || PL_phase == PERL_PHASE_DESTRUCT) return NULL;
+	if (wump_memory_untracked(aTHX->Iwump_memory, value)) return NULL;
 	/* Interning grows strtab under its own mutex. It is not a user graph;
 	 * do not introduce the reverse keys-mutex -> metadata-mutex order. */
 	if (value == (SV *)PL_strtab) return NULL;
@@ -514,6 +570,7 @@ static wump_borrow *wump_borrow_new(pTHX) {
 static wump_borrow *wump_borrow_start(pTHX_ SV *value) {
 	if (!value || !aTHX->Iwump_memory || !PL_curstackinfo || PL_phase == PERL_PHASE_DESTRUCT)
 		return NULL;
+	if (wump_memory_untracked(aTHX->Iwump_memory, value)) return NULL;
 	Perl_wump_memory_lock(aTHX);
 	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
 	bool shared = node && node->state == 2;

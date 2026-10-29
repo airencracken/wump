@@ -71,6 +71,8 @@ void Perl_wump_checkpoint(pTHX);
 void Perl_wump_xs_allow(pTHX_ CV *cv);
 void Perl_wump_xs_check(pTHX_ CV *cv);
 bool Perl_wump_parallel(pTHX);
+U32 Perl_wump_stash_amagic(HV *stash, int operation);
+bool Perl_wump_stash_amg(pTHX_ HV *stash);
 void Perl_wump_panic(pTHX_ SV *error);
 SV **Perl_wump_gv_sv(GV *gv);
 AV **Perl_wump_gv_av(GV *gv);

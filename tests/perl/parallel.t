@@ -82,7 +82,9 @@ for my $procs (2, 4) {
 	WumpTest::check_program(q{
 		use Wump; use RootFixture;
 		package FirstCall {
-			use overload '&{}' => sub { Wump::yield(); return \&body }, fallback => 1;
+			use overload '&{}' => sub { Wump::yield(); return \&body },
+				'bool' => sub { Wump::yield(); return 1 },
+				'""' => sub { Wump::yield(); return 'callable' }, fallback => 1;
 			sub new { bless {}, shift }
 			sub body ($n) { Wump::yield(); return $n + 1 }
 			sub named ($self, $n) { return body($n) }
@@ -94,6 +96,8 @@ for my $procs (2, 4) {
 				my $callable = FirstCall->new;
 				my $direct = \&FirstCall::body;
 				for (1..32) {
+					die "boolean overload changed\n" unless $callable;
+					die "string overload changed\n" unless "$callable" eq 'callable';
 					die "named call changed\n" unless $callable->named($id) == $id + 1;
 					die "direct call changed\n" unless $direct->($id) == $id + 1;
 					die "overloaded call changed\n" unless $callable->($id) == $id + 1;

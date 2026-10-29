@@ -2,6 +2,20 @@
 # Actual Perl method bodies execute only after that region has ended.
 sub apply_parallel {
 	my ($source) = @_;
+	# Overload-cache initialization rewrites the stash head's flags. These
+	# macros are also read outside method opcodes, including callee resolution.
+	edit('sv.h', "#define HvAMAGIC(hv)\t\t(SvFLAGS(hv) & SVf_AMAGIC)",
+		'#define HvAMAGIC(hv) Perl_wump_stash_amagic((HV *)(hv), 0)');
+	edit('sv.h', "#define HvAMAGIC_on(hv)\t\t(SvFLAGS(hv) |= SVf_AMAGIC)",
+		'#define HvAMAGIC_on(hv) Perl_wump_stash_amagic((HV *)(hv), 1)');
+	edit('sv.h', "#define HvAMAGIC_off(hv)\t(SvFLAGS(hv) &=~ SVf_AMAGIC)",
+		'#define HvAMAGIC_off(hv) Perl_wump_stash_amagic((HV *)(hv), -1)');
+	my $sv = read_file("$source/sv.h");
+	unless (index($sv, '#define Gv_AMG(stash) Perl_wump_stash_amg(aTHX_ stash)') >= 0) {
+		$sv =~ s/^#define Gv_AMG\(stash\) \\\n.*?: \(HvAMAGIC_off\(stash\), 0\)\)/#define Gv_AMG(stash) Perl_wump_stash_amg(aTHX_ stash)/ms
+			or die "missing overload cache predicate\n";
+		write_file("$source/sv.h", $sv);
+	}
 	memory_guard($source, 'universal.c', 'isa_lookup', 'bool', 'stash',
 		'Perl_wump_parallel(aTHX)', undef, 1, 'S_');
 	for my $spec (
