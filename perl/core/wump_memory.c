@@ -25,7 +25,37 @@ struct wump_memory {
 	wump_shared *buckets[WUMP_MEMORY_BUCKETS];
 	struct wump_retired *retired;
 	size_t nodes, pins, pending;
+	struct wump_parallel_xs *parallel_xs;
 };
+
+typedef struct wump_parallel_xs {
+	XSUBADDR_t entry;
+	struct wump_parallel_xs *next;
+} wump_parallel_xs;
+
+void Perl_wump_xs_allow(pTHX_ CV *cv) {
+	if (PL_wump_task) croak("Wump: declare XS parallel safety before program execution");
+	if (!CvISXSUB(cv)) croak("Wump: parallel XS registration requires an XSUB");
+	XSUBADDR_t entry = CvXSUB(cv);
+	for (wump_parallel_xs *slot = aTHX->Iwump_memory->parallel_xs; slot; slot = slot->next)
+		if (slot->entry == entry) return;
+	wump_parallel_xs *slot;
+	Newx(slot, 1, wump_parallel_xs);
+	slot->entry = entry;
+	slot->next = aTHX->Iwump_memory->parallel_xs;
+	aTHX->Iwump_memory->parallel_xs = slot;
+}
+
+void Perl_wump_xs_check(pTHX_ CV *cv) {
+	if (wump_nprocs() <= 1 || CvCONST(cv)) return;
+	for (wump_parallel_xs *slot = aTHX->Iwump_memory->parallel_xs; slot; slot = slot->next)
+		if (slot->entry == CvXSUB(cv)) return;
+	croak("Wump: XS function has not declared parallel safety");
+}
+
+bool Perl_wump_parallel(pTHX) {
+	return PL_wump_task && wump_nprocs() > 1;
+}
 
 struct wump_mutation {
 	wump_shared *node;
@@ -254,6 +284,11 @@ void Perl_wump_memory_destroy(pTHX) {
 	if (!memory) return;
 	Perl_wump_memory_collect(aTHX);
 	assert(!memory->pins && !memory->retired);
+	while (memory->parallel_xs) {
+		wump_parallel_xs *slot = memory->parallel_xs;
+		memory->parallel_xs = slot->next;
+		Safefree(slot);
+	}
 	for (size_t i = 0; i < WUMP_MEMORY_BUCKETS; i++) {
 		wump_shared *node = memory->buckets[i];
 		while (node) {
@@ -282,6 +317,14 @@ void Perl_wump_memory_clone_check(pTHX) {
 static void wump_mutation_release(pTHX_ struct wump_mutation *guard) {
 	if (!guard || !guard->active) return;
 	guard->active = FALSE;
+	if (!guard->node) {
+		if (PL_wump_task) {
+			assert(PL_wump_task->critical);
+			PL_wump_task->critical--;
+		}
+		Perl_wump_memory_unlock(aTHX);
+		return;
+	}
 	Perl_wump_memory_lock(aTHX);
 	wump_shared *node = guard->node;
 	assert(node->writer == guard->actor && node->depth);
@@ -299,6 +342,25 @@ static void wump_mutation_unwind(pTHX_ void *arg) {
 	struct wump_mutation *guard = arg;
 	wump_mutation_release(aTHX_ guard);
 	free(guard);
+}
+
+struct wump_mutation *Perl_wump_metadata_begin(pTHX) {
+	if (!aTHX->Iwump_memory || !PL_curstackinfo || PL_phase == PERL_PHASE_DESTRUCT) return NULL;
+	SSCHECK(3);
+	struct wump_mutation *guard = calloc(1, sizeof(*guard));
+	if (!guard) croak("Wump: cannot allocate metadata guard");
+	guard->mark = PL_savestack_ix;
+	SAVEDESTRUCTOR_X(wump_mutation_unwind, guard);
+	guard->top = PL_savestack_ix;
+	Perl_wump_memory_lock(aTHX);
+	guard->active = TRUE;
+	if (PL_wump_task) PL_wump_task->critical++;
+	return guard;
+}
+
+static void wump_schedule_check(pTHX) {
+	if (PL_wump_task && (PL_wump_task->critical || Perl_wump_publish_active(aTHX)))
+		croak("Wump: scheduling inside a native metadata operation is not supported");
 }
 
 static struct wump_mutation *wump_mutation_begin(pTHX_ SV *value, bool *busy) {

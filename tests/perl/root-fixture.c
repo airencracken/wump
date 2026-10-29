@@ -2,6 +2,8 @@
 #include "perl.h"
 #include "XSUB.h"
 #include <stdint.h>
+#include <pthread.h>
+#include <stdatomic.h>
 #include "wump.h"
 
 extern OP *Perl_wump_write_impl_preinc(pTHX);
@@ -9,6 +11,59 @@ extern OP *Perl_wump_write_impl_preinc(pTHX);
 static SV *read_target(pTHX_ SV *reference) {
 	if (!SvROK(reference)) croak("scalar reference required");
 	return SvRV(reference);
+}
+
+static XS(xs_execution_context) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items) croak("Usage: RootFixture::execution_context()");
+	AV *state = newAV();
+	av_push(state, newSVuv(PTR2UV(aTHX)));
+	av_push(state, newSVuv(PTR2UV(PL_wump_task)));
+	av_push(state, newSViv(wump_worker_id()));
+	av_push(state, newSViv(wump_nprocs()));
+	ST(0) = sv_2mortal(newRV_noinc((SV *)state));
+	XSRETURN(1);
+}
+
+static pthread_once_t executor_once = PTHREAD_ONCE_INIT;
+static pthread_barrier_t executor_barrier;
+static _Atomic unsigned executor_arrivals;
+static unsigned executor_slots;
+
+static void executor_barrier_init(void) {
+	executor_slots = (unsigned)wump_nprocs();
+	if (pthread_barrier_init(&executor_barrier, NULL, executor_slots)) abort();
+}
+
+static XS(xs_executor_rendezvous) {
+	dXSARGS;
+	if (items || !PL_wump_task) croak("Usage: RootFixture::executor_rendezvous() inside an act");
+	if (pthread_once(&executor_once, executor_barrier_init)) abort();
+	/* Hold the first job on each slot until all slots have entered. This
+	 * makes the distribution check deterministic even under Valgrind. */
+	if (atomic_fetch_add_explicit(&executor_arrivals, 1, memory_order_relaxed) < executor_slots) {
+		int result = pthread_barrier_wait(&executor_barrier);
+		if (result && result != PTHREAD_BARRIER_SERIAL_THREAD) abort();
+	}
+	xs_execution_context(aTHX_ cv);
+}
+
+static XS(xs_metadata_guard) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items != 1 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVCV)
+		croak("Usage: RootFixture::metadata_guard(CALLBACK)");
+	ENTER;
+	SAVETMPS;
+	struct wump_mutation *guard = Perl_wump_metadata_begin(aTHX);
+	PUSHMARK(SP);
+	PUTBACK;
+	call_sv(ST(0), G_DISCARD);
+	Perl_wump_mutation_end(aTHX_ guard);
+	FREETMPS;
+	LEAVE;
+	XSRETURN_EMPTY;
 }
 
 static XS(xs_scalar_publish) {
@@ -487,6 +542,9 @@ XS_EXTERNAL(boot_RootFixture) {
 	PERL_UNUSED_VAR(cv);
 	PERL_UNUSED_VAR(items);
 	newXS("RootFixture::make", xs_make, __FILE__);
+	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::execution_context", xs_execution_context, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::executor_rendezvous", xs_executor_rendezvous, __FILE__));
+	newXS("RootFixture::metadata_guard", xs_metadata_guard, __FILE__);
 	newXS("RootFixture::opaque_regex", xs_opaque_regex, __FILE__);
 	newXS("RootFixture::constructor_self", xs_constructor_self, __FILE__);
 	newXS("RootFixture::debug_runops", xs_debug_runops, __FILE__);

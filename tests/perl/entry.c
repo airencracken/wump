@@ -59,6 +59,7 @@ int main(int argc, char **argv, char **env) {
 	char *programs[] = {first, second, deadlock, recovered};
 	int statuses[] = {0, 0, 2, 0};
 	for (size_t n = 0; n < sizeof(programs) / sizeof(programs[0]); n++) {
+		if (setenv("WUMPPROCS", n ? "4" : "1", 1)) return 1;
 		PerlInterpreter *interp = perl_alloc();
 		if (!interp) return 1;
 		PERL_SET_CONTEXT(interp);
@@ -81,6 +82,6 @@ int main(int argc, char **argv, char **env) {
 		if (status != statuses[n]) return 1;
 	}
 	PERL_SYS_TERM();
-	puts("ok - interpreter entry preserves global slots, rejects stale channel IDs, and restarts after shutdown and deadlock");
+	puts("ok - interpreter entry preserves root slots and stale IDs, then restarts four-slot runtimes after shutdown and deadlock");
 	return 0;
 }

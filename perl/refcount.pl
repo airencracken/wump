@@ -2,6 +2,20 @@
 # fast path and safe concurrent allocation/reclamation remain separate work.
 sub apply_refcount {
 	my ($source) = @_;
+	# Compiled pad names are shared by all act-local call frames. Their
+	# ownership must remain atomic even though the frames themselves differ.
+	edit('inline.h', '    PadnameREFCNT(pn)++;',
+		'    __atomic_add_fetch(&PadnameREFCNT(pn), 1, __ATOMIC_RELAXED);');
+	edit('inline.h', '    PadnamelistREFCNT(pnl)++;',
+		'    __atomic_add_fetch(&PadnamelistREFCNT(pnl), 1, __ATOMIC_RELAXED);');
+	edit('pad.c', '    if (!--PadnamelistREFCNT(pnl)) {',
+		'    if (__atomic_fetch_sub(&PadnamelistREFCNT(pnl), 1, __ATOMIC_ACQ_REL) == 1) {');
+	edit('pad.c', '    if (!--PadnameREFCNT(pn)) {',
+		'    if (__atomic_fetch_sub(&PadnameREFCNT(pn), 1, __ATOMIC_ACQ_REL) == 1) {');
+	edit('pad.c', '        PadnamelistREFCNT(padname = PL_comppad_name)++;',
+		'        padname = PadnamelistREFCNT_inc(PL_comppad_name);');
+	edit('pad.c', 'PL_padlist_generation++;',
+		'__atomic_fetch_add(&PL_padlist_generation, 1, __ATOMIC_RELAXED);');
 	edit('sv.h', '/* start with 2 sv-head building blocks */', <<'C');
 /* start with 2 sv-head building blocks */
 /* C++ XS retains the upstream head layout and lvalue API. Its standard

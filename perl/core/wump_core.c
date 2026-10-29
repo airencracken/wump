@@ -1,5 +1,5 @@
 /* Built into the private Perl fork; this cannot be loaded into stock Perl.
- * The first bridge uses one execution slot and never clones interpreters. */
+ * Acts share one interpreter and never clone it; execution state is private. */
 #include "XSUB.h"
 #include "wump_runtime_internal.h"
 #include <math.h>
@@ -26,6 +26,7 @@ void Perl_wump_checkpoint(pTHX) {
 	 * Only ordinary runtime op boundaries are automatic scheduling points.
 	 * Teardown cannot resume abandoned C frames or schedule destructors. */
 	if (task && task->initialized && !task->finished && PL_phase == PERL_PHASE_RUN
+		&& !task->critical
 		&& !PL_parser && PL_curstackinfo->si_type == PERLSI_MAIN
 		&& !Perl_wump_publish_active(aTHX)) {
 		wump_checkpoint();
@@ -35,8 +36,16 @@ void Perl_wump_checkpoint(pTHX) {
 int Perl_wump_runops(pTHX) {
 	unsigned ticks = 256;
 	OP *op = PL_op;
+	bool parallel = wump_nprocs() > 1;
 	PERL_DTRACE_PROBE_OP(op);
-	while ((PL_op = op = op->op_ppaddr(aTHX))) {
+	while (op) {
+		PL_op = op;
+		if (parallel && (op->op_type == OP_ENTEREVAL || op->op_type == OP_REQUIRE
+			|| op->op_type == OP_DOFILE || op->op_type == OP_REGCOMP))
+			croak("Wump: runtime compilation is not supported during parallel execution");
+		op = op->op_ppaddr(aTHX);
+		PL_op = op;
+		if (!op) break;
 		if (--ticks == 0) {
 			ticks = 256;
 			Perl_wump_checkpoint(aTHX);
@@ -181,25 +190,50 @@ typedef struct wump_perl_channel {
 } wump_perl_channel;
 
 typedef struct wump_perl_run {
-	struct wump_perl_allocator allocator;
+	struct wump_perl_allocator *allocators;
+	int nprocs;
+	pthread_mutex_t registry;
 	wump_perl_channel *channels;
 	wump_perl_message *messages;
 	struct wump_perl_waitgroup *groups;
 	struct wump_perl_lock *locks;
 	SV *panic;
-	UV panic_task, next_task;
+	UV panic_task;
+	_Atomic UV next_task;
 	int started;
 	int status;
 } wump_perl_run;
 
 static wump_perl_run *wump_perl_active;
-static UV wump_channel_id;
+static _Atomic UV wump_channel_id;
+
+static UV wump_next_id(pTHX_ _Atomic UV *sequence, const char *kind) {
+	UV previous = atomic_load_explicit(sequence, memory_order_relaxed);
+	for (;;) {
+		if (previous == UV_MAX) croak("Wump: %s id space exhausted", kind);
+		if (atomic_compare_exchange_weak_explicit(sequence, &previous, previous + 1,
+			memory_order_relaxed, memory_order_relaxed)) return previous + 1;
+	}
+}
+
+static void wump_registry_lock(void) {
+	if (pthread_mutex_lock(&wump_perl_active->registry)) abort();
+}
+
+static void wump_registry_unlock(void) {
+	if (pthread_mutex_unlock(&wump_perl_active->registry)) abort();
+}
 
 void Perl_wump_panic(pTHX_ SV *error) {
+	SV *copy = newSVsv(error);
+	wump_registry_lock();
 	if (!wump_perl_active->panic) {
-		wump_perl_active->panic = newSVsv(error);
+		wump_perl_active->panic = copy;
 		wump_perl_active->panic_task = PL_wump_task->id;
+		copy = NULL;
 	}
+	wump_registry_unlock();
+	SvREFCNT_dec(copy);
 	wump_halt(ECANCELED);
 }
 
@@ -233,7 +267,6 @@ void Perl_wump_cv_prepare(pTHX_ CV *cv) {
 	if (PL_wump_task == NULL || PL_wump_task->finished == 2 ||
 		CvISXSUB(cv) || wump_cv_find(aTHX_ cv) != NULL) return;
 	Perl_wump_publish(aTHX_ (SV *)cv);
-	if (PL_wump_task->main) return;
 	PADLIST *original = CvPADLIST(cv);
 	if (original == NULL) return;
 	wump_cv_slot *slot;
@@ -282,15 +315,21 @@ AV **Perl_wump_gv_av(GV *gv) {
 
 static void wump_perl_enter(void *arg) {
 	struct wump_perl_task *task = arg;
-	PERL_SET_CONTEXT(task->interp);
-	Perl_wump_allocator_activate(task->interp, &wump_perl_active->allocator);
+	/* SET_CONTEXT consults execution phase while restoring libc's locale.
+	 * Select this act before it can inspect the interpreter's root fields. */
 	Perl_wump_task_activate(task->interp, task);
+	int worker = wump_worker_id();
+	/* Shutdown frees abandoned acts after every executor has joined. */
+	if (worker < 0) worker = 0;
+	assert(worker < wump_perl_active->nprocs);
+	Perl_wump_allocator_activate(task->interp, &wump_perl_active->allocators[worker]);
+	PERL_SET_CONTEXT(task->interp);
 }
 
 static void wump_perl_task_free(void *arg) {
 	struct wump_perl_task *task = arg;
 	dTHXa(task->interp);
-	Perl_wump_allocator_activate(aTHX_ &wump_perl_active->allocator);
+	wump_perl_enter(task);
 	if (!task->initialized) {
 		/* A queued task has no Perl stacks on which to free its CV. */
 		Perl_wump_task_activate(aTHX_ NULL);
@@ -299,7 +338,6 @@ static void wump_perl_task_free(void *arg) {
 		Safefree(task);
 		return;
 	}
-	wump_perl_enter(task);
 	int abandoned = !task->finished;
 	/* Destructors may call Perl, but cannot schedule during teardown.
 	 * Use ordinary recursive pads for new calls instead of creating
@@ -369,6 +407,9 @@ static void wump_perl_task_free(void *arg) {
 			Safefree(task);
 			return;
 		}
+		SvREFCNT_dec(PL_stashcache);
+		PL_stashcache = NULL;
+		Perl_free_tied_hv_pool(aTHX);
 		if (PL_reg_curpm != NULL) {
 			IV offset = PL_reg_curpm->op_pmoffset;
 			/* The fake PMOP was allocated by regexec, not newPMOP. Its
@@ -421,6 +462,7 @@ static struct wump_perl_task *wump_perl_task_new(pTHX_ SV *callback) {
 	Newxz(task, 1, struct wump_perl_task);
 	task->interp = aTHX;
 	task->entry = CvREFCNT_inc((CV *)SvRV(callback));
+	task->Iphase = PERL_PHASE_RUN;
 	task->Icurcop = PL_curcop;
 	task->Icurstash = PL_curstash;
 	task->Idefoutgv = PL_defoutgv;
@@ -440,7 +482,7 @@ static struct wump_perl_task *wump_perl_task_new(pTHX_ SV *callback) {
 			Perl_wump_publish_snapshot(aTHX_ (SV *)slot->cell);
 		}
 	}
-	task->id = ++wump_perl_active->next_task;
+	task->id = wump_next_id(aTHX_ &wump_perl_active->next_task, "task");
 	LEAVE_SCOPE(mark);
 	return task;
 }
@@ -462,6 +504,7 @@ static void wump_perl_task_start(void *arg) {
 	JMPENV_BOOTSTRAP;
 	init_stacks();
 	task->initialized = 1;
+	PL_stashcache = newHV();
 	/* gv_init treats an already typed SV as a subroutine prototype. These
 	 * slots are private cells, with no namespace/backreference membership. */
 	PL_defgv = (GV *)newSV(0);
@@ -493,23 +536,47 @@ static void wump_perl_task_start(void *arg) {
 int Perl_wump_main(pTHX) {
 	if (wump_perl_active != NULL) croak("Wump: another interpreter runtime is active");
 	wump_perl_run run = {0};
-	Perl_wump_allocator_init(aTHX_ &run.allocator);
+	run.nprocs = 1;
+	const char *procs = getenv("WUMPPROCS");
+	if (procs) {
+		unsigned count = 0;
+		for (const char *p = procs; *p; p++) {
+			if (*p < '0' || *p > '9' || count > 256)
+				croak("Wump: WUMPPROCS must be an integer from 1 to 256");
+			count = count * 10 + (unsigned)(*p - '0');
+		}
+		if (!count || count > 256) croak("Wump: WUMPPROCS must be an integer from 1 to 256");
+		run.nprocs = (int)count;
+	}
+	if (run.nprocs > 1 && PL_runops != Perl_runops_standard)
+		croak("Wump: custom runloops are not supported during parallel execution");
+#ifdef DEBUGGING
+	if (run.nprocs > 1 && PL_debug) croak("Wump: debug runloops are not supported during parallel execution");
+#endif
+	Newxz(run.allocators, run.nprocs, struct wump_perl_allocator);
+	for (int i = 0; i < run.nprocs; i++) Perl_wump_allocator_init(aTHX_ &run.allocators[i]);
+	if (pthread_mutex_init(&run.registry, NULL)) {
+		Safefree(run.allocators);
+		croak("Wump: cannot initialize runtime registry");
+	}
 	struct wump_perl_task *task;
 	Newxz(task, 1, struct wump_perl_task);
 	wump_perl_active = &run;
 	task->interp = aTHX;
-	task->id = ++run.next_task;
+	task->id = wump_next_id(aTHX_ &run.next_task, "task");
 	task->main = 1;
 	/* perlmain normally defers END until perl_destruct. Run it while
 	 * the main act, its match state, and the scheduler are still alive. */
 	U8 destruct_end = PL_exit_flags & PERL_EXIT_DESTRUCT_END;
 	PL_exit_flags &= ~PERL_EXIT_DESTRUCT_END;
-	int result = wump_run(wump_perl_task_start, task, 1);
+	int result = wump_run(wump_perl_task_start, task, run.nprocs);
 	int error = wump_errno();
 	PL_exit_flags |= destruct_end;
 	Perl_wump_task_activate(aTHX_ NULL);
 	Perl_wump_allocator_activate(aTHX_ NULL);
-	Perl_wump_allocator_merge(aTHX_ &run.allocator);
+	for (int i = 0; i < run.nprocs; i++) Perl_wump_allocator_merge(aTHX_ &run.allocators[i]);
+	Safefree(run.allocators);
+	if (pthread_mutex_destroy(&run.registry)) abort();
 	/* Startup can fail before the task has attached its cleanup hook. */
 	if (!run.started) {
 		Safefree(task);
@@ -583,9 +650,13 @@ static wump_perl_channel *wump_perl_channel_get(pTHX_ SV *object) {
 	if (wump_perl_active == NULL || wump_self() == NULL || PL_wump_task == NULL) croak("Wump: channel operation requires a running task");
 	if (!SvROK(object) || !sv_derived_from(object, "Wump::Channel") || SvTYPE(SvRV(object)) >= SVt_PVAV) croak("Wump: invalid channel");
 	UV id = SvUV(SvRV(object));
-	for (wump_perl_channel *ch = wump_perl_active->channels; ch != NULL; ch = ch->next) {
-		if (ch->id == id) return ch;
+	wump_registry_lock();
+	wump_perl_channel *found = NULL;
+	for (wump_perl_channel *ch = wump_perl_active->channels; ch; ch = ch->next) {
+		if (ch->id == id) { found = ch; break; }
 	}
+	wump_registry_unlock();
+	if (found) return found;
 	croak("Wump: channel belongs to an inactive runtime");
 }
 
@@ -595,14 +666,16 @@ static void xs_wump_chan(pTHX_ CV *cv) {
 	if (!SvOK(ST(0)) || SvROK(ST(0)) || !looks_like_number(ST(0))) croak("Wump: invalid channel capacity");
 	NV capacity = SvNV(ST(0));
 	if (!isfinite(capacity) || capacity < 0 || capacity > INT_MAX || capacity != (NV)(IV)capacity) croak("Wump: invalid channel capacity");
-	if (wump_channel_id == UV_MAX) croak("Wump: channel id space exhausted");
+	UV channel_id = wump_next_id(aTHX_ &wump_channel_id, "channel");
 	wump_perl_channel *ch;
 	Newxz(ch, 1, wump_perl_channel);
 	ch->ch = wump_chan_make(sizeof(wump_perl_message *), (size_t)capacity);
 	if (ch->ch == NULL) { Safefree(ch); croak("Wump: channel allocation failed"); }
-	ch->id = ++wump_channel_id;
+	ch->id = channel_id;
+	wump_registry_lock();
 	ch->next = wump_perl_active->channels;
 	wump_perl_active->channels = ch;
+	wump_registry_unlock();
 	SV *id = newSVuv(ch->id);
 	SV *object = newRV_noinc(id);
 	sv_bless(object, gv_stashpvs("Wump::Channel", GV_ADD));
@@ -613,13 +686,16 @@ static void xs_wump_chan(pTHX_ CV *cv) {
 
 static void xs_wump_send(pTHX_ CV *cv) {
 	dXSARGS;
+	wump_schedule_check(aTHX);
 	if (items != 2) croak("Usage: CHANNEL->send(VALUE)");
 	wump_perl_channel *ch = wump_perl_channel_get(aTHX_ ST(0));
 	wump_perl_message *message;
 	Newxz(message, 1, wump_perl_message);
+	wump_registry_lock();
 	message->next = wump_perl_active->messages;
 	if (message->next != NULL) message->next->previous = message;
 	wump_perl_active->messages = message;
+	wump_registry_unlock();
 	message->value = newSVsv(ST(1));
 	Perl_wump_publish(aTHX_ message->value);
 	if (wump_chan_send(ch->ch, &message) != 0) croak("Wump: send on closed channel");
@@ -628,6 +704,7 @@ static void xs_wump_send(pTHX_ CV *cv) {
 
 static void xs_wump_recv(pTHX_ CV *cv) {
 	dXSARGS;
+	wump_schedule_check(aTHX);
 	if (items != 1) croak("Usage: CHANNEL->recv()");
 	wump_perl_channel *ch = wump_perl_channel_get(aTHX_ ST(0));
 	wump_perl_message *message = NULL;
@@ -640,9 +717,11 @@ static void xs_wump_recv(pTHX_ CV *cv) {
 	}
 	ST(0) = sv_2mortal(newSVsv(message->value));
 	SvREFCNT_dec(message->value);
+	wump_registry_lock();
 	if (message->previous != NULL) message->previous->next = message->next;
 	else wump_perl_active->messages = message->next;
 	if (message->next != NULL) message->next->previous = message->previous;
+	wump_registry_unlock();
 	Safefree(message);
 	if (GIMME_V == G_LIST) { EXTEND(SP, 1); ST(1) = &PL_sv_yes; XSRETURN(2); }
 	XSRETURN(1);
@@ -658,6 +737,7 @@ static void xs_wump_close(pTHX_ CV *cv) {
 
 static void xs_wump_yield(pTHX_ CV *cv) {
 	dXSARGS;
+	wump_schedule_check(aTHX);
 	if (items != 0 || wump_self() == NULL || PL_wump_task == NULL) croak("Wump: yield requires a running task");
 	wump_yield();
 	XSRETURN_EMPTY;
@@ -665,6 +745,7 @@ static void xs_wump_yield(pTHX_ CV *cv) {
 
 static void xs_wump_sleep(pTHX_ CV *cv) {
 	dXSARGS;
+	wump_schedule_check(aTHX);
 	if (items != 1 || wump_self() == NULL || PL_wump_task == NULL) croak("Wump: sleep requires a running task");
 	if (!SvOK(ST(0)) || SvROK(ST(0)) || !looks_like_number(ST(0))) croak("Wump: invalid sleep duration");
 	NV duration = SvNV(ST(0));
@@ -674,18 +755,18 @@ static void xs_wump_sleep(pTHX_ CV *cv) {
 }
 
 void Perl_wump_boot(pTHX) {
-	newXS("Wump::_enable", xs_wump_enable, __FILE__);
-	newXS("Wump::_waitgroup", xs_wump_waitgroup, __FILE__);
-	newXS("Wump::_wg_add", xs_wump_wg_add, __FILE__);
-	newXS("Wump::_wg_done", xs_wump_wg_done, __FILE__);
-	newXS("Wump::_wg_wait", xs_wump_wg_wait, __FILE__);
-	newXS("Wump::_wg_destroy", xs_wump_wg_destroy, __FILE__);
-	newXS("Wump::is_shared", xs_wump_is_shared, __FILE__);
-	newXS("Wump::_act", xs_wump_act, __FILE__);
-	newXS("Wump::_chan", xs_wump_chan, __FILE__);
-	newXS("Wump::_send", xs_wump_send, __FILE__);
-	newXS("Wump::_recv", xs_wump_recv, __FILE__);
-	newXS("Wump::_close", xs_wump_close, __FILE__);
-	newXS("Wump::_yield", xs_wump_yield, __FILE__);
-	newXS("Wump::_sleep", xs_wump_sleep, __FILE__);
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::_enable", xs_wump_enable, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::_waitgroup", xs_wump_waitgroup, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::_wg_add", xs_wump_wg_add, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::_wg_done", xs_wump_wg_done, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::_wg_wait", xs_wump_wg_wait, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::_wg_destroy", xs_wump_wg_destroy, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::is_shared", xs_wump_is_shared, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::_act", xs_wump_act, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::_chan", xs_wump_chan, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::_send", xs_wump_send, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::_recv", xs_wump_recv, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::_close", xs_wump_close, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::_yield", xs_wump_yield, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::_sleep", xs_wump_sleep, __FILE__));
 }

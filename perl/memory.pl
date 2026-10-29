@@ -1,9 +1,10 @@
 sub memory_guard {
-	my ($source, $file, $name, $type, $value, $condition, $second) = @_;
+	my ($source, $file, $name, $type, $value, $condition, $second, $metadata, $prefix) = @_;
+	$prefix //= 'Perl_';
 	my $text = read_file("$source/$file");
 	my $marker = "/* Wump mutation wrapper: $name */";
 	return if index($text, $marker) >= 0;
-	$text =~ /^(Perl_\Q$name\E\([^;]*?\))\n\{/mg or die "$file: missing $name\n";
+	$text =~ /^(\Q$prefix$name\E\([^;]*?\))\n\{/mg or die "$file: missing $name\n";
 	my $signature = $1;
 	my $start = $-[1];
 	my $end = index($text, "\n}\n", pos($text));
@@ -11,11 +12,12 @@ sub memory_guard {
 	$end += 3;
 	my $body = substr($text, $start, $end - $start);
 	my $params = $signature;
-	$params =~ s/^Perl_\Q$name\E\(pTHX_\s*// or die "$name: missing pTHX\n";
+	$params =~ s/^\Q$prefix$name\E\(pTHX_\s*// or die "$name: missing pTHX\n";
 	$params =~ s/\)\z//;
 	my @args = map { /\b(\w+)\s*\z/ ? $1 : die "$name: unsupported argument $_\n" } split /,/, $params;
 	@args = map { $_ eq 'ptr' ? 'Perl_wump_mutation_pointer(aTHX_ guard, ptr)' : $_ } @args if $name eq 'sv_chop';
 	my $begin = "Perl_wump_mutation_begin(aTHX_ (SV *)$value)";
+	$begin = 'Perl_wump_metadata_begin(aTHX)' if $metadata;
 	$begin = "($condition) ? $begin : NULL" if defined $condition;
 	my $call = "wump_memory_impl_$name(aTHX_ " . join(', ', @args) . ')';
 	my $invoke = $type eq 'void' ? "$call;" : "$type result = $call;";
@@ -23,8 +25,9 @@ sub memory_guard {
 	my $extra = defined($second) ? "    SV *second = $second;\n"
 		. "    struct wump_mutation *other = second != (SV *)$value ? Perl_wump_mutation_begin(aTHX_ second) : NULL;\n" : '';
 	my $release = defined($second) ? "    Perl_wump_mutation_end(aTHX_ other);\n" : '';
-	$body = "#define Perl_$name wump_memory_impl_$name\n$body#undef Perl_$name\n\n"
-		. "$marker\n$type\n$signature\n{\n    struct wump_mutation *guard = $begin;\n$extra    $invoke\n$release    Perl_wump_mutation_end(aTHX_ guard);$return\n}\n";
+	my $storage = $prefix eq 'S_' ? 'STATIC ' : '';
+	$body = "#define $prefix$name wump_memory_impl_$name\n$body#undef $prefix$name\n\n"
+		. "$marker\n$storage$type\n$signature\n{\n    struct wump_mutation *guard = $begin;\n$extra    $invoke\n$release    Perl_wump_mutation_end(aTHX_ guard);$return\n}\n";
 	substr($text, $start, $end - $start, $body);
 	write_file("$source/$file", $text);
 }
@@ -109,6 +112,11 @@ C
 	edit('sv.c', '        (void) SvIV(sv);', '        (void) sv_2iv_flags(sv, SV_GMAGIC | SV_MUTABLE_RETURN);');
 	for my $name (qw(sv_catpvn_flags sv_catsv_flags)) {
 		memory_guard($source, 'sv.c', $name, 'void', 'dsv');
+	}
+	# Namespace CV backreferences are shared even when the CVs themselves
+	# are private. These short native operations invoke no user callbacks.
+	for my $name (qw(sv_add_backref sv_del_backref)) {
+		memory_guard($source, 'sv.c', $name, 'void', 'tsv', undef, undef, 1);
 	}
 	memory_guard($source, 'sv.c', 'sv_setsv_mg', 'void', 'dsv', 'dsv != ssv');
 	memory_guard($source, 'sv.c', 'sv_catpv', 'void', 'dsv');

@@ -18,6 +18,8 @@ typedef struct fixture {
 	SV *values[workers][batch], *survivors[workers], *roots[workers];
 	HEK *keys[workers][key_batch], *common;
 	HEK *canonical[workers];
+	HV *closure_stash;
+	CV *closures[workers][16];
 } fixture;
 typedef struct thread_arg { fixture *f; int id; } thread_arg;
 
@@ -161,6 +163,15 @@ static void *exercise(void *arg) {
 	rendezvous(f);
 	rendezvous(f); /* Keep the table quiescent while main checks retirement. */
 	for (int round = 0; round < rounds; round++) {
+		for (int i = 0; i < 16; i++) {
+			CV *cv = (CV *)newSV_type(SVt_PVCV);
+			CvSTASH_set(cv, f->closure_stash);
+			f->closures[ctx->id][i] = cv;
+		}
+		rendezvous(f);
+		rendezvous(f);
+		for (int i = 0; i < 16; i++) SvREFCNT_dec(f->closures[(ctx->id + 1) % workers][i]);
+		rendezvous(f);
 		for (int i = 0; i < batch; i++) f->values[ctx->id][i] = make_value(aTHX_ round * batch + i);
 		rendezvous(f);
 		rendezvous(f); /* Main validates live values before any final drop. */
@@ -214,6 +225,12 @@ int main(int argc, char **argv, char **env) {
 		return 1;
 	}
 	CHECK(argc == 1);
+	f.closure_stash = newHV();
+	CV *stash_anchors[2];
+	for (int i = 0; i < 2; i++) {
+		stash_anchors[i] = (CV *)newSV_type(SVt_PVCV);
+		CvSTASH_set(stash_anchors[i], f.closure_stash);
+	}
 	IV baseline = PL_sv_count;
 	STRLEN table_baseline = HvTOTALKEYS(PL_strtab), old_max = HvMAX(PL_strtab);
 	const char common[] = "wump\0shared-key";
@@ -248,6 +265,11 @@ int main(int argc, char **argv, char **env) {
 	CHECK(HvTOTALKEYS(PL_strtab) == table_baseline);
 	rendezvous(&f);
 	for (int round = 0; round < rounds; round++) {
+		rendezvous(&f);
+		for (int n = 0; n < workers; n++)
+			for (int i = 0; i < 16; i++) CHECK(CvSTASH(f.closures[n][i]) == f.closure_stash);
+		rendezvous(&f);
+		rendezvous(&f);
 		rendezvous(&f);
 		CHECK(Perl_wump_allocator_current(aTHX) == NULL);
 		CHECK(PL_sv_root == root && PL_sv_arenaroot == arenas && PL_body_arenas == bodies);
@@ -298,6 +320,8 @@ int main(int argc, char **argv, char **env) {
 		SvREFCNT_dec(sv);
 	}
 	CHECK(PL_sv_count == baseline);
+	for (int i = 0; i < 2; i++) SvREFCNT_dec(stash_anchors[i]);
+	SvREFCNT_dec(f.closure_stash);
 	PL_perl_destruct_level = 2;
 	CHECK(perl_destruct(f.interp) == 0);
 	perl_free(f.interp);
@@ -307,5 +331,6 @@ int main(int argc, char **argv, char **env) {
 	perl_free(f.other);
 	PERL_SYS_TERM();
 	puts("ok - 8 executors share and retire 8192 interned keys, exchange 131072 values including hashes, migrate caches, and finish full teardown");
+	puts("ok - 4096 closure stash backreferences survive concurrent creation and cross-executor final destruction");
 	return 0;
 }

@@ -256,6 +256,13 @@ its own `my_perl`.
   (TLS, for `dTHX` code) is set on switch-in.
 - Coro has to copy ~30 globals on every switch; this design copies none.
 
+The current bridge preserves `aTHX` as the shared interpreter pointer for
+compatibility with the existing core and XS layout. Task-field access instead
+selects per-act storage through an interpreter-filtered TLS pointer, reloaded
+after migration. Dispatch selects a per-slot allocator separately. This is an
+implementation difference from the proposed task pointer above; it still uses
+one interpreter and never creates or clones an interpreter for `act`.
+
 ### 5.2 Escape tracking
 Go's compiler does escape analysis to decide what lives on the heap. We
 do it at runtime to decide what can be touched by more than one task.
@@ -279,18 +286,20 @@ native class fields, shared pad constants, flagged XSUB payloads, and core
 regex SV roots without executing callbacks. It does not yet prove ownership
 for unmarked values: raw XS storage, IO internals, and custom regex-engine
 private pointers remain audit boundaries. Owned/shared counter specialization,
-no-cache reads, and deferred reclamation remain prerequisites for multi-core Perl;
-the interpreter bridge still runs with one execution slot. Native counter
-stress is deliberately restricted to a rooted SV without concurrent allocation,
-data mutation, or final destruction. C++ XS standard refcount helpers use atomics;
-direct legacy lvalue access remains subject to XS serialization.
+no-cache reads, and deferred reclamation remain prerequisites for general
+parallel safety. The bridge now has an opt-in parallel preview with conservative
+atomic counters and audited value paths. The original native counter fixture
+is restricted to a rooted SV; separate allocator and opcode fixtures exercise
+allocation, mutation and final destruction. C++ XS standard refcount helpers
+use atomics; direct legacy lvalue access still requires an audit.
 
 The active-task selector now lives in native thread-local storage rather than
 the shared interpreter header. Every lookup checks interpreter identity and
 reloads TLS across task migration. A two-thread native fixture checks isolated
 task fields and unchanged root state for two interpreter contexts. It does
-not execute Perl opcodes concurrently; remaining allocation paths, interpreter caches,
-publication mutation, and XS serialization still need their own gates.
+not execute Perl opcodes concurrently. A separate Perl worker-pool test now
+executes ordinary closures on several slots within the same interpreter.
+Remaining interpreter caches, publication paths and XS still need auditing.
 
 An SV becomes shared when it escapes. The **escape barrier** runs at:
 1. `act` closure creation: captured lexicals escape.
@@ -553,6 +562,15 @@ one **compile lock**. Parser state is already per task (`PL_parser`), and
 compiling at runtime is rare. Stash mutation takes the stash's lock;
 method caches are invalidated through an atomic generation counter.
 
+The preview currently rejects runtime string eval, require, do-file and regex
+compilation with multiple slots, before compiler entry. Dependencies can load
+at compile time. This is a temporary boundary until the compile gate exists.
+Audited method/class-cache lookups and namespace backreference changes use
+short native metadata guards. A lookup releases its guard before entering a
+method body; scheduling from a callback inside the guard is rejected.
+The creating act retains new MRO cache data through private mortal references,
+so its scope cleanup never toggles flags on a cache head another act can read.
+
 ### 5.10 Allocation
 Go's tiered allocator: per-P caches (`mcache`) → central per-size-class
 lists (`mcentral`) → page heap (`mheap`). Perl's SV/body arenas already
@@ -562,8 +580,8 @@ to that P's cache; arenas are only memory.
 
 The initial executor arena split is implemented. SV heads, body free lists,
 arena registries, and signed allocation deltas use an interpreter-filtered
-TLS selector independent of task identity. The one-P bridge activates its
-executor cache on dispatch and cleanup, then merges it into the root
+TLS selector independent of task identity. The bridge activates the current
+slot's executor cache on dispatch and cleanup, then merges every cache into the root
 interpreter after scheduler shutdown. Merging retains live SVs and joins all
 arena registries before global destruction. It neither frees arena memory
 early nor requires the freeing executor to be the allocating executor.
@@ -572,9 +590,10 @@ A native eight-executor fixture allocates, validates, exchanges and finally
 frees scalars, strings, references, arrays, and hashes concurrently against one
 interpreter. It checks root-cache isolation, cross-thread cache handoff,
 post-merge survival/reuse and complete teardown. A separate TSan build
-instruments Perl's full allocation/destruction paths. This is not yet parallel
-opcode execution: remaining read caches, shared-graph reclamation,
-compiler state and XS still need isolation. Central cache refill is pending.
+instruments Perl's full allocation/destruction paths, including concurrent
+closure stash backreferences. Actual parallel opcode execution is checked by
+the worker-pool suite. Remaining read caches, shared-graph paths, compiler
+state and XS still need isolation for general use. Central cache refill is pending.
 Perl memory-tracking builds and `-DD` arena scans are rejected by `use Wump`;
 the initial caches target the private fork's system-malloc configuration.
 
@@ -600,6 +619,13 @@ Legacy XS isn't safe to run in parallel, so unaudited XS takes a global
 **XS lock** unless the module declares itself parallel-safe. The core's
 own ext/ modules get audited first (List::Util, Scalar::Util, POSIX,
 Storable, ...).
+
+The preview rejects unaudited XS with multiple slots instead of providing the
+planned compatibility lock. Audited XSUBs register their native entry address
+with `Perl_wump_xs_allow(aTHX_ cv)` before program execution. Wump's own XSUBs
+are registered; constant XSUBs are permitted. Single-slot execution keeps the
+existing XS behavior. A compatibility lock must also account for callbacks and
+reentry before it can safely replace rejection.
 
 ## 6. Deployment: one binary, one tool
 
@@ -692,12 +718,19 @@ scoped locks for shared updates, and finish through wait groups. It must retain
 Perl's numeric, string, magic and exception behavior, survive repeated startup
 and shutdown, and demonstrate measured CPU scaling with correct results.
 
-The remaining gates for that preview are operand and aggregate opcode audits,
-regex/compiler/method-cache isolation, a compile gate and a defined policy for
-unaudited XS, followed by enabling multiple interpreter execution slots and
-testing real programs under migration and contention. Native opcode fixtures
-validate parts of this path; they do not substitute for a parallel interpreter
-run. General network-service usability additionally needs the Perl I/O handoff,
+An experimental preview now runs 16 workers over shared channels, uses scoped
+locks, nested acts and wait groups, preserves caught exceptions over yields,
+and checks repeated interpreter entry and shutdown. The tests verify one
+interpreter, private act state and execution on multiple slots. `WUMPPROCS`
+selects 1 through 256 slots, defaulting to 1. A private-buffer string benchmark
+checks correct results and allows timing one, two and four slots; small
+arithmetic workloads can regress from metadata contention.
+
+This does not close the general operand/aggregate, weak/object-reference,
+regex-cache, namespace-mutation or XS audits. Runtime compilation and
+unaudited XS are rejected in multi-slot execution pending the compile gate
+and compatibility policy described above. General network-service usability
+additionally needs the Perl I/O handoff,
 `sel`, and explicit signal/fork behavior. Assess readiness against these gates;
 the amount of completed infrastructure is not a reliable time estimate.
 
@@ -716,11 +749,12 @@ the amount of completed infrastructure is not a reliable time estimate.
      Verify spawn returns immediately, main-task exit ends execution, and
      explicit wait-group waiting remains separate. This entry integration can
      run on one P while parallel execution is still being brought up.
-   - Implemented in the single-slot bridge: `use Wump` activates interpreter
+   - Implemented in the bridge: `use Wump` activates interpreter
      entry, top-level code is the main act, and the `run` wrapper is removed.
      Wait groups use explicit counters with functional and object calls;
      `scope` is removed. These are still module functions; core feature syntax
-     and multi-P Perl remain open.
+     remain open. The experimental multi-P bridge uses one shared interpreter,
+     with per-act execution state and per-slot allocator caches.
    - Automatic safe-point scheduling, executor allocator caches, atomic shared
      keys/refcounts, graph publication, scalar read claims, deferred storage
      reclamation, and the listed scalar write destinations are implemented.
@@ -760,8 +794,8 @@ the amount of completed infrastructure is not a reliable time estimate.
      Rejected weak/object/magic captures leave their native behavior intact.
      Task-private special globs and localization anchors no longer create
      prototype CVs or participate in namespace backreference lists.
-     The interpreter bridge remains single-slot until the remaining state gates
-     below are closed.
+     The interpreter bridge now runs the audited worker-pool paths on multiple
+     slots. Remaining state gates still limit the preview's supported scope.
 2. **Many Ps for I/O**: Ms, syscall handoff, netpoller, fork(), signals.
    Perl code still runs on one P at a time behind a runtime lock; that's
    development scaffolding, never a shipped mode.

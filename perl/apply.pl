@@ -59,6 +59,7 @@ $header .= <<'C';
 	UV next_binding;
 	UV id;
 	int initialized, finished, main;
+	unsigned critical;
 };
 I32 *Perl_wump_cv_depth(pTHX_ const CV *cv);
 PADLIST **Perl_wump_cv_padlist(CV *cv);
@@ -67,6 +68,9 @@ void Perl_wump_boot(pTHX);
 int Perl_wump_main(pTHX);
 int Perl_wump_runops(pTHX);
 void Perl_wump_checkpoint(pTHX);
+void Perl_wump_xs_allow(pTHX_ CV *cv);
+void Perl_wump_xs_check(pTHX_ CV *cv);
+bool Perl_wump_parallel(pTHX);
 void Perl_wump_panic(pTHX_ SV *error);
 SV **Perl_wump_gv_sv(GV *gv);
 AV **Perl_wump_gv_av(GV *gv);
@@ -140,6 +144,7 @@ char *Perl_wump_pv_encoded(pTHX_ SV *value, STRLEN *length, U32 flags, int encod
 struct wump_retired *Perl_wump_retire_prepare(pTHX_ SV *value);
 void Perl_wump_retire_commit(pTHX_ struct wump_retired *retired);
 struct wump_mutation *Perl_wump_mutation_begin(pTHX_ SV *value);
+struct wump_mutation *Perl_wump_metadata_begin(pTHX);
 struct wump_mutation *Perl_wump_mutation_try_begin(pTHX_ SV *value, bool *busy);
 void Perl_wump_mutation_end(pTHX_ struct wump_mutation *guard);
 const char *Perl_wump_mutation_pointer(pTHX_ struct wump_mutation *guard, const char *pointer);
@@ -417,12 +422,28 @@ require "$FindBin::Bin/loads.pl";
 apply_loads($source);
 require "$FindBin::Bin/materialization.pl";
 apply_materialization($source);
+require "$FindBin::Bin/parallel.pl";
+apply_parallel($source);
+edit('pp_hot.c', "\n                SvTEMP_off(sv);",
+	"\n                if (!PL_wump_task || !Perl_wump_is_shared(aTHX_ sv)) SvTEMP_off(sv);");
+edit('toke.c', "Perl_lex_start(pTHX_ SV *line, PerlIO *rsfp, U32 flags)\n{",
+	"Perl_lex_start(pTHX_ SV *line, PerlIO *rsfp, U32 flags)\n{\n    if (Perl_wump_parallel(aTHX))\n        croak(\"Wump: runtime compilation is not supported during parallel execution\");");
 edit('regcomp.c', '#include "regcomp_internal.h"',
 	"#include \"regcomp_internal.h\"\n#include \"wump_regex_roots.c\"");
 edit('class.c', '    fields[fieldix] = val;',
 	"    Perl_wump_publish_store(aTHX_ instance, val);\n    fields[fieldix] = val;");
-edit('pp_hot.c', '    if (!(CvISXSUB(cv))) {',
-	"    if (PL_wump_task && CvISXSUB(cv)) Perl_wump_publish(aTHX_ (SV *)cv);\n    if (!(CvISXSUB(cv))) {");
+{
+	my $file = "$source/pp_hot.c";
+	my $text = read_file($file);
+	my $old = '    if (PL_wump_task && CvISXSUB(cv)) Perl_wump_publish(aTHX_ (SV *)cv);';
+	$text =~ s/^\Q$old\E\n//mg;
+	my $guard = "    if (PL_wump_task && CvISXSUB(cv)) {\n        Perl_wump_xs_check(aTHX_ cv);\n        Perl_wump_publish(aTHX_ (SV *)cv);\n    }\n";
+	if (index($text, $guard) < 0) {
+		$text =~ s/^(    if \(!\(CvISXSUB\(cv\)\)\) \{)/$guard$1/m
+			or die "missing XS invocation guard anchor\n";
+	}
+	write_file($file, $text);
+}
 edit('pp.c', '    SvLOCK(sv);', '    if (PL_wump_task) Perl_wump_lock(aTHX_ sv); else SvLOCK(sv);');
 for my $pair (
 	["$FindBin::Bin/core/wump_core.c", "$source/wump_core.c"],

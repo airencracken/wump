@@ -4,12 +4,13 @@ typedef struct wump_perl_waitgroup {
 	UV id, waiters;
 	IV count;
 	bool orphaned;
+	size_t users;
 	pthread_mutex_t mu;
 	wump_chan *ready;
 	struct wump_perl_waitgroup *next;
 } wump_perl_waitgroup;
 
-static UV wump_waitgroup_id;
+static _Atomic UV wump_waitgroup_id;
 
 static void wump_waitgroup_free(wump_perl_waitgroup *group) {
 	assert(group->waiters == 0);
@@ -22,7 +23,18 @@ static void wump_waitgroup_retire(wump_perl_waitgroup *group) {
 	wump_perl_waitgroup **link = &wump_perl_active->groups;
 	while (*link != group) link = &(*link)->next;
 	*link = group->next;
-	wump_waitgroup_free(group);
+}
+
+static void wump_waitgroup_release(pTHX_ void *arg) {
+	PERL_UNUSED_CONTEXT;
+	wump_perl_waitgroup *group = arg;
+	wump_registry_lock();
+	assert(group->users);
+	group->users--;
+	bool retire = !group->users && group->orphaned;
+	if (retire) wump_waitgroup_retire(group);
+	wump_registry_unlock();
+	if (retire) wump_waitgroup_free(group);
 }
 
 static wump_perl_waitgroup *wump_waitgroup_get(pTHX_ SV *object) {
@@ -32,8 +44,20 @@ static wump_perl_waitgroup *wump_waitgroup_get(pTHX_ SV *object) {
 		|| SvTYPE(SvRV(object)) >= SVt_PVAV)
 		croak("Wump: invalid wait group");
 	UV id = SvUV(SvRV(object));
+	SSCHECK(3);
+	wump_registry_lock();
+	wump_perl_waitgroup *found = NULL;
 	for (wump_perl_waitgroup *group = wump_perl_active->groups; group; group = group->next) {
-		if (group->id == id && !group->orphaned) return group;
+		if (group->id == id && !group->orphaned) {
+			group->users++;
+			found = group;
+			break;
+		}
+	}
+	wump_registry_unlock();
+	if (found) {
+		SAVEDESTRUCTOR_X(wump_waitgroup_release, found);
+		return found;
 	}
 	croak("Wump: wait group belongs to an inactive runtime");
 }
@@ -44,7 +68,7 @@ static void xs_wump_waitgroup(pTHX_ CV *cv) {
 	if (!wump_perl_active || !wump_self() || !PL_wump_task)
 		croak("Wump: waitgroup requires a running task");
 	if (!SvOK(ST(0)) || SvROK(ST(0))) croak("Wump: invalid wait group class");
-	if (wump_waitgroup_id == UV_MAX) croak("Wump: wait group id space exhausted");
+	UV group_id = wump_next_id(aTHX_ &wump_waitgroup_id, "wait group");
 	HV *stash = gv_stashsv(ST(0), GV_ADD);
 	wump_perl_waitgroup *group;
 	Newxz(group, 1, wump_perl_waitgroup);
@@ -52,9 +76,11 @@ static void xs_wump_waitgroup(pTHX_ CV *cv) {
 		Safefree(group);
 		croak("Wump: wait group allocation failed");
 	}
-	group->id = ++wump_waitgroup_id;
+	group->id = group_id;
+	wump_registry_lock();
 	group->next = wump_perl_active->groups;
 	wump_perl_active->groups = group;
+	wump_registry_unlock();
 	SV *id = newSVuv(group->id);
 	SV *object = newRV_noinc(id);
 	sv_bless(object, stash);
@@ -123,15 +149,19 @@ static void xs_wump_wg_add(pTHX_ CV *cv) {
 	dXSARGS;
 	if (items != 2) croak("Usage: add(WAITGROUP, DELTA)");
 	IV delta = wump_waitgroup_delta(aTHX_ ST(1));
+	I32 save_mark = PL_savestack_ix;
 	wump_perl_waitgroup *group = wump_waitgroup_get(aTHX_ ST(0));
 	wump_waitgroup_add(aTHX_ group, delta);
+	LEAVE_SCOPE(save_mark);
 	XSRETURN_EMPTY;
 }
 
 static void xs_wump_wg_done(pTHX_ CV *cv) {
 	dXSARGS;
 	if (items != 1) croak("Usage: done(WAITGROUP)");
+	I32 save_mark = PL_savestack_ix;
 	wump_waitgroup_add(aTHX_ wump_waitgroup_get(aTHX_ ST(0)), -1);
+	LEAVE_SCOPE(save_mark);
 	XSRETURN_EMPTY;
 }
 
@@ -143,26 +173,25 @@ typedef struct wump_waitgroup_waiter {
 static void wump_waitgroup_wait_leave(pTHX_ void *arg) {
 	wump_waitgroup_waiter *waiter = arg;
 	wump_perl_waitgroup *group = waiter->group;
-	bool retire = FALSE;
 	if (waiter->registered) {
 		if (pthread_mutex_lock(&group->mu) != 0) abort();
 		assert(group->waiters);
 		group->waiters--;
-		retire = group->waiters == 0 && group->orphaned;
 		if (pthread_mutex_unlock(&group->mu) != 0) abort();
 	}
 	Safefree(waiter);
-	if (retire) wump_waitgroup_retire(group);
 }
 
 static void xs_wump_wg_wait(pTHX_ CV *cv) {
 	dXSARGS;
+	wump_schedule_check(aTHX);
 	if (items != 1) croak("Usage: await(WAITGROUP)");
+	I32 save_mark = PL_savestack_ix;
 	wump_perl_waitgroup *group = wump_waitgroup_get(aTHX_ ST(0));
 	if (pthread_mutex_lock(&group->mu) != 0) abort();
 	bool empty = group->count == 0;
 	if (pthread_mutex_unlock(&group->mu) != 0) abort();
-	if (empty) XSRETURN_EMPTY;
+	if (empty) { LEAVE_SCOPE(save_mark); XSRETURN_EMPTY; }
 	wump_waitgroup_waiter *waiter;
 	Newxz(waiter, 1, wump_waitgroup_waiter);
 	waiter->group = group;
@@ -172,6 +201,7 @@ static void xs_wump_wg_wait(pTHX_ CV *cv) {
 	if (group->count == 0) {
 		if (pthread_mutex_unlock(&group->mu) != 0) abort();
 		LEAVE;
+		LEAVE_SCOPE(save_mark);
 		XSRETURN_EMPTY;
 	}
 	group->waiters++;
@@ -180,6 +210,7 @@ static void xs_wump_wg_wait(pTHX_ CV *cv) {
 	if (pthread_mutex_unlock(&group->mu) != 0) abort();
 	int result = wump_chan_recv(ready, NULL);
 	LEAVE;
+	LEAVE_SCOPE(save_mark);
 	if (result != 0) croak("Wump: wait group wait failed");
 	XSRETURN_EMPTY;
 }
@@ -189,15 +220,19 @@ static void xs_wump_wg_destroy(pTHX_ CV *cv) {
 	if (items != 1 || !wump_perl_active || !SvROK(ST(0))
 		|| SvTYPE(SvRV(ST(0))) >= SVt_PVAV) XSRETURN_EMPTY;
 	UV id = SvUV(SvRV(ST(0)));
+	wump_registry_lock();
 	wump_perl_waitgroup **link = &wump_perl_active->groups;
 	while (*link && (*link)->id != id) link = &(*link)->next;
-	if (*link) {
+	wump_perl_waitgroup *retired = NULL;
+	if (*link && !(*link)->orphaned) {
 		wump_perl_waitgroup *group = *link;
-		if (pthread_mutex_lock(&group->mu) != 0) abort();
 		group->orphaned = TRUE;
-		bool retire = group->waiters == 0;
-		if (pthread_mutex_unlock(&group->mu) != 0) abort();
-		if (retire) wump_waitgroup_retire(group);
+		if (!group->users) {
+			wump_waitgroup_retire(group);
+			retired = group;
+		}
 	}
+	wump_registry_unlock();
+	if (retired) wump_waitgroup_free(retired);
 	XSRETURN_EMPTY;
 }

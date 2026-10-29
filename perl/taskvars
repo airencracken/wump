@@ -1,5 +1,5 @@
-# Execution state used by the first single-slot interpreter integration.
-# Remaining interpreter globals are still shared; this is not parallel Perl.
+# Per-act execution state within one shared interpreter.
+# Shared interpreter fields outside this list still require concurrency audits.
 stack_sp
 op
 curpad
@@ -56,3 +56,10 @@ statusvalue_posix
 maxsysfd
 last_in_gv
 multideref_pc
+generation
+na
+stashcache
+hv_fetch_ent_mh
+compcv
+comppad_name
+phase

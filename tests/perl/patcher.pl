@@ -56,6 +56,14 @@ for my $file ('perl.c', 'sv.c') {
 	close $input or die "$file: $!\n";
 	# Restore the previous existing-cell load blocks before exercising the
 	# older read-only/reference upgrades. The new pass must rebuild them all.
+	$text =~ s{    if \(PL_wump_task && CvISXSUB\(cv\)\) \{\n        Perl_wump_xs_check\(aTHX_ cv\);\n        Perl_wump_publish\(aTHX_ \(SV \*\)cv\);\n    \}}{    if (PL_wump_task && CvISXSUB(cv)) Perl_wump_publish(aTHX_ (SV *)cv);}
+		or die "missing parallel XS gate\n";
+	for my $name (qw(method method_named method_super method_redir method_redir_super)) {
+		$text =~ s/^PP\(wump_method_impl_\Q$name\E\)/PP(pp_$name)/m
+			or die "missing guarded method implementation $name\n";
+		$text =~ s{\n/\* Wump method-cache wrapper: \Q$name\E \*/\nPP\(pp_\Q$name\E\)\n\{\n.*?^\}\n}{}ms
+			or die "missing method wrapper $name\n";
+	}
 	for my $spec (
 		['aelemfast', 'sv', 'av, key', 'av', ''],
 		['aelem', 'retsv', 'av, elem', 'av', ' && !localizing && !(PL_op->op_private & OPpDEREF)'],
@@ -129,15 +137,20 @@ for my $file ('perl.c', 'sv.c') {
 for my $spec (
 	['mg.c', [qw(defelem_target vivify_defelem magic_getdefelem magic_setdefelem)]],
 	['pp_hot.c', ['vivify_ref']],
+	['sv.c', [qw(sv_add_backref sv_del_backref)]],
+	['gv.c', [qw(gv_fetchmethod_pvn_flags gv_fetchmeth_pvn gv_autoload_pvn gv_stashsvpvn_cached gv_handler)]],
+	['mro_core.c', ['mro_get_linear_isa']],
+	['universal.c', ['isa_lookup'], 'S_'],
 ) {
-	my ($file, $names) = @$spec;
+	my ($file, $names, $prefix) = @$spec;
+	$prefix //= 'Perl_';
 	open my $input, '<', "$legacy/$file" or die "$file: $!\n";
 	my $text = do { local $/; <$input> };
 	close $input or die "$file: $!\n";
 	for my $name (@$names) {
-		$text =~ s/^#define Perl_\Q$name\E wump_memory_impl_\Q$name\E\n//m
+		$text =~ s/^#define \Q$prefix$name\E wump_memory_impl_\Q$name\E\n//m
 			or die "missing $name wrapper definition\n";
-		$text =~ s{^#undef Perl_\Q$name\E\n\n/\* Wump mutation wrapper: \Q$name\E \*/\n[^\n]+\nPerl_\Q$name\E\([^\n]*\n\{\n.*?^\}\n}{}ms
+		$text =~ s{^#undef \Q$prefix$name\E\n\n/\* Wump mutation wrapper: \Q$name\E \*/\n[^\n]+\n\Q$prefix$name\E\([^\n]*\n\{\n.*?^\}\n}{}ms
 			or die "missing $name wrapper body\n";
 	}
 	if ($file eq 'mg.c') {
@@ -161,4 +174,4 @@ for my $file (keys %$after) {
 	$upgraded->{"$legacy/$relative"} eq $after->{$file}
 		or die "legacy lifecycle upgrade changed $relative\n";
 }
-print "ok - upgrading earlier lifecycle, scalar/aggregate reference loads and deferred ownership preserves the complete generated tree\n";
+print "ok - upgrading earlier lifecycle, reference loads, deferred ownership and parallel metadata/XS guards preserves the complete generated tree\n";

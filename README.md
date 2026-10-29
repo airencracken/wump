@@ -2,7 +2,7 @@
 
 Go-style parallel concurrency for Perl. The [design](DESIGN.md) describes the
 Perl fork and its standalone C runtime. This checkout implements the runtime
-and an initial single-slot Perl integration on Linux x86-64.
+and an experimental parallel Perl integration on Linux x86-64.
 
 Implemented:
 
@@ -92,15 +92,19 @@ Compile a caller with `cc -std=c11 -pthread -Iruntime/include program.c
 build/libwump.a -o program`. `wump_run` uses the requested number of execution slots;
 0 selects the online CPU count. The caller participates as worker 0, and
 its main task may be stolen and run by another worker. Slot IDs are stable
-indices, not OS thread IDs. `WUMPPROCS` is not
-implemented yet.
+indices, not OS thread IDs. The C API takes its slot count directly;
+`WUMPPROCS` configures the Perl bridge.
 
 ## Running Perl tasks
 
 The Perl integration targets Perl 5.42.2, matching the installed Perl
 and the design's 5.42 base. The private fork can run Perl closures as runtime
 tasks, send scalar values and references through channels, yield, and sleep.
-This is a single-slot prototype; Perl code does not yet run on multiple cores.
+Set `WUMPPROCS=4` to execute supported Perl workloads on four slots. The
+default is one slot; accepted values are integers from 1 through 256.
+All acts share one interpreter, compiled code, namespaces, and shared values.
+Each act has separate execution state; spawning an act never creates or clones
+an interpreter. Executor allocation caches belong to slots, not acts.
 
 The optional [Mojolicious job dashboard](examples/mojo/README.md) exercises
 HTTP, WebSocket progress, bounded work queues, cancellation, and shutdown while
@@ -119,6 +123,10 @@ make perl-elements-example      # tasks localize individual shared hash elements
 make perl-pocket-example        # native pocket keyword keeps a binding in this act
 make perl-separators-example    # readline/chomp use each act's record separator
 make perl-test                  # task behavior, failures, shutdown
+make perl-parallel-test         # one interpreter, worker pools on 1/2/4 slots
+make perl-parallel-tsan         # whole-core parallel and allocator race checks
+make perl-parallel-memcheck     # parallel pool and repeated-runtime teardown
+make perl-parallel-bench        # verified string workers on 1/2/4 slots
 make perl-upstream-test         # upstream regex, aggregate and interpreter regressions
 make perl-memcheck              # task suite with registered C stacks and full Perl teardown
 make perl-asan                  # separate instrumented Perl, runtime, and XS fixtures
@@ -157,27 +165,33 @@ are preserved and rejected. `make clean` removes these private build outputs
 along with the runtime build outputs, so keep editable fork changes in
 repository patches rather than only in the generated source tree.
 
-The prototype runs on one execution slot with separate task stacks and
-channel operations. The active-task selector is thread-local and filtered by
+The prototype can run acts concurrently on several execution slots, with
+separate stacks, pads, exception state, regex state, and execution phase.
+The active-task selector is thread-local and filtered by
 interpreter identity, so native threads can select independent task state
 against one interpreter while other interpreter contexts retain their root
 state. `make perl-task-context-test` checks 200,000 concurrent state updates
 without executing Perl opcodes or allocating Perl values in those threads;
 `make perl-task-context-tsan` instruments that fixture with TSan. This is a
-state-isolation prerequisite. Executor arena caches are now isolated as
-described below; remaining shared interpreter state still prevents multi-worker
-Perl execution.
+state-isolation prerequisite. The parallel acceptance test additionally runs
+16 Perl workers through shared channels, scoped locks, nested acts and wait
+groups on one, two and four slots. Native diagnostics verify that the acts use
+the same interpreter and execute on multiple slots.
 
 Spawned acts' default, error, and regex-result globs are private storage cells.
 They keep their special names without namespace backreferences or unintended
 prototype CVs. Localization anchors likewise retain only their target GP;
 creating and retiring these cells does not invalidate shared method caches.
-Real namespace mutation, method caches, and general weak-reference updates
-still require a separate concurrency audit.
+Namespace backreference updates and the audited class/method-cache lookups
+use short native metadata guards. These guards end before a method body runs;
+callbacks cannot schedule while a guard is held. Newly cached class data uses
+private temporary reference holders so scope cleanup does not rewrite shared
+cache flags. General namespace mutation,
+weak-reference updates and other caches still require a concurrency audit.
 
 `use Wump` enables interpreter-owned scheduling: ordinary top-level Perl runs
 as the main act. The interpreter starts and stops the scheduler automatically,
-currently on one execution slot. `act { ... }` spawns work directly and returns
+using the configured slot count. `act { ... }` spawns work directly and returns
 immediately. The prototype's former `run` wrapper has been removed.
 
 Current prototype example:
@@ -637,17 +651,17 @@ Scalar reference localization retains its native path and diagnostics.
 cleanup regressions. Its native fixture includes a separate control which
 bypasses only scalar capture and must expose the missing lifetime reference.
 
-Perl execution still uses one slot. This covers the listed scalar destinations,
-plain binary inputs and ordinary element loads, not a complete opcode or XS
-audit. Weak/object reference extraction and in-place RV changes outside
+The parallel preview covers the listed scalar destinations, plain binary inputs
+and ordinary element loads; the opcode and XS audits remain incomplete.
+Weak/object reference extraction and in-place RV changes outside
 the audited vivification path, mixed key/magic paths, other aggregate fast
 paths and direct XS field access remain open. The caller must already retain the aggregate passed
 to an element load; aggregate reference extraction now establishes that lifetime
 for the ordinary strong-reference paths listed above.
 Raw `SvPVX`/`AvARRAY`/`HvARRAY` access needs an explicit borrow or external
 lifetime management. Magical containers, mutable-buffer escapes, element-overlay
-base writes, regex/compiler/method caches, and the remaining interpreter/XS
-state split still need audits before multi-core Perl execution.
+base writes, remaining regex and interpreter caches, and direct XS access
+still need audits before general multi-core Perl use.
 Raw cache predicates and direct field access still require explicit claims or
 external synchronization. Read-only COW diagnostics are rejected when enabling Wump because their
 page protection changes cannot share the concurrent byte-counter protocol.
@@ -678,15 +692,16 @@ classification does not make regex read caches safe for concurrent use.
 An unmarked value is **unclassified**, not proven exclusive to one act.
 Native code that writes raw AV/HV storage, IO internals, private custom-regex
 storage, unflagged XS payloads, and other hidden roots still need a publication
-audit before these markers can select non-atomic counters or enable parallel
-execution. This stage adds
-metadata and magic-path overhead; it does not claim a speed improvement.
+audit before these markers can select non-atomic counters or establish general
+parallel safety. Publication adds metadata and magic-path overhead. The string
+benchmark checks scaling for private buffers; small arithmetic workloads can
+be slower with multiple slots because of shared metadata contention.
 The marker uses extension magic and preserves the SV-head layout. Its
 callbacks preserve native magic, localization, and weak-reference lifetimes.
 Run `make perl-publication-example` to see publication through a channel and
 an act capture while retaining the original shared object.
 
-Ordinary Perl compute loops now share the execution slot automatically.
+Ordinary Perl compute loops share the configured execution slots automatically.
 The Wump runloop polls the runtime every 256 opcodes and gives other runnable
 acts a turn after roughly 10 ms since the dispatch's first eligible poll.
 An empty busy loop therefore no longer needs an explicit `yield` to let
@@ -699,10 +714,18 @@ retain their existing behavior in supported callbacks. Ordinary scripts
 without Wump retain the upstream runloop.
 
 This prototype does not implement `sel` or automatic Perl I/O/XS handoff.
-Ordinary blocking Perl operations still occupy the single slot.
-Compilation/mutation of existing subs while
-tasks are suspended and debugger/general multicall integration are not supported
-yet. Scope-exit destructors see the enclosing binding and can spawn tasks.
+Ordinary blocking Perl operations still occupy their execution slot.
+With multiple slots, runtime `eval STRING`, `require`, `do FILE`, and dynamic
+regex compilation are rejected before compiler entry. Load dependencies with
+`use` before execution. A compile lock remains future work.
+Unaudited XS calls are also rejected with multiple slots. An audited extension
+can register an XSUB with `Perl_wump_xs_allow(aTHX_ cv)` during bootstrap,
+before Wump execution begins; registration covers that native entry address.
+This declaration requires an actual audit of its storage and callbacks.
+Single-slot execution retains the existing runtime compilation and XS paths.
+Mutation of existing subs while tasks are suspended and debugger/general
+multicall integration remain unsupported. Scope-exit destructors see the
+enclosing binding and can spawn tasks.
 Abandoning a task suspended inside a destructor remains unsupported, and
 destructors invoked during task teardown cannot schedule. Task teardown
 releases abandoned Perl frames and their owned values while their C stacks

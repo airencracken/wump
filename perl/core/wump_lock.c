@@ -20,17 +20,21 @@ static void wump_lock_release(pTHX_ void *arg) {
 	bool acquired = guard->acquired;
 	Safefree(guard);
 	if (!lock) return;
+	wump_registry_lock();
 	if (acquired) lock->owner = 0;
 	if (--lock->guards) {
+		wump_chan *token = lock->token;
+		wump_registry_unlock();
 		/* The scheduler cancels all waiters before running task destructors.
 		 * Sending a token there would attempt to wake a canceled waiter. */
-		if (acquired && wump_self() && wump_chan_send(lock->token, NULL) != 0)
+		if (acquired && wump_self() && wump_chan_send(token, NULL) != 0)
 			croak("Wump: lock release failed");
 		return;
 	}
 	wump_perl_lock **link = &wump_perl_active->locks;
 	while (*link != lock) link = &(*link)->next;
 	*link = lock->next;
+	wump_registry_unlock();
 	SV *target = lock->target;
 	wump_chan_free(lock->token);
 	Safefree(lock);
@@ -38,31 +42,49 @@ static void wump_lock_release(pTHX_ void *arg) {
 }
 
 void Perl_wump_lock(pTHX_ SV *value) {
+	wump_schedule_check(aTHX);
 	if (!wump_self() || PL_wump_task->finished)
 		croak("Wump: lock requires a running task");
 	SvGETMAGIC(value);
 	SV *target = SvROK(value) ? SvRV(value) : value;
-	wump_perl_lock *lock = wump_perl_active->locks;
-	while (lock && lock->target != target) lock = lock->next;
-	if (lock && lock->owner == PL_wump_task->id)
-		croak("Wump: lock is not reentrant");
 	wump_lock_guard *guard;
 	Newxz(guard, 1, wump_lock_guard);
 	SAVEDESTRUCTOR_X(wump_lock_release, guard);
+	wump_registry_lock();
+	wump_perl_lock *lock = wump_perl_active->locks;
+	while (lock && lock->target != target) lock = lock->next;
+	if (lock && lock->owner == PL_wump_task->id) {
+		wump_registry_unlock();
+		croak("Wump: lock is not reentrant");
+	}
 	if (!lock) {
-		Newxz(lock, 1, wump_perl_lock);
+		lock = calloc(1, sizeof(*lock));
+		if (!lock) {
+			wump_registry_unlock();
+			croak("Wump: lock allocation failed");
+		}
+		lock->token = wump_chan_make(0, 1);
+		if (!lock->token) {
+			free(lock);
+			wump_registry_unlock();
+			croak("Wump: lock allocation failed");
+		}
 		lock->target = SvREFCNT_inc(target);
 		lock->next = wump_perl_active->locks;
 		wump_perl_active->locks = lock;
 	}
 	guard->lock = lock;
 	lock->guards++;
-	if (!lock->token) {
-		lock->token = wump_chan_make(0, 1);
-		if (!lock->token) croak("Wump: lock allocation failed");
+	/* A newly installed lock has no previous owner and needs one token.
+	 * Increment guards before exposing it so the first sender owns its life. */
+	bool first = lock->guards == 1;
+	wump_registry_unlock();
+	if (first) {
 		if (wump_chan_send(lock->token, NULL) != 0) croak("Wump: lock initialization failed");
 	}
 	if (wump_chan_recv(lock->token, NULL) != 1) croak("Wump: lock acquisition failed");
 	guard->acquired = TRUE;
+	wump_registry_lock();
 	lock->owner = PL_wump_task->id;
+	wump_registry_unlock();
 }

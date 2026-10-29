@@ -20,7 +20,10 @@ static wump_local *wump_local_find(pTHX_ GV *gv, char kind, bool inherit) {
 	if (PL_wump_task == NULL) return NULL;
 	gv = wump_local_origin(aTHX_ gv);
 	GP *gp = GvGP(gv);
-	char magic = kind == 's' && gp ? Perl_wump_magic_kind(aTHX_ gp->gp_sv) : 0;
+	/* These canonical GVs identify private task slots. Their root values
+	 * can be changing on the main act (notably the implicit for iterator). */
+	bool special = gv == aTHX->Idefgv || gv == aTHX->Ierrgv || gv == aTHX->Ireplgv;
+	char magic = kind == 's' && gp && !special ? Perl_wump_magic_kind(aTHX_ gp->gp_sv) : 0;
 	for (wump_local *slot = PL_wump_task->locals; slot; slot = slot->next) {
 		if (inherit && slot->pocket) continue;
 		if (kind == 's' && magic && slot->magic == magic) return slot;
