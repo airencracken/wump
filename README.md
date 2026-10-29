@@ -105,6 +105,8 @@ default is one slot; accepted values are integers from 1 through 256.
 All acts share one interpreter, compiled code, namespaces, and shared values.
 Each act has separate execution state; spawning an act never creates or clones
 an interpreter. Executor allocation caches belong to slots, not acts.
+`Wump::execution_slots()` reports the actual slot count from a running act,
+independently of later environment changes or the number of spawned workers.
 
 The optional [Mojolicious job dashboard](examples/mojo/README.md) exercises
 HTTP, WebSocket progress, bounded work queues, cancellation, and shutdown while
@@ -127,6 +129,8 @@ make perl-parallel-test         # one interpreter, worker pools on 1/2/4 slots
 make perl-parallel-tsan         # whole-core parallel and allocator race checks
 make perl-parallel-memcheck     # parallel pool and repeated-runtime teardown
 make perl-parallel-bench        # verified string workers on 1/2/4 slots
+make perl-mojo-cpu-test         # dashboard CPU backend on 1/2/4 slots
+make perl-mojo-cpu-bench        # repeated verified Unicode job batches
 make perl-upstream-test         # upstream regex, aggregate and interpreter regressions
 make perl-memcheck              # task suite with registered C stacks and full Perl teardown
 make perl-asan                  # separate instrumented Perl, runtime, and XS fixtures
@@ -273,6 +277,11 @@ and substitution replacements can yield; `qr` values retain their captured
 lexicals when sent to another task or retained after their creating act exits.
 An empty pattern still uses the calling task's previous pattern, and tied
 match inputs still receive their normal magic callbacks.
+Scalar match-result cells, including numbered captures, `$+`, `$^N`, and `/p`
+values, are private to each act as well as its match engine state. Aliased
+globs share the act's cell, and `local` retains native capture magic and
+read-only behavior. Parallel copies also own their mutable substring search
+caches; compiled regex code remains shared.
 
 Instances are created lazily from the compiled pattern. Each PMOP has a unique
 identity so a recycled Perl regex-pad offset cannot retrieve an old task's
@@ -722,6 +731,14 @@ Unaudited XS calls are also rejected with multiple slots. An audited extension
 can register an XSUB with `Perl_wump_xs_allow(aTHX_ cv)` during bootstrap,
 before Wump execution begins; registration covers that native entry address.
 This declaration requires an actual audit of its storage and callbacks.
+The pinned core now registers Time::HiRes `time`, `gettimeofday`,
+`clock_gettime`, and `clock_getres`, plus Unicode::Normalize `NFC`/`NFD`
+and their `NFKC`/`FCC`/`NFKD` aliases. Load these modules and resolve needed
+autoloaded clock constants at compile time. Parallel normalization snapshots
+plain scalar inputs before conversion; references, other magic, and malformed
+UTF-8 are rejected before native normalization buffers are allocated.
+Other entries in these modules remain gated, including blocking sleeps,
+process timers, and unaudited normalization helpers. Rejections name the XSUB.
 Single-slot execution retains the existing runtime compilation and XS paths.
 Mutation of existing subs while tasks are suspended and debugger/general
 multicall integration remain unsupported. Scope-exit destructors see the

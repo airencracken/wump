@@ -71,13 +71,14 @@ typedef struct wump_cv_slot {
 	struct wump_cv_slot *next;
 } wump_cv_slot;
 
-enum wump_regex_kind { WUMP_REGEX_PM, WUMP_REGEX_NAMES, WUMP_REGEX_HASH };
+enum wump_regex_kind { WUMP_REGEX_PM, WUMP_REGEX_NAMES, WUMP_REGEX_HASH, WUMP_REGEX_SCALAR };
 typedef struct wump_regex_slot {
 	uint64_t id;
 	enum wump_regex_kind kind;
 	SV *value;
-	HV *origin;
+	SV *origin;
 	REGEXP *native_copy;
+	bool ready;
 	struct wump_regex_slot *next;
 } wump_regex_slot;
 
@@ -135,7 +136,7 @@ bool Perl_wump_pm_native(pTHX_ PMOP *pm, REGEXP *rx) {
 static wump_regex_slot *wump_regex_hash(pTHX_ HV *original,
 	enum wump_regex_kind kind, MAGIC *tied) {
 	for (wump_regex_slot *slot = PL_wump_task->regexes; slot != NULL; slot = slot->next) {
-		if (slot->kind == kind && slot->origin == original) return slot;
+		if (slot->kind == kind && slot->origin == (SV *)original) return slot;
 	}
 	wump_regex_slot *slot;
 	Newxz(slot, 1, wump_regex_slot);
@@ -148,7 +149,7 @@ static wump_regex_slot *wump_regex_hash(pTHX_ HV *original,
 		copy = newHVhv(original);
 	}
 	slot->kind = kind;
-	slot->origin = (HV *)SvREFCNT_inc(original);
+	slot->origin = SvREFCNT_inc((SV *)original);
 	slot->value = (SV *)copy;
 	slot->next = PL_wump_task->regexes;
 	PL_wump_task->regexes = slot;
@@ -264,7 +265,7 @@ PADLIST **Perl_wump_cv_padlist(CV *cv) {
 /* Reuse Perl's recursive-pad construction to preserve captured/state
  * lexicals and constants while allocating fresh local variables and @_. */
 void Perl_wump_cv_prepare(pTHX_ CV *cv) {
-	if (PL_wump_task == NULL || PL_wump_task->finished == 2 ||
+	if (PL_wump_task == NULL ||
 		CvISXSUB(cv) || wump_cv_find(aTHX_ cv) != NULL) return;
 	Perl_wump_publish(aTHX_ (SV *)cv);
 	PADLIST *original = CvPADLIST(cv);
@@ -290,11 +291,75 @@ void Perl_wump_cv_prepare(pTHX_ CV *cv) {
 	PL_wump_task->cvs = slot;
 }
 
+static void wump_regex_scalar_abort(pTHX_ void *arg) {
+	wump_regex_slot *slot = arg;
+	if (slot->ready) return;
+	wump_regex_slot **link = (wump_regex_slot **)&PL_wump_task->regexes;
+	while (*link && *link != slot) link = &(*link)->next;
+	if (*link) *link = slot->next;
+	SV *value = slot->value, *origin = slot->origin;
+	Safefree(slot);
+	SvREFCNT_dec(value);
+	SvREFCNT_dec(origin);
+}
+
+static SV **wump_regex_scalar(pTHX_ GV *gv) {
+	/* Use the effective glob so aliases share one cell. Check its immutable
+	 * name before touching a scalar: ordinary package values may be changing
+	 * on another act. These are the names magicalized as match results. */
+	GV *effective = GvEGV(gv) ? GvEGV(gv) : gv;
+	const char *name = GvNAME(effective);
+	STRLEN length = GvNAMELEN(effective);
+	bool numbered = length && name[0] >= '1' && name[0] <= '9';
+	for (STRLEN i = 1; numbered && i < length; i++)
+		if (name[i] < '0' || name[i] > '9') numbered = FALSE;
+	bool named = length == 1 && (name[0] == '&' || name[0] == '`'
+		|| name[0] == '\'' || name[0] == '+' || name[0] == '\016');
+	if (!numbered && !named && !memEQs(name, length, "\015ATCH")
+		&& !memEQs(name, length, "\020REMATCH") && !memEQs(name, length, "\020OSTMATCH")
+		&& !memEQs(name, length, "\014AST_SUCCESSFUL_PATTERN")) return NULL;
+	SV *original = GvGP(gv)->gp_sv;
+	if (!original) return NULL;
+	Perl_wump_memory_check(aTHX_ original);
+	if (SvTYPE(original) < SVt_PVMG) return NULL;
+	MAGIC *magic;
+	for (magic = SvMAGIC(original); magic; magic = magic->mg_moremagic) {
+		if (magic->mg_type != PERL_MAGIC_sv || magic->mg_virtual != &PL_vtbl_sv) continue;
+		if (!magic->mg_ptr || (magic->mg_len == 1
+			&& (magic->mg_ptr[0] == '+' || magic->mg_ptr[0] == '\016'))
+			|| memEQs(magic->mg_ptr, magic->mg_len, "\014AST_SUCCESSFUL_PATTERN")) break;
+	}
+	if (!magic) return NULL;
+	for (wump_regex_slot *slot = PL_wump_task->regexes; slot; slot = slot->next)
+		if (slot->kind == WUMP_REGEX_SCALAR && slot->origin == original) return &slot->value;
+	SSCHECK(3);
+	I32 mark = PL_savestack_ix;
+	wump_regex_slot *slot;
+	Newxz(slot, 1, wump_regex_slot);
+	SAVEDESTRUCTOR_X(wump_regex_scalar_abort, slot);
+	slot->kind = WUMP_REGEX_SCALAR;
+	slot->origin = SvREFCNT_inc(original);
+	slot->value = newSV(0);
+	/* sv_magicext checks the owning GV's scalar slot. Install our cell
+	 * first so that recursive lookup returns it rather than creating again. */
+	slot->next = PL_wump_task->regexes;
+	PL_wump_task->regexes = slot;
+	/* Native get-magic reads this act's current match. Its result cache
+	 * must also be private; a shared GV cell races even with private PMOPs. */
+	sv_magic(slot->value, magic->mg_obj, PERL_MAGIC_sv, magic->mg_ptr, magic->mg_len);
+	if (SvREADONLY(original)) SvREADONLY_on(slot->value);
+	slot->ready = TRUE;
+	LEAVE_SCOPE(mark);
+	return &slot->value;
+}
+
 SV **Perl_wump_gv_sv(GV *gv) {
 	dTHX;
 	wump_local *binding = wump_local_find(aTHX_ gv, 's', FALSE);
 	if (binding != NULL) return &binding->value;
 	if (PL_wump_task != NULL) {
+		SV **capture = wump_regex_scalar(aTHX_ gv);
+		if (capture) return capture;
 		if (gv == aTHX->Idefgv) gv = PL_defgv;
 		else if (gv == aTHX->Ierrgv) gv = PL_errgv;
 		else if (gv == aTHX->Ireplgv) gv = PL_replgv;
@@ -326,6 +391,32 @@ static void wump_perl_enter(void *arg) {
 	PERL_SET_CONTEXT(task->interp);
 }
 
+static void wump_perl_caches_free(pTHX_ struct wump_perl_task *task) {
+	/* Dropping a pad or regex may run a destructor which calls another CV
+	 * or creates match state. Keep those calls private too, and drain any
+	 * new entries before releasing the act's Perl stacks. */
+	while (task->cvs || task->regexes) {
+		if (task->cvs) {
+			wump_cv_slot *slot = task->cvs;
+			task->cvs = slot->next;
+			for (SSize_t n = PadlistMAX(slot->pad); n > 0; n--)
+				SvREFCNT_dec(PadlistARRAY(slot->pad)[n]);
+			PadnamelistREFCNT_dec(PadlistNAMES(slot->pad));
+			Safefree(PadlistARRAY(slot->pad));
+			Safefree(slot->pad);
+			SvREFCNT_dec(slot->cv);
+			Safefree(slot);
+		} else {
+			wump_regex_slot *slot = task->regexes;
+			task->regexes = slot->next;
+			SV *value = slot->value, *origin = slot->origin;
+			Safefree(slot);
+			SvREFCNT_dec(value);
+			SvREFCNT_dec(origin);
+		}
+	}
+}
+
 static void wump_perl_task_free(void *arg) {
 	struct wump_perl_task *task = arg;
 	dTHXa(task->interp);
@@ -340,8 +431,8 @@ static void wump_perl_task_free(void *arg) {
 	}
 	int abandoned = !task->finished;
 	/* Destructors may call Perl, but cannot schedule during teardown.
-	 * Use ordinary recursive pads for new calls instead of creating
-	 * caches that would outlive the list currently being released. */
+	 * Finished acts can be reclaimed concurrently, so their callbacks must
+	 * keep private CV frames rather than modifying the original CV depth. */
 	task->finished = 2;
 	if (task->initialized) {
 		/* Abandoned XS frames still have mapped C stacks at this point.
@@ -360,21 +451,7 @@ static void wump_perl_task_free(void *arg) {
 		if (jump != 0) {
 			PerlIO_printf(Perl_error_log, "Wump: task destructor failed during shutdown\n");
 		}
-		/* Stop exposing task padlists before releasing their CV roots. */
-		wump_cv_slot *slot = task->cvs;
-		task->cvs = NULL;
-		while (slot != NULL) {
-			wump_cv_slot *next = slot->next;
-			for (SSize_t n = PadlistMAX(slot->pad); n > 0; n--) {
-				SvREFCNT_dec(PadlistARRAY(slot->pad)[n]);
-			}
-			PadnamelistREFCNT_dec(PadlistNAMES(slot->pad));
-			Safefree(PadlistARRAY(slot->pad));
-			Safefree(slot->pad);
-			SvREFCNT_dec(slot->cv);
-			Safefree(slot);
-			slot = next;
-		}
+		wump_perl_caches_free(aTHX_ task);
 		SvREFCNT_dec(task->entry);
 		task->entry = NULL;
 		wump_local_clear(aTHX_ task);
@@ -389,17 +466,7 @@ static void wump_perl_task_free(void *arg) {
 			SvREFCNT_dec(errgv);
 			SvREFCNT_dec(replgv);
 		}
-		/* Free while Perl stacks still exist: a regex can own a CV whose
-		 * captured values have destructors. Drain any caches they create. */
-		while (task->regexes != NULL) {
-			wump_regex_slot *slot = task->regexes;
-			task->regexes = slot->next;
-			SV *value = slot->value;
-			HV *origin = slot->origin;
-			Safefree(slot);
-			SvREFCNT_dec(value);
-			SvREFCNT_dec(origin);
-		}
+		wump_perl_caches_free(aTHX_ task);
 		/* The main act borrows the interpreter's original Perl stacks.
 		 * perl_destruct owns those stacks after scheduler shutdown. */
 		if (task->main) {
@@ -410,6 +477,7 @@ static void wump_perl_task_free(void *arg) {
 		SvREFCNT_dec(PL_stashcache);
 		PL_stashcache = NULL;
 		Perl_free_tied_hv_pool(aTHX);
+		wump_perl_caches_free(aTHX_ task);
 		if (PL_reg_curpm != NULL) {
 			IV offset = PL_reg_curpm->op_pmoffset;
 			/* The fake PMOP was allocated by regexec, not newPMOP. Its
@@ -754,7 +822,17 @@ static void xs_wump_sleep(pTHX_ CV *cv) {
 	XSRETURN_EMPTY;
 }
 
+static void xs_wump_execution_slots(pTHX_ CV *cv) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items || !PL_wump_task || !wump_self())
+		croak("Wump: execution_slots requires a running act and no arguments");
+	ST(0) = sv_2mortal(newSViv(wump_nprocs()));
+	XSRETURN(1);
+}
+
 void Perl_wump_boot(pTHX) {
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::execution_slots", xs_wump_execution_slots, __FILE__));
 	Perl_wump_xs_allow(aTHX_ newXS("Wump::_enable", xs_wump_enable, __FILE__));
 	Perl_wump_xs_allow(aTHX_ newXS("Wump::_waitgroup", xs_wump_waitgroup, __FILE__));
 	Perl_wump_xs_allow(aTHX_ newXS("Wump::_wg_add", xs_wump_wg_add, __FILE__));

@@ -19,7 +19,9 @@ sub startup ($self) {
 	weaken $self;
 	$routes->get('/')->to(cb => sub ($c) { $c->reply->static('index.html') });
 	$routes->get('/health')->to(cb => sub ($c) {
-		$c->render(json => {ok => true, pid => 0 + $$, runtime => 'single-slot'});
+		my $slots = Wump::execution_slots();
+		$c->render(json => {ok => true, pid => 0 + $$,
+			runtime => $slots > 1 ? 'parallel' : 'single-slot', execution_slots => $slots});
 	});
 	$routes->get('/jobs')->to(cb => sub ($c) { $c->render(json => $self->jobs->snapshot) });
 	$routes->post('/jobs')->to(cb => sub ($c) {

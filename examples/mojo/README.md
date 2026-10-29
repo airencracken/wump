@@ -5,10 +5,10 @@ WebSocket progress. Workers analyze Unicode log text using bounded channels;
 their CPU loops contain no explicit yields. The dashboard and `/health` stay
 available while work runs through Wump's preemption points.
 
-The Perl bridge currently has **one execution slot**. This demo establishes a
-correctness and responsiveness baseline; it does not demonstrate parallel Perl
-or multi-core speedup. The standalone C runtime's multi-executor support is a
-separate capability.
+The HTTP dashboard remains a **one-slot acceptance baseline**. Its Unicode
+job backend can now run on one, two or four execution slots in the same
+interpreter and has a separate CPU benchmark below. Running the complete HTTP
+stack with multiple slots still needs further XS and runtime compilation work.
 
 ## Run
 
@@ -66,6 +66,42 @@ the reactor act touches Mojo controllers, sockets, and WebSocket transactions.
 Each subscriber queues at most one outgoing snapshot frame at a time and its
 timer is removed on disconnect. There is no authentication or persistence;
 the launcher binds loopback by default.
+Ready events, health responses and service snapshots report `execution_slots`
+from the runtime, separately from the number of worker acts.
+
+## CPU backend benchmark
+
+This benchmark runs the same job service, Unicode analyzer, bounded queues,
+scoped locks and collector used by the dashboard. It needs the private Perl
+and its bundled Time::HiRes/Unicode::Normalize extensions, but does not need
+Mojolicious installed. It measures the CPU pipeline without HTTP, WebSockets,
+JSON serialization or reactor polling.
+
+```sh
+make perl-build
+make perl-mojo-cpu-test
+make perl-mojo-cpu-bench
+# Save raw samples and summaries as JSON Lines:
+perl bench/mojo-cpu.pl "$PWD/build/perl/perl-5.42.2/perl" \
+	--runs 3 --jobs 8 --passes 20 --workers 4 > build/mojo-cpu.jsonl
+```
+
+The runner keeps the worker count, input and analysis passes identical across
+one, two and four slots. Every job must complete and match the whole-input
+sequential reference before a sample is accepted. Records include actual slot
+count, wall/CPU time, throughput, executable/version and source revision/dirty
+state. Summaries report median wall/CPU times and speedup relative to one slot.
+The built-in fixture has 128 Unicode log lines; each worker scans every line
+for every requested pass. The reference counts once and scales its totals,
+so its execution time is excluded rather than used as a performance baseline.
+
+Timing starts after module loading and reference construction, and includes
+pool startup, batch admission, worker initialization, dispatch, analysis,
+collection and completion polling. Separate process timing includes startup and verification.
+The collector, synchronization and metadata costs are part of the measured
+pipeline. A larger slot count is not assumed to be faster; the tests impose
+correctness checks without a speedup threshold. These results establish a
+backend baseline and do not measure Mojolicious request throughput.
 
 ## Reactor boundary
 
@@ -104,5 +140,6 @@ budget, cancels through HTTP, sends SIGTERM during work, and rebinds the same
 port. It prints a JSON measurement record in TAP diagnostics.
 
 These are local acceptance budgets, not throughput promises. One short RSS
-plateau check cannot establish long-term leak freedom. Multi-slot throughput,
-native I/O handoff, and longer soak runs remain future acceptance gates.
+plateau check cannot establish long-term leak freedom. Multi-slot HTTP
+throughput, native I/O handoff, and longer soak runs remain future acceptance
+gates. CPU backend measurements use the separate benchmark above.

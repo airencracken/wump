@@ -5,6 +5,7 @@ use warnings;
 use Wump;
 use Time::HiRes 'clock_gettime', 'CLOCK_MONOTONIC';
 use WumpDemo::Analysis qw(lines analyze_chunk summary);
+BEGIN { CLOCK_MONOTONIC() }
 
 sub _now () { clock_gettime(CLOCK_MONOTONIC) }
 sub _cancelled ($token) { lock $token; return $token->{cancelled} }
@@ -167,7 +168,9 @@ sub get ($self, $id) {
 sub snapshot ($self) {
 	my $state = $self->{state};
 	lock $state;
-	return {version => $state->{version}, pid => 0 + $$, runtime => 'single-slot',
+	my $slots = Wump::execution_slots();
+	return {version => $state->{version}, pid => 0 + $$,
+		runtime => $slots > 1 ? 'parallel' : 'single-slot', execution_slots => $slots,
 		limits => {map { $_ => $self->{$_} } qw(workers max_active max_history max_bytes max_passes)},
 		metrics => {map { $_ => $state->{$_} } qw(active accepted rejected completed failed cancelled closing)},
 		workers => [map { {id => 0 + $_, job => $state->{workers}{$_}} } sort {$a <=> $b} keys %{$state->{workers}}],

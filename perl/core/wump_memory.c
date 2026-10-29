@@ -50,7 +50,8 @@ void Perl_wump_xs_check(pTHX_ CV *cv) {
 	if (wump_nprocs() <= 1 || CvCONST(cv)) return;
 	for (wump_parallel_xs *slot = aTHX->Iwump_memory->parallel_xs; slot; slot = slot->next)
 		if (slot->entry == CvXSUB(cv)) return;
-	croak("Wump: XS function has not declared parallel safety");
+	croak("Wump: XS function has not declared parallel safety: %" SVf,
+		SVfARG(cv_name(cv, NULL, 0)));
 }
 
 bool Perl_wump_parallel(pTHX) {

@@ -77,6 +77,36 @@ for my $procs (1, 2, 4) {
 		"worker pool runs with $procs execution slots");
 }
 
+for my $procs (2, 4) {
+	local $ENV{WUMPPROCS} = $procs;
+	WumpTest::check_program(q{
+		use Wump; use RootFixture;
+		package FirstCall {
+			use overload '&{}' => sub { Wump::yield(); return \&body }, fallback => 1;
+			sub new { bless {}, shift }
+			sub body ($n) { Wump::yield(); return $n + 1 }
+			sub named ($self, $n) { return body($n) }
+		}
+		my $out = chan(12);
+		for my $id (1..12) {
+			act {
+				RootFixture::executor_rendezvous();
+				my $callable = FirstCall->new;
+				my $direct = \&FirstCall::body;
+				for (1..32) {
+					die "named call changed\n" unless $callable->named($id) == $id + 1;
+					die "direct call changed\n" unless $direct->($id) == $id + 1;
+					die "overloaded call changed\n" unless $callable->($id) == $id + 1;
+				}
+				$out->send(1);
+			};
+		}
+		die "missing calls\n" unless scalar(grep { $_ == 1 } map { scalar $out->recv } 1..12) == 12;
+		print "concurrent first calls and yielding overloads completed\n";
+	}, 0, qr/\Aconcurrent first calls and yielding overloads completed\n\z/,
+		"concurrent first calls preserve callee state with $procs execution slots");
+}
+
 {
 	local $ENV{WUMPPROCS} = 1;
 	WumpTest::check_program(q{

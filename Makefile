@@ -7,7 +7,7 @@ CPPFLAGS = -Iruntime/include -Iruntime/src
 CFLAGS = -O2 -g -std=c11 -Wall -Wextra -Werror -pthread
 LDFLAGS = -pthread
 LDLIBS = -lm
-PERL_SUITES = entry waitgroup preempt tasks parallel regex local elements pocket pocket-deparse separators hooks locks shared keys reads read-claims scalar-writes operands stack-loads lvalue-loads reference-loads scalar-references materialization iteration memory publication hidden-roots
+PERL_SUITES = entry waitgroup preempt tasks parallel xs-parallel regex-parallel regex local elements pocket pocket-deparse separators hooks locks shared keys reads read-claims scalar-writes operands stack-loads lvalue-loads reference-loads scalar-references materialization iteration memory publication hidden-roots
 
 RUNTIME = stack sched chan io error
 OBJECTS = $(addprefix $(BUILD)/,$(addsuffix .o,$(RUNTIME))) $(BUILD)/ctx_x86_64.o
@@ -19,6 +19,13 @@ SYSCALL_WRAPPED = calloc pthread_cond_init pthread_cond_destroy pthread_cond_bro
 all: $(BUILD)/libwump.a $(BUILD)/hello $(BUILD)/select $(BUILD)/echo $(BUILD)/blocking
 
 .PHONY: perl-mojo-test perl-mojo-example perl-mojo-memcheck
+.PHONY: perl-mojo-cpu-test perl-mojo-cpu-bench
+perl-mojo-cpu-test: perl-build
+	timeout 180s perl tests/perl/mojo-bench.t '$(abspath $(BUILD))/perl/perl-5.42.2/perl'
+
+perl-mojo-cpu-bench: perl-build
+	perl bench/mojo-cpu.pl '$(abspath $(BUILD))/perl/perl-5.42.2/perl'
+
 perl-mojo-test: perl-build
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -MMojolicious -e 'die "Install the tested Mojolicious 9.37 from examples/mojo/cpanfile\n" unless $$Mojolicious::VERSION eq "9.37"'
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -Iexamples/mojo/lib tests/perl/mojo-jobs.t
@@ -54,6 +61,8 @@ perl-test: perl-build perl-source-test
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/preempt.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/tasks.t
 	timeout 180s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/parallel.t
+	timeout 180s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/xs-parallel.t
+	timeout 180s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/regex-parallel.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/regex.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/local.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/elements.t
@@ -95,6 +104,9 @@ perl-test: perl-build perl-source-test
 perl-parallel-test: perl-build
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/root-fixture.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	timeout 180s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/parallel.t
+	timeout 180s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/xs-parallel.t
+	timeout 180s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/regex-parallel.t
+	perl tests/perl/mojo-bench.t '$(BUILD)/perl/perl-5.42.2/perl'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/entry.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 
 perl-parallel-tsan:
@@ -105,6 +117,9 @@ perl-parallel-memcheck: perl-source $(BUILD)/libwump.a
 	PERL_RUNTIME_BUILD='$(BUILD)/perl-valgrind' bash perl/build.sh '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/root-fixture.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	PERL_DESTRUCT_LEVEL=2 timeout 300s valgrind --trace-children=yes --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/parallel-memcheck.%p.log' $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/parallel.t
+	PERL_DESTRUCT_LEVEL=2 timeout 300s valgrind --trace-children=yes --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/parallel-xs-memcheck.%p.log' $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/xs-parallel.t
+	PERL_DESTRUCT_LEVEL=2 timeout 300s valgrind --trace-children=yes --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/parallel-regex-memcheck.%p.log' $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/regex-parallel.t
+	PERL_DESTRUCT_LEVEL=2 WUMPPROCS=4 timeout 180s valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/parallel-jobs-memcheck.%p.log' $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib bench/mojo-jobs.pl 2 2 4
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/entry.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	timeout 90s valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --log-file='$(BUILD)/perl/parallel-entry-memcheck.%p.log' $(BUILD)/interpreter-entry -I$(abspath $(BUILD))/perl/perl-5.42.2/lib
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/allocator.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'

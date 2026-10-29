@@ -8,6 +8,16 @@
 
 extern OP *Perl_wump_write_impl_preinc(pTHX);
 
+static XS(xs_malformed_utf8) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items) croak("Usage: RootFixture::malformed_utf8()");
+	SV *value = newSVpvn("\xc3", 1);
+	SvUTF8_on(value);
+	ST(0) = sv_2mortal(value);
+	XSRETURN(1);
+}
+
 static SV *read_target(pTHX_ SV *reference) {
 	if (!SvROK(reference)) croak("scalar reference required");
 	return SvRV(reference);
@@ -542,6 +552,7 @@ XS_EXTERNAL(boot_RootFixture) {
 	PERL_UNUSED_VAR(cv);
 	PERL_UNUSED_VAR(items);
 	newXS("RootFixture::make", xs_make, __FILE__);
+	newXS("RootFixture::malformed_utf8", xs_malformed_utf8, __FILE__);
 	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::execution_context", xs_execution_context, __FILE__));
 	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::executor_rendezvous", xs_executor_rendezvous, __FILE__));
 	newXS("RootFixture::metadata_guard", xs_metadata_guard, __FILE__);

@@ -529,6 +529,15 @@ perl already has the infrastructure for immutable ops:
 Everything compiled before the main program starts (BEGIN-time subs,
 stashes, constants) is **immortalized**: no refcount traffic at all.
 
+The current bridge additionally gives each act private scalar capture cells
+and copies the mutable substring search caches used by parallel regex matches.
+Numeric capture aliases and localization share the act's cell; namespace GP
+retains/releases are guarded without holding metadata locks across callbacks.
+Unicode inversion-list searches use atomic access to their shared last-index
+hint. Finished acts retain private CV frames for destructor callbacks and drain
+any new call or match caches before releasing their Perl stacks.
+The general regex and compiler audits remain incomplete.
+
 ### 5.7 Pads (Perl-specific)
 Lexicals live in `padlist[CvDEPTH]`, stored on the CV, so two tasks in
 the same sub would share `my` variables. Fix: the padlist becomes a
@@ -626,6 +635,14 @@ with `Perl_wump_xs_allow(aTHX_ cv)` before program execution. Wump's own XSUBs
 are registered; constant XSUBs are permitted. Single-slot execution keeps the
 existing XS behavior. A compatibility lock must also account for callbacks and
 reentry before it can safely replace rejection.
+
+The first standard-library audits admit the Linux Time::HiRes wall/monotonic
+clock readers and Unicode::Normalize NFC/NFD entry groups. Normalization uses
+private plain-scalar snapshots and rejects unsupported input before allocating
+its native buffers. The rest of each module remains gated. This enables the
+dashboard's Unicode CPU backend to be measured on one, two and four slots;
+the HTTP reactor, dynamic compilation and its remaining XS dependencies still
+need their own acceptance gates.
 
 ## 6. Deployment: one binary, one tool
 

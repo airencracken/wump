@@ -59,6 +59,7 @@ sub start_server ($port = 0) {
 	is($event->{event}, 'ready', 'server bound a real TCP listener');
 	is($event->{pid}, $pid, 'server reports one process');
 	is($event->{runtime}, 'single-slot', 'server reports actual execution mode');
+	is($event->{execution_slots}, 1, 'server reports actual execution slots independently of coroutine workers');
 	return "http://127.0.0.1:$event->{port}";
 }
 sub stop_server () {

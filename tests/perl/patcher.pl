@@ -138,8 +138,9 @@ for my $spec (
 	['mg.c', [qw(defelem_target vivify_defelem magic_getdefelem magic_setdefelem)]],
 	['pp_hot.c', ['vivify_ref']],
 	['sv.c', [qw(sv_add_backref sv_del_backref)]],
-	['gv.c', [qw(gv_fetchmethod_pvn_flags gv_fetchmeth_pvn gv_autoload_pvn gv_stashsvpvn_cached gv_handler)]],
+	['gv.c', [qw(gv_fetchmethod_pvn_flags gv_fetchmeth_pvn gv_autoload_pvn gv_stashsvpvn_cached gv_handler gp_ref Gv_AMupdate)]],
 	['mro_core.c', ['mro_get_linear_isa']],
+	['regcomp.c', ['reg_temp_copy']],
 	['universal.c', ['isa_lookup'], 'S_'],
 ) {
 	my ($file, $names, $prefix) = @$spec;

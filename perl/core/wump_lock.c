@@ -11,14 +11,17 @@ typedef struct wump_perl_lock {
 
 typedef struct wump_lock_guard {
 	wump_perl_lock *lock;
+	SV *target;
 	bool acquired;
 } wump_lock_guard;
 
 static void wump_lock_release(pTHX_ void *arg) {
 	wump_lock_guard *guard = arg;
 	wump_perl_lock *lock = guard->lock;
+	SV *held = guard->target;
 	bool acquired = guard->acquired;
 	Safefree(guard);
+	SvREFCNT_dec(held);
 	if (!lock) return;
 	wump_registry_lock();
 	if (acquired) lock->owner = 0;
@@ -45,11 +48,42 @@ void Perl_wump_lock(pTHX_ SV *value) {
 	wump_schedule_check(aTHX);
 	if (!wump_self() || PL_wump_task->finished)
 		croak("Wump: lock requires a running task");
-	SvGETMAGIC(value);
-	SV *target = SvROK(value) ? SvRV(value) : value;
 	wump_lock_guard *guard;
 	Newxz(guard, 1, wump_lock_guard);
 	SAVEDESTRUCTOR_X(wump_lock_release, guard);
+	/* The current owner can be changing the value while another act tries
+	 * to acquire its lock. Inspect flags under a reader claim, and wait for
+	 * a transient writer instead of racing or rejecting normal lock use. */
+	struct wump_shared *claim;
+	bool magical;
+	for (;;) {
+		Perl_wump_memory_lock(aTHX);
+		bool ready = Perl_wump_read_try_begin(aTHX_ value, &claim);
+		if (ready) {
+			magical = SvGMAGICAL(value);
+			Perl_wump_read_end(aTHX_ claim);
+		}
+		Perl_wump_memory_unlock(aTHX);
+		if (ready) break;
+		wump_yield();
+	}
+	if (magical) SvGETMAGIC(value);
+	SV *target;
+	for (;;) {
+		/* A writer must not acquire its mutation claim between our brief
+		 * reader claim and its release: lock acquisition is not a user read
+		 * that should make the current lock holder's update fail. */
+		Perl_wump_memory_lock(aTHX);
+		bool ready = Perl_wump_read_try_begin(aTHX_ value, &claim);
+		if (ready) {
+			target = SvROK(value) ? SvRV(value) : value;
+			guard->target = SvREFCNT_inc(target);
+			Perl_wump_read_end(aTHX_ claim);
+		}
+		Perl_wump_memory_unlock(aTHX);
+		if (ready) break;
+		wump_yield();
+	}
 	wump_registry_lock();
 	wump_perl_lock *lock = wump_perl_active->locks;
 	while (lock && lock->target != target) lock = lock->next;

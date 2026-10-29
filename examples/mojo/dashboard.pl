@@ -30,8 +30,9 @@ $| = 1;
 my $ok = eval {
 	$server->start;
 	my $port = $server->ports->[0];
+	my $slots = Wump::execution_slots();
 	print encode_json({event => 'ready', pid => 0 + $$, port => $port, workers => $workers,
-		runtime => 'single-slot'}), "\n";
+		runtime => $slots > 1 ? 'parallel' : 'single-slot', execution_slots => $slots}), "\n";
 	$loop->recurring(0.01 => sub { $loop->stop if $stop });
 	$loop->start;
 	1;

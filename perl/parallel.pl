@@ -9,6 +9,8 @@ sub apply_parallel {
 		['gv.c', 'gv_fetchmeth_pvn', 'GV *'],
 		['gv.c', 'gv_autoload_pvn', 'GV *'],
 		['gv.c', 'gv_stashsvpvn_cached', 'HV *'],
+		['gv.c', 'gp_ref', 'GP *'],
+		['gv.c', 'Gv_AMupdate', 'int'],
 		['gv.c', 'gv_handler', 'CV *'],
 		['mro_core.c', 'mro_get_linear_isa', 'AV *'],
 	) {
@@ -36,6 +38,49 @@ sub apply_parallel {
 		substr($text, $start, $end - $start, $body);
 	}
 	write_file($file, $text);
+	# First entry can publish a CV (and its constant callee RVs) while a
+	# sibling resolves that same call. Snapshot head flags under the metadata
+	# mutex; never keep it held across magic or overloaded dereferencing.
+	$text = read_file($file);
+	unless (index($text, 'S_wump_callee_flags(pTHX_') >= 0) {
+		my $helper = <<'C';
+STATIC U32
+S_wump_callee_flags(pTHX_ const SV *value)
+{
+    if (!Perl_wump_parallel(aTHX)) return SvFLAGS(value);
+    Perl_wump_memory_lock(aTHX);
+    U32 flags = SvFLAGS(value);
+    Perl_wump_memory_unlock(aTHX);
+    return flags;
+}
+
+C
+		$text =~ s/^PP\(pp_entersub\)/$helper . 'PP(pp_entersub)'/me
+			or die "missing subroutine entry\n";
+	}
+	my $call_start = index($text, "PP(pp_entersub)\n{");
+	my $call_end = index($text, "\n}\n", $call_start);
+	$call_start >= 0 && $call_end >= 0 or die "missing subroutine entry body\n";
+	my $call = substr($text, $call_start, $call_end - $call_start);
+	$call =~ s/SvFLAGS\(sv\)/S_wump_callee_flags(aTHX_ sv)/g;
+	$call =~ s/SvOBJECT\(cv\)/(S_wump_callee_flags(aTHX_ (SV *)cv) \& SVs_OBJECT)/g;
+	$call =~ s/SvTYPE\(cv\)/(S_wump_callee_flags(aTHX_ (SV *)cv) \& SVTYPEMASK)/g;
+	$call =~ s/switch \(SvTYPE\(sv\)\)/switch (S_wump_callee_flags(aTHX_ sv) \& SVTYPEMASK)/g;
+	substr($text, $call_start, $call_end - $call_start, $call);
+	write_file($file, $text);
+	# Foreach aliases an element; clearing its TEMP flag is a write to a
+	# published head even when the flag was already clear.
+	$file = "$source/pp_hot.c";
+	$text = read_file($file);
+	my $iter_start = index($text, "PP(pp_iter)\n{");
+	$iter_start >= 0 or die "missing foreach iterator\n";
+	my $iter_end = index($text, "\n}\n", $iter_start);
+	$iter_end >= 0 or die "missing foreach iterator end\n";
+	my $iterator = substr($text, $iter_start, $iter_end - $iter_start);
+	$iterator =~ s/SvTEMP_off\(sv\);/if (!PL_wump_task || !Perl_wump_is_shared(aTHX_ sv)) SvTEMP_off(sv);/
+		unless $iterator =~ /Perl_wump_is_shared/;
+	substr($text, $iter_start, $iter_end - $iter_start, $iterator);
+	write_file($file, $text);
 	# Repeated references to a published closure must not rewrite its flags
 	# while an earlier act is entering the same shared CV.
 	$file = "$source/pp.c";
@@ -45,11 +90,28 @@ sub apply_parallel {
 	my $end = index($text, "\n}\n", $start);
 	$end >= 0 or die "missing reference constructor end\n";
 	my $body = substr($text, $start, $end - $start);
-	my $cleared = $body =~ s/^        SvTEMP_off\(sv\);/        if (!PL_wump_task || !Perl_wump_is_shared(aTHX_ sv)) SvTEMP_off(sv);/mg;
-	$cleared == 2 || (!$cleared && $body =~ /Perl_wump_is_shared/)
+	# Compiled constants can be shared before publication too. Do not write
+	# their already-clear flag merely to construct a reference to them.
+	my $cleared = $body =~ s/^        (?:if \(!PL_wump_task \|\| !Perl_wump_is_shared\(aTHX_ sv\)\) )?SvTEMP_off\(sv\);/        if (SvTEMP(sv) \&\& (!PL_wump_task || !Perl_wump_is_shared(aTHX_ sv))) SvTEMP_off(sv);/mg;
+	$cleared == 2 || (!$cleared && $body =~ /if \(SvTEMP\(sv\) &&/)
 		or die "unexpected reference constructor TEMP flags\n";
 	substr($text, $start, $end - $start, $body);
 	write_file($file, $text);
+	# Overload-table construction changes both stash magic and the cached
+	# dereference bit. Its readers must synchronize with first construction.
+	edit('gv.c', <<'OLD', <<'NEW');
+    assert(HvHasAUX(stash));
+    if (HvAUX(stash)->xhv_aux_flags & HvAUXf_NO_DEREF)
+        return ref;
+OLD
+    bool wump_parallel_deref = Perl_wump_parallel(aTHX);
+    if (wump_parallel_deref) Perl_wump_memory_lock(aTHX);
+    assert(HvHasAUX(stash));
+    bool wump_no_deref = cBOOL(HvAUX(stash)->xhv_aux_flags & HvAUXf_NO_DEREF);
+    if (wump_parallel_deref) Perl_wump_memory_unlock(aTHX);
+    if (wump_no_deref)
+        return ref;
+NEW
 	# A cached MRO value outlives the creating act's temporary scope. Keep
 	# its temporary reference in a private RV so scope cleanup cannot rewrite
 	# flags on the cache head after another act starts using it.
@@ -78,5 +140,17 @@ C
 		"            CV* destructor = NULL;\n            struct wump_mutation *destroy_guard = Perl_wump_parallel(aTHX) ? Perl_wump_metadata_begin(aTHX) : NULL;");
 	edit('sv.c', '            assert(!destructor || SvTYPE(destructor) == SVt_PVCV);',
 		"            Perl_wump_mutation_end(aTHX_ destroy_guard);\n            assert(!destructor || SvTYPE(destructor) == SVt_PVCV);");
+	# Localization anchors share GP reference counts. Serialize their short
+	# retain/release paths, but release before freeing values or callbacks.
+	edit('gv.c', '    bool in_global_destruction = PL_phase == PERL_PHASE_DESTRUCT;',
+		"    bool in_global_destruction = PL_phase == PERL_PHASE_DESTRUCT;\n    struct wump_mutation *wump_gp_guard = NULL;");
+	edit('gv.c', '    if (gp->gp_refcnt == 0) {',
+		"    wump_gp_guard = Perl_wump_parallel(aTHX) ? Perl_wump_metadata_begin(aTHX) : NULL;\n    if (gp->gp_refcnt == 0) {\n        Perl_wump_mutation_end(aTHX_ wump_gp_guard);");
+	edit('gv.c', '       borrowed:',
+		"       borrowed:\n        if (!wump_gp_guard && Perl_wump_parallel(aTHX))\n            wump_gp_guard = Perl_wump_metadata_begin(aTHX);");
+	edit('gv.c', "        gp->gp_refcnt--;\n        GvGP_set(gv, NULL);\n        return;\n    }",
+		"        gp->gp_refcnt--;\n        GvGP_set(gv, NULL);\n        Perl_wump_mutation_end(aTHX_ wump_gp_guard);\n        return;\n    }\n    Perl_wump_mutation_end(aTHX_ wump_gp_guard);\n    wump_gp_guard = NULL;");
+	edit('gv.c', '    if (gp->gp_refcnt > 1) goto borrowed;',
+		"    wump_gp_guard = Perl_wump_parallel(aTHX) ? Perl_wump_metadata_begin(aTHX) : NULL;\n    if (gp->gp_refcnt > 1) goto borrowed;\n    Perl_wump_mutation_end(aTHX_ wump_gp_guard);");
 }
 1;

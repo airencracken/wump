@@ -424,6 +424,10 @@ require "$FindBin::Bin/materialization.pl";
 apply_materialization($source);
 require "$FindBin::Bin/parallel.pl";
 apply_parallel($source);
+require "$FindBin::Bin/regex.pl";
+apply_regex($source);
+require "$FindBin::Bin/xs.pl";
+apply_xs($source);
 edit('pp_hot.c', "\n                SvTEMP_off(sv);",
 	"\n                if (!PL_wump_task || !Perl_wump_is_shared(aTHX_ sv)) SvTEMP_off(sv);");
 edit('toke.c', "Perl_lex_start(pTHX_ SV *line, PerlIO *rsfp, U32 flags)\n{",

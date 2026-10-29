@@ -27,6 +27,7 @@ is_deeply(lines("\n\n"), ['', ''], 'blank lines are retained without a phantom t
 is_deeply(analyze_chunk(['anything'], 5, sub { 1 }), {cancelled => 1}, 'cancelled analysis stops before scanning');
 
 my $service = WumpDemo::Jobs->new(workers => 3, chunk_lines => 1, max_active => 2, max_history => 3);
+is($service->snapshot->{execution_slots}, 1, 'service reports execution slots independently of its worker count');
 my ($first, $status) = $service->submit($unicode, 3);
 is($status, 202, 'first job admitted');
 my ($second) = $service->submit("INFO next\n", 2);

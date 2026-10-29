@@ -37,6 +37,7 @@ $t->get_ok('/')->status_is(200)->content_like(qr/Keep the work moving/);
 $t->get_ok('/dashboard.js')->status_is(200)->content_like(qr/textContent/);
 $t->get_ok('/dashboard.css')->status_is(200);
 $t->get_ok('/health')->status_is(200)->json_is('/runtime', 'single-slot')->json_is('/pid', 0 + $$);
+$t->json_is('/execution_slots', 1);
 $t->get_ok('/jobs/missing')->status_is(404);
 $t->delete_ok('/jobs/missing')->status_is(404);
 for my $body ([], undef, 'string') {
@@ -58,6 +59,7 @@ diag('WebSocket closed after ' . (time - $connected) . ' seconds: ' . join(', ',
 is($app->subscribers, 1, 'WebSocket registered');
 my $event = Mojo::JSON::decode_json($t->message->[1]);
 is($event->{runtime}, 'single-slot', 'WebSocket sends service snapshot');
+is($event->{execution_slots}, 1, 'WebSocket reports the actual execution slots');
 $t->finish_ok;
 $t->get_ok('/health')->status_is(200);
 is($app->subscribers, 0, 'WebSocket disconnect removes subscriber timer');
