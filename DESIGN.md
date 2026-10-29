@@ -197,10 +197,11 @@ entry (every op if it's cheap enough). The same safe point is used for:
   what Go's GC guarantees: nothing is reused while a racing reader can
   still see it.
 
-The single-P bridge now has an initial safe-point path: its custom runloop
+The bridge has an initial safe-point path: its custom runloop
 polls `wump_checkpoint()` every 256 opcodes. The runtime yields through its
 ordinary scheduler after a roughly 10 ms budget, measured from the first poll
-of each dispatch. C tasks can use the same checkpoint API on multiple Ps;
+of each dispatch. The parallel Perl preview uses this path on each execution
+slot. C tasks can use the same checkpoint API on multiple Ps;
 their resumed work remains stealable. Automatic Perl checks currently defer
 during compilation, auxiliary callback stacks, and teardown. This provides
 compute-loop fairness without a sysmon thread or asynchronous interruption
@@ -208,7 +209,8 @@ of native code.
 Global-queue polling occurs at least every 61 dispatches or after 10 ms of
 elapsed scheduler time, whichever comes first. Expired timers and external
 wakeups therefore do not wait behind sixty full compute quanta on a busy P.
-It does not yet permit simultaneous Perl execution on multiple Ps.
+Parallel Perl execution remains limited to audited paths by the compiler and
+XS gates described below.
 
 ### Channels and sel
 Go's `hchan`: mutex, ring buffer, FIFO waiter queues. An unbuffered send
@@ -262,6 +264,9 @@ selects per-act storage through an interpreter-filtered TLS pointer, reloaded
 after migration. Dispatch selects a per-slot allocator separately. This is an
 implementation difference from the proposed task pointer above; it still uses
 one interpreter and never creates or clones an interpreter for `act`.
+Typed inline field accessors select the storage once per access. The TLS
+selector itself stays out of line, so it reloads the current native thread's
+selector after migration rather than retaining a thread-local address.
 
 ### 5.2 Escape tracking
 Go's compiler does escape analysis to decide what lives on the heap. We
@@ -474,7 +479,8 @@ storage only and rejects borrows inside the owner's active mutation. Cached
 plain PV reads inside the writer use private snapshots. This is not a general
 lock for all Perl operations: direct opcode/XS fields, mutable-pointer lifetime,
 magical storage, element-overlay base writes and other shared caches remain
-audit boundaries. The Perl scheduler retains its single execution slot.
+audit boundaries. The parallel Perl preview supports the audited paths;
+these tests do not establish safety for arbitrary core or XS field access.
 
 Ordinary published hash iteration now has act-local cursors. These share the
 existing task iterator registry, but store visited keys rather than a cloned
@@ -750,6 +756,54 @@ and compatibility policy described above. General network-service usability
 additionally needs the Perl I/O handoff,
 `sel`, and explicit signal/fork behavior. Assess readiness against these gates;
 the amount of completed infrastructure is not a reliable time estimate.
+
+### Implementation assessment (2026-10-29)
+
+The milestones below describe the intended development sequence. Work now
+overlaps them: there is real parallel Perl execution, while some earlier
+language and I/O integration remains open.
+
+| Design goal | Current evidence | Remaining work |
+| --- | --- | --- |
+| One interpreter, M:N execution | Supported Perl closures run on several slots with private act state and per-slot allocation caches; tests verify interpreter identity and migration. | Generalize the supported paths through the remaining audits. `aTHX` still denotes the shared interpreter, with TLS selecting act storage. |
+| Cheap tasks and runtime primitives | C tasks, guarded stacks, work stealing, channels, selection, timers, epoll and explicit syscall handoff are implemented and tested. | Sysmon, million-live-task validation, stack mapping costs and the within-2x-of-Go performance target remain open. |
+| Perl semantics and language surface | Main-act entry, closure spawning, scalar/reference channels, wait groups, scoped locks, regex state, `local` and `pocket` have focused coverage. | Perl `sel`, core feature/call-form syntax, per-act environment/process integration and remaining magic/weak/object paths need work. |
+| Shared-memory safety | Conservative atomic counters, publication, read claims, private conversion snapshots and pinned storage retirement support audited paths. | General concurrent-read safety, ownership specialization, cheaper reclamation, remaining aggregate/cache/XS audits and a user-facing `perl -race` are unfinished. |
+| Useful network services | The one-slot dashboard passes live HTTP/WebSocket tests; its actual Unicode job backend runs and verifies results on 1/2/4 slots. | Multi-slot live HTTP acceptance, Perl I/O/syscall integration, runtime compilation policy and remaining dependency XS audits are separate gates. |
+| Performance | Repeated, result-checked CPU backend measurements and native runtime baselines exist. The state-access optimization below reduces absolute batch time. | Near-linear Perl scaling is not achieved. This benchmark does not compare single-thread overhead with stock Perl, and does not establish the Go runtime target. |
+| Compatibility and validation | Selected upstream compiler, regex, class, opcode, I/O and deparser tests complement native/Perl regressions, TSan, ASan/leak checks and Valgrind. | The selected upstream target is not the entire upstream test distribution; general CPAN compatibility and longer network soak tests remain unvalidated. |
+| Deployment and portability | A private Perl fork and standalone C runtime build on Linux x86-64. | Static application bundling, the `wump` tool, dependency locking/cache and arm64 are pending. |
+
+The immediate performance checkpoint uses five runs per slot count, eight
+jobs, twenty analysis passes and four worker acts, with the same 128-line
+Unicode fixture. All 240 jobs across the before/after samples matched the
+reference. On the local Ryzen 7 PRO 4750U (16 logical CPUs), GCC 14.2.1 build,
+the median wall times were:
+
+| Execution slots | Before (`020c29b`) | After (`dad7aa3`) |
+| --- | --- | --- |
+| 1 | 1.122 s | 0.717 s |
+| 2 | 0.996 s | 0.855 s |
+| 4 | 1.004 s | 0.917 s |
+
+The change replaces repeated current-act lookups within each interpreter-field
+expression with one lookup. In separate four-slot `perf` samples, the selector's
+share fell from 16.87% to 5.63%; mutex and mutation/borrow paths remain prominent.
+These are local observations, not portable performance guarantees. Every slot
+count became faster, but the optimized one-slot batch is fastest: absolute
+throughput improved without meeting the scaling goal.
+
+[Recorded summaries](bench/mojo-state-access.csv) identify both source revisions
+and workload settings. Reproduce the job measurements with
+`perl bench/mojo-cpu.pl PRIVATE_PERL --runs 5 --jobs 8 --passes 20 --workers 4`.
+These measurements exclude HTTP and reactor work.
+
+The next acceptance goal should reduce metadata work for act-owned values
+without weakening publication or conflict checks, and demonstrate repeatable
+multi-slot gains on the verified backend. A subsequent network checkpoint is
+the existing live dashboard test passing on four slots under an explicit
+dependency/compilation policy. Packaging can proceed independently of these
+parallel-safety gates.
 
 0. **Runtime in C**: tasks, stacks, scheduler, channels, `sel`, timers,
    netpoller, sysmon. Benchmarked against Go.
