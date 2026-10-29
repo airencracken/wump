@@ -1,6 +1,7 @@
 # Retain ordinary shared elements before their container read claim ends.
-# Existing lvalues keep their original heads; magic, overlays, missing lvalues
-# and autovivification keep their existing paths.
+# Existing lvalues keep their original heads. The later materialization pass
+# handles missing lvalues and autovivification; magic and overlays keep their
+# existing paths. Strong ordinary scalar/aggregate RVs retain their referents.
 sub apply_loads {
 	my ($source) = @_;
 	my $file = "$source/pp_hot.c";
@@ -8,6 +9,7 @@ sub apply_loads {
 	if (index($text, '/* Wump container-to-stack loads */') >= 0) {
 		apply_lvalue_loads($source);
 		apply_reference_loads($source);
+		apply_scalar_reference_loads($source);
 		return;
 	}
 	for my $spec (
@@ -80,6 +82,7 @@ C
 	write_file($file, $text);
 	apply_lvalue_loads($source);
 	apply_reference_loads($source);
+	apply_scalar_reference_loads($source);
 }
 
 sub apply_lvalue_loads {
@@ -155,6 +158,31 @@ C
 			substr($text, $at, 0, $capture);
 		}
 	}
+	write_file($file, "$marker\n$text");
+}
+sub apply_scalar_reference_loads {
+	my ($source) = @_;
+	my $file = "$source/pp.c";
+	my $text = read_file($file);
+	my $marker = '/* Wump scalar reference loads */';
+	return if index($text, $marker) >= 0;
+	my $start = index($text, "PP(pp_rv2sv)\n{");
+	$start >= 0 or die "missing rv2sv opcode\n";
+	my $at = index($text, '    SvGETMAGIC(sv);', $start);
+	$at >= 0 or die "missing rv2sv magic anchor\n";
+	my $capture = <<'C';
+    /* Wump reference capture: rv2sv */
+    if (PL_wump_task && !(PL_op->op_flags & OPf_MOD && PL_op->op_private & OPpLVAL_INTRO)) {
+        bool handled;
+        SV *loaded = Perl_wump_load_rv(aTHX_ sv, SVt_PV, &handled);
+        if (handled) { sv = loaded; goto wump_scalar_loaded; }
+    }
+    /* End Wump reference capture */
+C
+	substr($text, $at, 0, $capture);
+	$at = index($text, '    if (PL_op->op_flags & OPf_MOD) {', $start);
+	$at >= 0 or die "missing rv2sv lvalue anchor\n";
+	substr($text, $at, 0, "  wump_scalar_loaded:\n");
 	write_file($file, "$marker\n$text");
 }
 1;

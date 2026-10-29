@@ -570,8 +570,12 @@ SV *Perl_wump_load_rv(pTHX_ SV *value, svtype type, bool *handled) {
 	wump_borrow_cancel(aTHX_ source);
 	if (!result) return NULL;
 	wump_borrow *target = wump_borrow_start(aTHX_ result);
-	*handled = target && (type == SVt_PVAV || type == SVt_PVHV)
-		&& SvTYPE(result) == type && !SvOBJECT(result);
+	/* SVt_PV denotes rv2sv's scalar family, including another reference or
+	 * an lvalue delegate. Keep the original head so writes and magic still
+	 * operate on that alias; capturing its current contents would not do. */
+	*handled = target && !SvOBJECT(result)
+		&& ((type == SVt_PV && SvTYPE(result) < SVt_PVAV)
+			|| ((type == SVt_PVAV || type == SVt_PVHV) && SvTYPE(result) == type));
 	wump_borrow_cancel(aTHX_ target);
 	if (!*handled) {
 		/* Ineligible magic/overload/type paths must not gain a hidden strong

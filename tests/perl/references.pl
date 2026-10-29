@@ -17,21 +17,22 @@ for my $language ('c', 'c++') {
 	system 'timeout', '90s', $target;
 	$? == 0 or die "opcode references $language failed: $?\n";
 }
-my $log = "$build/opcode-references-unguarded.log";
-my $status;
-{
-	open my $saved_out, '>&', \*STDOUT or die "save stdout: $!\n";
-	open my $saved_err, '>&', \*STDERR or die "save stderr: $!\n";
-	open STDOUT, '>', $log or die "$log: $!\n";
-	open STDERR, '>&', \*STDOUT or die "redirect stderr: $!\n";
-	system 'timeout', '30s', "$build/opcode-references", '--unguarded';
-	$status = $?;
-	open STDOUT, '>&', $saved_out or die "restore stdout: $!\n";
-	open STDERR, '>&', $saved_err or die "restore stderr: $!\n";
+for my $mode ('unguarded', 'unguarded-scalar') {
+	my $log = "$build/opcode-references-$mode.log";
+	my $status;
+	{
+		open my $saved_out, '>&', \*STDOUT or die "save stdout: $!\n";
+		open my $saved_err, '>&', \*STDERR or die "save stderr: $!\n";
+		open STDOUT, '>', $log or die "$log: $!\n";
+		open STDERR, '>&', \*STDOUT or die "redirect stderr: $!\n";
+		system 'timeout', '30s', "$build/opcode-references", "--$mode";
+		$status = $?;
+		open STDOUT, '>&', $saved_out or die "restore stdout: $!\n";
+		open STDERR, '>&', $saved_err or die "restore stderr: $!\n";
+	}
+	open my $report, '<', $log or die "$log: $!\n";
+	my $text = do { local $/; <$report> };
+	$status == 6 && $text =~ /extracted referent must have a lifetime reference/
+		or die "$mode opcode did not expose its missing lifetime reference ($status):\n$text";
+	print "ok - $mode exposes the missing referent lifetime reference\n";
 }
-open my $report, '<', $log or die "$log: $!\n";
-local $/;
-my $text = <$report>;
-$status == 6 && $text =~ /extracted referent must have a lifetime reference/
-	or die "unguarded opcode did not expose its missing lifetime reference ($status):\n$text";
-print "ok - bypassing reference capture exposes the missing referent lifetime reference\n";

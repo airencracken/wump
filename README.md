@@ -136,7 +136,7 @@ make perl-operands-memcheck     # operand callbacks, unwind, and native teardown
 make perl-loads-test            # shared elements retained across container writes
 make perl-loads-tsan            # whole-core concurrent container-to-stack loads
 make perl-loads-memcheck        # element pins, callbacks, and task teardown
-make perl-references-test       # aggregate referents survive source RV replacement
+make perl-references-test       # scalar/aggregate referents survive RV replacement
 make perl-references-tsan       # whole-core dereference handoff and writer checks
 make perl-references-memcheck   # referent pins, rejected paths, and callback cleanup
 make perl-materialization-test # created/deferred lvalues and autovivification
@@ -611,24 +611,35 @@ also cover deferred owner leaks and premature target release in native Perl.
 Focused `perl-materialization-tsan` and `perl-materialization-memcheck` targets
 exercise these paths under ThreadSanitizer and Valgrind.
 
-Ordinary strong array/hash references now retain their extracted referent under
-a short source claim before releasing that claim. A second short claim checks
-the referent's type and object status; no claim spans index/key evaluation.
-Coverage includes `rv2av`/`rv2hv` and the array/hash reference actions in
+Ordinary strong scalar/array/hash references now retain their extracted
+referent under a short source claim before releasing that claim. A second
+short claim checks the referent's type and object status; no claim spans
+index/key evaluation.
+Coverage includes `rv2sv`, `rv2av`/`rv2hv` and the array/hash reference actions in
 `multideref`, including its existing-reference vivification fast paths. If
 another act assigns a new reference into the same source scalar while an index
 or key callback yields, the opcode still uses the originally extracted array
-or hash. Retaining the source scalar alone would leave that earlier container
-unprotected. The C/C++ fixture checks 896 actual dereference opcodes across 512
-source replacements, after all extraction claims have ended. Exceptions and
-abandoned callbacks release these referent holders with the act's temporaries.
+or hash. Scalar dereferences likewise retain their original scalar head through
+later operand evaluation, writable arguments, compound assignment and lvalue
+returns. Nested references retain each extracted head; scalar dereferences
+still perform requested autovivification under the existing writer protocol.
+Tied scalar referents and native lvalue delegates retain their callbacks and
+alias identity. Retaining the source scalar alone would leave its earlier
+referent unprotected. The C/C++ fixture checks 1,344 scalar/aggregate dereference
+invocations, including nested scalar loads and scalar lvalue vivification,
+across 1,920 source replacements after extraction claims have ended. Exceptions
+and abandoned callbacks release these referent holders with the act's temporaries.
 Weak references, blessed referents, tied/magical sources and mismatched types
 keep their native paths; rejected captures drop their temporary strong pin
 before falling back, preserving weak behavior, overload and destructor timing.
+Scalar reference localization retains its native path and diagnostics.
+`make perl-references-test` includes scalar lifetime, conflict, callback and
+cleanup regressions. Its native fixture includes a separate control which
+bypasses only scalar capture and must expose the missing lifetime reference.
 
 Perl execution still uses one slot. This covers the listed scalar destinations,
 plain binary inputs and ordinary element loads, not a complete opcode or XS
-audit. Scalar/weak/object reference extraction and in-place RV changes outside
+audit. Weak/object reference extraction and in-place RV changes outside
 the audited vivification path, mixed key/magic paths, other aggregate fast
 paths and direct XS field access remain open. The caller must already retain the aggregate passed
 to an element load; aggregate reference extraction now establishes that lifetime

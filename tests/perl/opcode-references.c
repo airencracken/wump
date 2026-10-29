@@ -9,20 +9,24 @@
 #define CHECK(expr) do { if (!(expr)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #expr); abort(); } } while (0)
 START_EXTERN_C
 extern OP *Perl_pp_rv2av(pTHX);
+extern OP *Perl_pp_rv2sv(pTHX);
 extern OP *Perl_pp_multideref(pTHX);
 extern SV *__real_Perl_wump_load_rv(pTHX_ SV *, svtype, bool *);
 END_EXTERN_C
 
-enum { workers = 8, rounds = 128 };
+/* Nine cases replace six; keep the original aggregate coverage per case. */
+enum { workers = 8, rounds = 192 };
 static bool unguarded;
+static bool unguarded_scalar;
 typedef struct fixture {
 	PerlInterpreter *interp;
 	SV *array_source, *hash_source;
+	SV *scalar_source, *vivify_source, *chain_source;
 	CV *entry;
 	pthread_barrier_t barrier;
 	struct wump_perl_allocator pools[workers];
 } fixture;
-typedef struct request { fixture *f; int kind; bool lvalue; } request;
+typedef struct request { fixture *f; int kind; bool lvalue; unsigned captures; } request;
 #ifdef __cplusplus
 static thread_local request *current_request;
 #else
@@ -37,15 +41,17 @@ static void meet(fixture *f) {
 START_EXTERN_C
 SV *__wrap_Perl_wump_load_rv(pTHX_ SV *source, svtype type, bool *handled) {
 	SV *loaded;
-	if (unguarded) {
+	if (unguarded || (unguarded_scalar && type == SVt_PV)) {
 		loaded = SvRV(source);
 		*handled = TRUE;
 	} else loaded = __real_Perl_wump_load_rv(aTHX_ source, type, handled);
 	CHECK(*handled && loaded);
 	CHECK(WUMP_REFCNT_LOAD(loaded) >= 2 && "extracted referent must have a lifetime reference");
-	fixture *f = current_request->f;
-	meet(f); /* Every opcode has extracted its referent and ended its claims. */
-	meet(f); /* Writer has replaced the source RV and dropped its old referent. */
+	request *req = current_request;
+	if (++req->captures == 1) {
+		meet(req->f); /* Initial extraction has ended all of its claims. */
+		meet(req->f); /* Writer has replaced the source and dropped its referent. */
+	}
 	return loaded;
 }
 END_EXTERN_C
@@ -65,9 +71,19 @@ XS_INTERNAL(execute_reference) {
 	OP *previous = PL_op;
 	SSize_t stack_mark = SP - PL_stack_base;
 	EXTEND(SP, 1);
-	bool hash = req->kind % 2;
-	SV *source = hash ? f->hash_source : f->array_source;
-	if (req->kind < 2) {
+	bool hash = req->kind < 6 && req->kind % 2;
+	SV *source = req->kind == 6 ? f->scalar_source
+		: req->kind == 7 ? f->vivify_source : req->kind == 8 ? f->chain_source
+		: hash ? f->hash_source : f->array_source;
+	if (req->kind >= 6) {
+		entry->op_type = OP_RV2SV;
+		entry->op_ppaddr = Perl_pp_rv2sv;
+		if (req->kind == 7) {
+			entry->op_flags |= OPf_MOD;
+			entry->op_private = OPpDEREF_AV;
+		}
+		PUSHs(source);
+	} else if (req->kind < 2) {
 		entry->op_type = hash ? OP_RV2HV : OP_RV2AV;
 		entry->op_flags |= OPf_REF;
 		entry->op_ppaddr = Perl_pp_rv2av;
@@ -95,6 +111,17 @@ XS_INTERNAL(execute_reference) {
 	PL_op = entry;
 	CHECK(entry->op_ppaddr(aTHX) == NULL);
 	SV *loaded = *PL_stack_sp;
+	if (req->kind == 8) {
+		CHECK(entry->op_ppaddr(aTHX) == NULL);
+		CHECK(req->captures == 2);
+		loaded = *PL_stack_sp;
+	}
+	if (req->kind == 7) {
+		CHECK(SvROK(loaded) && SvTYPE(SvRV(loaded)) == SVt_PVAV);
+		CHECK(Perl_wump_is_shared(aTHX_ SvRV(loaded)));
+		CHECK(av_store((AV *)SvRV(loaded), 0, newSViv(42)));
+		loaded = *av_fetch((AV *)SvRV(loaded), 0, 0);
+	}
 	if (req->kind == 0) loaded = *av_fetch((AV *)loaded, 0, 0);
 	else if (req->kind == 1) loaded = *hv_fetch((HV *)loaded, "key", 3, 0);
 	CHECK(SvIV(loaded) == 42);
@@ -147,12 +174,15 @@ static void *exercise(void *arg) {
 	SV *key = newSVpvs("key"); SvUPGRADE(key, SVt_PVMG);
 	SV *pad[6] = {NULL, f->array_source, NULL, key, NULL, f->hash_source};
 	PL_curpad = pad;
-	request req = {f, 0, FALSE}; current_request = &req;
+	request req = {f, 0, FALSE, 0}; current_request = &req;
 	for (int pass = 0; pass < rounds; pass++) {
 		ENTER; SAVETMPS;
 		if (!ctx->id) {
 			sv_setrv_noinc(f->array_source, make_array(aTHX_ 42));
 			sv_setrv_noinc(f->hash_source, make_hash(aTHX_ 42));
+			sv_setrv_noinc(f->scalar_source, newSViv(42));
+			sv_setrv_noinc(f->vivify_source, newSV(0));
+			sv_setrv_noinc(f->chain_source, newRV_noinc(newSViv(42)));
 		}
 		meet(f);
 		if (!ctx->id) {
@@ -162,10 +192,14 @@ static void *exercise(void *arg) {
 			CHECK(!pins && !pending);
 			sv_setrv_noinc(f->array_source, make_array(aTHX_ 99));
 			sv_setrv_noinc(f->hash_source, make_hash(aTHX_ 99));
+			sv_setrv_noinc(f->scalar_source, newSViv(99));
+			sv_setrv_noinc(f->vivify_source, newSV(0));
+			sv_setrv_noinc(f->chain_source, newRV_noinc(newSViv(99)));
 			meet(f);
 		} else {
-			req.kind = (pass / 2 + ctx->id) % 6;
+			req.kind = (pass / 2 + ctx->id) % 9;
 			req.lvalue = pass % 2;
+			req.captures = 0;
 			dSP; PUSHMARK(SP); PUTBACK;
 			call_sv((SV *)f->entry, G_DISCARD | G_EVAL);
 			CHECK(!SvTRUE(ERRSV));
@@ -188,6 +222,7 @@ static void *exercise(void *arg) {
 
 int main(int argc, char **argv, char **env) {
 	unguarded = argc == 2 && strEQ(argv[1], "--unguarded");
+	unguarded_scalar = argc == 2 && strEQ(argv[1], "--unguarded-scalar");
 	PERL_SYS_INIT3(&argc, &argv, &env);
 	PerlInterpreter *interp = perl_alloc(); CHECK(interp);
 	PERL_SET_CONTEXT(interp); perl_construct(interp);
@@ -198,7 +233,12 @@ int main(int argc, char **argv, char **env) {
 	fixture f = {0}; f.interp = aTHX;
 	f.array_source = newRV_noinc(make_array(aTHX_ 42));
 	f.hash_source = newRV_noinc(make_hash(aTHX_ 42));
+	f.scalar_source = newRV_noinc(newSViv(42));
+	f.vivify_source = newRV_noinc(newSV(0));
+	f.chain_source = newRV_noinc(newRV_noinc(newSViv(42)));
 	Perl_wump_publish(aTHX_ f.array_source); Perl_wump_publish(aTHX_ f.hash_source);
+	Perl_wump_publish(aTHX_ f.scalar_source); Perl_wump_publish(aTHX_ f.vivify_source);
+	Perl_wump_publish(aTHX_ f.chain_source);
 	f.entry = newXS("ReferenceFixture::invoke", execute_reference, __FILE__);
 	Perl_wump_publish(aTHX_ (SV *)f.entry);
 	CHECK(pthread_barrier_init(&f.barrier, NULL, workers) == 0);
@@ -216,9 +256,11 @@ int main(int argc, char **argv, char **env) {
 	for (int id = 0; id < workers; id++) Perl_wump_allocator_merge(aTHX_ &f.pools[id]);
 	CHECK(pthread_barrier_destroy(&f.barrier) == 0);
 	SvREFCNT_dec(f.array_source); SvREFCNT_dec(f.hash_source);
+	SvREFCNT_dec(f.scalar_source); SvREFCNT_dec(f.vivify_source); SvREFCNT_dec(f.chain_source);
 	PL_perl_destruct_level = 2; CHECK(perl_destruct(interp) == 0);
 	perl_free(interp); PERL_SYS_TERM();
-	puts("ok - seven readers complete 896 actual dereference opcodes across 512 source RV replacements");
+	puts("ok - seven readers complete 1344 scalar/aggregate dereference invocations across 1920 source RV replacements");
+	puts("ok - nested scalar dereferences and scalar lvalue vivification retain and publish their original targets");
 	puts("ok - captures release exclusion before the writer replaces the source and retain the original referent until use");
 	return 0;
 }

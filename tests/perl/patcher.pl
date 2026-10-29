@@ -112,6 +112,20 @@ for my $file ('perl.c', 'sv.c') {
 	print {$output} $text or die "$file: $!\n";
 	close $output or die "$file: $!\n";
 }
+{
+	my $file = "$legacy/pp.c";
+	open my $input, '<', $file or die "$file: $!\n";
+	my $text = do { local $/; <$input> };
+	close $input or die "$file: $!\n";
+	$text =~ s{^/\* Wump scalar reference loads \*/\n}{}
+		or die "missing scalar reference upgrade marker\n";
+	$text =~ s{^    /\* Wump reference capture: rv2sv \*/\n.*?^    /\* End Wump reference capture \*/\n}{}ms
+		or die "missing scalar reference capture\n";
+	$text =~ s/^  wump_scalar_loaded:\n//m or die "missing scalar reference label\n";
+	open my $output, '>', $file or die "$file: $!\n";
+	print {$output} $text or die "$file: $!\n";
+	close $output or die "$file: $!\n";
+}
 for my $spec (
 	['mg.c', [qw(defelem_target vivify_defelem magic_getdefelem magic_setdefelem)]],
 	['pp_hot.c', ['vivify_ref']],
@@ -147,4 +161,4 @@ for my $file (keys %$after) {
 	$upgraded->{"$legacy/$relative"} eq $after->{$file}
 		or die "legacy lifecycle upgrade changed $relative\n";
 }
-print "ok - upgrading earlier lifecycle, element/reference loads and deferred ownership preserves the complete generated tree\n";
+print "ok - upgrading earlier lifecycle, scalar/aggregate reference loads and deferred ownership preserves the complete generated tree\n";

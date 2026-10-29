@@ -743,13 +743,20 @@ the amount of completed infrastructure is not a reliable time estimate.
      Autovivification guards the source and publishes its new referent before
      committing the reference. Perl and C/C++ fixtures cover creation, deferred
      resolution, yields, container clearing, conflict rejection and cleanup.
-     The multideref diagnostic cursor belongs to the act. Scalar/weak/object
+     The multideref diagnostic cursor belongs to the act. Weak/object
      reference extraction, other direct RV mutation, mixed magic/key paths and
      other aggregate opcodes remain separate gates.
-     Ordinary strong aggregate reference extraction in rv2av/rv2hv and
-     multideref retains the referent independently of its source RV before
-     releasing exclusion. Native readers continue through source replacement;
+     Ordinary strong scalar and aggregate reference extraction in rv2sv,
+     rv2av/rv2hv and multideref retains each referent independently of its source
+     RV before releasing exclusion. Native readers continue through replacement;
      Perl tests cover yielding indexes/keys, nested roots and callback cleanup.
+     Scalar operands and writable arguments retain their original heads across
+     source replacement and yields, including nested references, lvalue returns,
+     tied referents and native lvalue delegates. Scalar autovivification retains
+     its guarded publication path; reference localization keeps native behavior.
+     Native C/C++ callers exercise scalar/aggregate extraction while another
+     executor replaces source RVs, with no caller-held read claim. A separate
+     scalar capture bypass must expose the missing lifetime reference.
      Rejected weak/object/magic captures leave their native behavior intact.
      Task-private special globs and localization anchors no longer create
      prototype CVs or participate in namespace backreference lists.
