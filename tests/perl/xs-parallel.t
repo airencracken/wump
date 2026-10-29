@@ -17,6 +17,95 @@ WumpTest::check_program(q{
 for my $slots (1, 2, 4) {
 	local $ENV{WUMPPROCS} = $slots;
 	WumpTest::check_program(q{
+		use Wump; use File::Spec::Unix (); use RootFixture;
+		my @cases = (["a/./b//", "a/b"], ["/../../a", "/a"], ["./", "."],
+			["", ""], [undef, undef], [123, "123"], ["\x{100}/./b", "\x{100}/b"],
+			["a\0b/./c", "a\0b/c"]);
+		my $out = chan(4);
+		for (1..8) {
+			act {
+				RootFixture::executor_rendezvous();
+				for (1..32) {
+					for my $case (@cases) {
+						my $expected = $case->[1];
+						for my $actual (File::Spec::Unix::_fn_canonpath($case->[0]),
+							File::Spec::Unix->canonpath($case->[0])) {
+							die "canonical path changed\n" if defined($expected)
+								? !defined($actual) || $actual ne $expected : defined($actual);
+						}
+					}
+					yield;
+				}
+				$out->send(1);
+			};
+		}
+		die "missing path workers\n" if grep { $out->recv != 1 } 1..8;
+		if (Wump::execution_slots() > 1) {
+			{ package TiedPath; sub TIESCALAR { bless {}, shift }
+				sub FETCH { die "native path called FETCH\n" } }
+			tie my $path, 'TiedPath';
+			eval { File::Spec::Unix::_fn_canonpath($path) };
+			die "magical path admitted: $@" unless $@ =~ /requires a plain scalar/;
+			eval { File::Spec::Unix::_fn_canonpath([]) };
+			die "reference path admitted: $@" unless $@ =~ /requires a plain scalar/;
+		}
+		print "native path normalization retained scalar semantics\n";
+	}, 0, qr/\Anative path normalization retained scalar semantics\n\z/,
+		"audited path normalization runs on $slots slots with boundary input coverage");
+}
+
+for my $slots (1, 2, 4) {
+	local $ENV{WUMPPROCS} = $slots;
+	WumpTest::check_program(q{
+		use Wump; use Cwd (); use RootFixture;
+		our $expected;
+		BEGIN { $expected = Cwd::getcwd() }
+		my $out = chan(4);
+		for (1..8) {
+			act {
+				RootFixture::executor_rendezvous();
+				for (1..64) {
+					die "cwd changed\n" unless Cwd::getcwd() eq $expected;
+					die "fast cwd changed\n" unless Cwd::fastcwd() eq $expected;
+					yield;
+				}
+				$out->send(1);
+			};
+		}
+		die "missing cwd workers\n" if grep { $out->recv != 1 } 1..8;
+		eval { Cwd::fastcwd(1) };
+		die "cwd alias accepted arguments\n" unless $@ =~ /Usage:/;
+		print "native cwd readers retained independent results\n";
+	}, 0, qr/\Anative cwd readers retained independent results\n\z/,
+		"audited cwd readers run on $slots slots and retain alias argument validation");
+}
+
+{
+	local $ENV{WUMPPROCS} = 4;
+	WumpTest::check_program(q{
+		use Wump; use Cwd (); use File::Temp ();
+		our $original;
+		BEGIN {
+			$original = Cwd::getcwd();
+			my $gone = File::Temp::tempdir(TMPDIR => 1);
+			chdir $gone or die "chdir: $!";
+			rmdir $gone or die "rmdir: $!";
+		}
+		die "deleted cwd did not fail\n" if defined Cwd::getcwd();
+		# Only the main act is running; restore the process directory before
+		# starting any workers or loading more files.
+		chdir $original or die "restore cwd: $!";
+		die "cwd did not recover\n" unless Cwd::getcwd() eq $original;
+		eval { Cwd::abs_path('.') };
+		die "unaudited cwd helper admitted: $@" unless $@ =~ /XS function has not declared parallel safety: Cwd::abs_path/;
+		print "cwd failure recovered and other native path helpers stayed gated\n";
+	}, 0, qr/\Acwd failure recovered and other native path helpers stayed gated\n\z/,
+		'cwd readers preserve failure/recovery behavior without admitting unrelated helpers');
+}
+
+for my $slots (1, 2, 4) {
+	local $ENV{WUMPPROCS} = $slots;
+	WumpTest::check_program(q{
 		use Wump;
 		use Time::HiRes ();
 		use RootFixture;

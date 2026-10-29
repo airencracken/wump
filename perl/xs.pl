@@ -2,6 +2,48 @@
 # the pinned Perl source. Blocking calls and process-wide mutations stay gated.
 sub apply_xs {
 	my ($source) = @_;
+	# The HAS_GETCWD path uses a local buffer and the caller's private XS
+	# target. Other Cwd helpers use different native/context paths. Never
+	# admit the fallback implementation which walks by changing process cwd.
+	edit('dist/PathTools/Cwd.xs', "BOOT:\n", <<'XS');
+BOOT:
+#ifdef HAS_GETCWD
+    if (!PL_wump_task) Perl_wump_xs_allow(aTHX_ get_cv("Cwd::getcwd", 0));
+#endif
+XS
+	edit('dist/PathTools/Cwd.xs', "#ifdef HAS_GETCWD\n    if (!PL_wump_task) Perl_wump_xs_allow(aTHX_ get_cv(\"Cwd::getcwd\", 0));\n#endif\n", <<'XS');
+#ifdef HAS_GETCWD
+    if (!PL_wump_task) Perl_wump_xs_allow(aTHX_ get_cv("Cwd::getcwd", 0));
+#endif
+    if (!PL_wump_task) {
+        Perl_wump_xs_allow(aTHX_ get_cv("File::Spec::Unix::canonpath", 0));
+        Perl_wump_xs_allow(aTHX_ get_cv("File::Spec::Unix::_fn_canonpath", 0));
+    }
+XS
+	# Canonicalization uses local buffers and returns a new scalar. Snapshot
+	# plain input before native string coercion; leave other path helpers gated.
+	edit('dist/PathTools/Cwd.xs', "    STRLEN plen;\n    SvGETMAGIC(path);", <<'XS');
+    STRLEN plen;
+    if (Perl_wump_parallel(aTHX)) {
+        struct wump_borrow *capture = Perl_wump_capture_begin(aTHX_ path);
+        bool plain = SvTYPE(path) <= SVt_PVMG && SvTYPE(path) != SVt_INVLIST
+            && !SvROK(path) && !SvOBJECT(path) && !SvVALID(path);
+        if (plain && SvTYPE(path) >= SVt_PVMG) {
+            MAGIC *magic;
+            for (magic = SvMAGIC(path); magic; magic = magic->mg_moremagic) {
+                if (!Perl_wump_publish_magic(magic)) { plain = FALSE; break; }
+            }
+        }
+        if (!plain) {
+            Perl_wump_capture_end(aTHX_ capture);
+            croak("Wump: parallel path canonicalization requires a plain scalar");
+        }
+        SV *copy = sv_mortalcopy(path);
+        Perl_wump_capture_end(aTHX_ capture);
+        path = copy;
+    }
+    SvGETMAGIC(path);
+XS
 	# On the supported Linux build these entries call gettimeofday or
 	# clock_gettime/getres with stack-local output and allocate only their
 	# return values. They do not modify Time::HiRes's interpreter context.

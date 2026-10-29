@@ -14,11 +14,16 @@ use Mojo::Server::Daemon;
 use Mojo::JSON 'encode_json';
 use Getopt::Long 'GetOptions';
 
-my ($listen, $workers, $max_active, $max_history) = ('http://127.0.0.1:3000', 4, 8, 16);
-GetOptions('listen=s' => \$listen, 'workers=i' => \$workers,
-	'max-active=i' => \$max_active, 'max-history=i' => \$max_history)
-	or die "Usage: $0 [--listen http://127.0.0.1:3000] [--workers 4] [--max-active 8] [--max-history 16]\n";
-die "Unexpected arguments\n" if @ARGV;
+my ($listen, $workers, $max_active, $max_history);
+CHECK {
+	# Getopt::Long compiles option-prefix regexes. Finish configuration before
+	# Wump starts execution slots, while the ordinary compiler is available.
+	($listen, $workers, $max_active, $max_history) = ('http://127.0.0.1:3000', 4, 8, 16);
+	GetOptions('listen=s' => \$listen, 'workers=i' => \$workers,
+		'max-active=i' => \$max_active, 'max-history=i' => \$max_history)
+		or die "Usage: $0 [--listen http://127.0.0.1:3000] [--workers 4] [--max-active 8] [--max-history 16]\n";
+	die "Unexpected arguments\n" if @ARGV;
+}
 my $jobs = WumpDemo::Jobs->new(workers => $workers, max_active => $max_active, max_history => $max_history);
 my $app = WumpDemo::App->new(jobs => $jobs);
 my $loop = Mojo::IOLoop->singleton;

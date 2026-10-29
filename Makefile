@@ -28,6 +28,7 @@ perl-mojo-cpu-bench: perl-build
 
 perl-mojo-test: perl-build
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -MMojolicious -e 'die "Install the tested Mojolicious 9.37 from examples/mojo/cpanfile\n" unless $$Mojolicious::VERSION eq "9.37"'
+	timeout 90s perl tests/perl/mojo-cli.t '$(abspath $(BUILD))/perl/perl-5.42.2/perl'
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -Iexamples/mojo/lib tests/perl/mojo-jobs.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -Iexamples/mojo/lib tests/perl/mojo.t
 	timeout 120s perl tests/perl/mojo-live.t '$(abspath $(BUILD))/perl/perl-5.42.2/perl'

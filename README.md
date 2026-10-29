@@ -544,6 +544,15 @@ Conflicting writers, publishers and readers using the borrow protocol fail
 before accessing guarded storage. No OS mutex remains held while a mutation
 invokes Perl callbacks.
 
+A bounded 128 KiB atomic filter lets registry probes for untracked heads
+avoid the metadata mutex. A positive result still checks the registry; bits
+are never cleared, so rollback and address reuse can only add false positives.
+This does not establish exclusive ownership. Repeated publication skips the
+graph walk only after checking the completed native marker and active writers.
+Published mortal values transfer their temporary references into private RV
+holders, preserving statement lifetime without cleanup changing shared TEMP
+flags. Cold overload-cache flags use the same metadata synchronization.
+
 `make perl-memory-test` exercises eight native executors, synchronized writes,
 cached buffers, array slots, deleted hash entries, COW aliases and migration.
 Allocation-failure tests verify that failed retirement preparation leaves live
