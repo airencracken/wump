@@ -770,7 +770,7 @@ language and I/O integration remains open.
 | Perl semantics and language surface | Main-act entry, closure spawning, scalar/reference channels, wait groups, scoped locks, regex state, `local` and `pocket` have focused coverage. | Perl `sel`, core feature/call-form syntax, per-act environment/process integration and remaining magic/weak/object paths need work. |
 | Shared-memory safety | Conservative atomic counters, publication, read claims, private conversion snapshots and pinned storage retirement support audited paths. | General concurrent-read safety, ownership specialization, cheaper reclamation, remaining aggregate/cache/XS audits and a user-facing `perl -race` are unfinished. |
 | Useful network services | The one-slot dashboard passes live HTTP/WebSocket tests; its actual Unicode job backend runs and verifies results on 1/2/4 slots. | Multi-slot live HTTP acceptance, Perl I/O/syscall integration, runtime compilation policy and remaining dependency XS audits are separate gates. |
-| Performance | Repeated, result-checked CPU backend measurements and native runtime baselines exist. The state-access optimization below reduces absolute batch time. | Near-linear Perl scaling is not achieved. This benchmark does not compare single-thread overhead with stock Perl, and does not establish the Go runtime target. |
+| Performance | Repeated, result-checked CPU backend measurements and native runtime baselines exist. State-access and owned-value metadata optimizations now give multi-slot gains on the Unicode backend. | Near-linear Perl scaling is not achieved. This benchmark does not compare single-thread overhead with stock Perl, and does not establish the Go runtime target. |
 | Compatibility and validation | Selected upstream compiler, regex, class, opcode, I/O and deparser tests complement native/Perl regressions, TSan, ASan/leak checks and Valgrind. | The selected upstream target is not the entire upstream test distribution; general CPAN compatibility and longer network soak tests remain unvalidated. |
 | Deployment and portability | A private Perl fork and standalone C runtime build on Linux x86-64. | Static application bundling, the `wump` tool, dependency locking/cache and arm64 are pending. |
 
@@ -798,12 +798,54 @@ and workload settings. Reproduce the job measurements with
 `perl bench/mojo-cpu.pl PRIVATE_PERL --runs 5 --jobs 8 --passes 20 --workers 4`.
 These measurements exclude HTTP and reactor work.
 
-The next acceptance goal should reduce metadata work for act-owned values
-without weakening publication or conflict checks, and demonstrate repeatable
-multi-slot gains on the verified backend. A subsequent network checkpoint is
-the existing live dashboard test passing on four slots under an explicit
-dependency/compilation policy. Packaging can proceed independently of these
-parallel-safety gates.
+### Owned-value metadata checkpoint (2026-10-29)
+
+The next set reduces mutex traffic without treating an unmarked head as proof
+of exclusive ownership. A 128 KiB atomic membership filter bypasses registry
+locks only for negative probes. Bits are published before registry insertion
+and never cleared: failed publication, address reuse and saturation produce
+conservative false positives, which still use the authoritative registry.
+Repeated publication checks the completed graph marker and foreign writers
+before skipping the graph walk. Native registration alone is insufficient.
+
+TSan exposed two additional shared-head writes during this work. Cold overload
+cache flags now use metadata guards. Publication moves mortal references into
+private RV holders before escape, and later mortalization uses the same private
+ownership scheme. Cleanup preserves reference counts and temporary lifetime
+without clearing TEMP on a head another act is using. This retains one shared
+interpreter; each act has private execution state, not another interpreter.
+
+Five clean-source runs per slot count, with the same hardware, compiler and
+workload as above, produced these median wall times:
+
+| Execution slots | Before (`3ac453a`) | After (`12d7e3b`) | After speedup over one slot |
+| --- | --- | --- | --- |
+| 1 | 0.710 s | 0.670 s | 1.00x |
+| 2 | 0.837 s | 0.533 s | 1.26x |
+| 4 | 0.942 s | 0.540 s | 1.24x |
+
+All 240 jobs across the before/after samples matched the reference. The
+[recorded summaries](bench/mojo-owned-values.csv) include the exact revisions
+and workload settings. This meets the first repeatable multi-slot backend gain
+checkpoint; four slots still do not improve on two, and near-linear scaling
+remains open. These measurements exclude HTTP and reactor work.
+
+The normal Perl tests, selected upstream suite (172 scripts and 548,693
+assertions), parallel TSan, ASan with leak detection, Valgrind parallel/native
+checks and fresh-source patcher checks pass. New regressions cover zero-lock
+untracked probes, address reuse, incomplete native publication, writer
+conflicts, temporary ownership, yielding overloads and path scalar boundaries.
+
+The dashboard parses command-line options in CHECK before scheduler startup.
+Audited native cwd readers and plain-scalar path canonicalizers advance its
+parallel startup, with concurrent, failure/recovery and unsupported-input
+coverage. Live one-slot HTTP/WebSocket acceptance still passes all 48 checks.
+Four-slot startup currently stops at File::Spec::Unix::_fn_catfile, whose
+module-context constants and joining paths need a separate audit. The runtime
+compiler and unaudited XS gates remain in force. The next network checkpoint
+is the live dashboard test passing on four slots under an explicit dependency
+and compilation policy. Broader magic/weak/object audits and packaging remain
+separate work.
 
 0. **Runtime in C**: tasks, stacks, scheduler, channels, `sel`, timers,
    netpoller, sysmon. Benchmarked against Go.
