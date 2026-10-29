@@ -553,6 +553,35 @@ static SV *wump_load_keep(pTHX_ SV *holder, SV *value) {
 	return value;
 }
 
+SV *Perl_wump_load_rv(pTHX_ SV *value, svtype type, bool *handled) {
+	*handled = FALSE;
+	SV *holder = sv_2mortal(newSV_type(SVt_IV));
+	wump_borrow *source = wump_borrow_start(aTHX_ value);
+	if (!source) return NULL;
+	bool plain = SvTYPE(value) <= SVt_PVMG && SvROK(value)
+		&& !SvWEAKREF(value) && !SvOBJECT(value) && !SvVALID(value);
+	if (plain && SvTYPE(value) == SVt_PVMG) {
+		for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic)
+			if (!Perl_wump_publish_magic(mg) && mg->mg_type != PERL_MAGIC_backref) plain = FALSE;
+	}
+	SV *result = plain ? wump_load_keep(aTHX_ holder, SvRV(value)) : NULL;
+	/* Keep the referent independently of its source before releasing the
+	 * source claim. Neither claim spans index/key evaluation or Perl magic. */
+	wump_borrow_cancel(aTHX_ source);
+	if (!result) return NULL;
+	wump_borrow *target = wump_borrow_start(aTHX_ result);
+	*handled = target && (type == SVt_PVAV || type == SVt_PVHV)
+		&& SvTYPE(result) == type && !SvOBJECT(result);
+	wump_borrow_cancel(aTHX_ target);
+	if (!*handled) {
+		/* Ineligible magic/overload/type paths must not gain a hidden strong
+		 * reference which could change destructor timing or weak semantics. */
+		sv_set_undef(holder);
+		return NULL;
+	}
+	return result;
+}
+
 SV *Perl_wump_load_av(pTHX_ AV *value, SSize_t index, bool *handled) {
 	*handled = FALSE;
 	SV *holder = sv_2mortal(newSV_type(SVt_IV));

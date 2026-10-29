@@ -149,6 +149,7 @@ bool Perl_wump_overlay_active(pTHX_ const SV *value);
 bool Perl_wump_publish_active(pTHX);
 char *Perl_wump_pv(pTHX_ SV *value, STRLEN *length, U32 flags);
 SV **Perl_wump_borrow_av(pTHX_ AV *value, SSize_t index);
+SV *Perl_wump_load_rv(pTHX_ SV *value, svtype type, bool *handled);
 SV *Perl_wump_load_av(pTHX_ AV *value, SSize_t index, bool *handled);
 SV *Perl_wump_load_hv(pTHX_ HV *value, SV *key, bool *handled);
 HE *Perl_wump_borrow_hv(pTHX_ HV *value, const char *key, STRLEN length, U32 hash);

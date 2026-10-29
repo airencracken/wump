@@ -54,6 +54,12 @@ for my $file ('perl.c', 'sv.c') {
 	local $/;
 	my $text = <$input>;
 	close $input or die "$file: $!\n";
+	# Remove the aggregate reference upgrade as well as the later lvalue
+	# guards so an old generated tree exercises both upgrade stages.
+	my $references = $text =~ s{^[ ]*/\* Wump reference capture:[^\n]+\*/\n.*?^[ ]*/\* End Wump reference capture \*/\n}{}gms;
+	$references == 5 or die "expected five reference captures, found $references\n";
+	$text =~ s{^/\* Wump aggregate reference loads \*/\n}{} or die "missing reference upgrade marker\n";
+	$text =~ s/^  wump_aggregate_loaded:\n//m or die "missing reference upgrade label\n";
 	# Recreate the previous read-only load guards in a complete generated tree.
 	# Reapplying must upgrade all five sites and preserve every other patch.
 	my $count = $text =~ s{
@@ -77,4 +83,4 @@ for my $file (keys %$after) {
 	$upgraded->{"$legacy/$relative"} eq $after->{$file}
 		or die "legacy lifecycle upgrade changed $relative\n";
 }
-print "ok - upgrading earlier key-lock lifecycle and read-only element loads preserves the complete generated tree\n";
+print "ok - upgrading earlier key-lock lifecycle, element and reference loads preserves the complete generated tree\n";

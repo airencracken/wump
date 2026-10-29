@@ -736,8 +736,14 @@ the amount of completed infrastructure is not a reliable time estimate.
      Writable call arguments preserve aliases across yields and slot deletion;
      missing lvalues, local views and vivification retain their native paths.
      The multideref diagnostic cursor belongs to the act. Missing/deferred
-     lvalues, autovivification, root RV extraction/mutation, mixed magic/key paths and
+     lvalues, autovivification, scalar/weak/object reference extraction,
+     direct RV mutation, mixed magic/key paths and
      other aggregate opcodes remain separate gates.
+     Ordinary strong aggregate reference extraction in rv2av/rv2hv and
+     multideref retains the referent independently of its source RV before
+     releasing exclusion. Native readers continue through source replacement;
+     Perl tests cover yielding indexes/keys, nested roots and callback cleanup.
+     Rejected weak/object/magic captures leave their native behavior intact.
      Task-private special globs and localization anchors no longer create
      prototype CVs or participate in namespace backreference lists.
      The interpreter bridge remains single-slot until the remaining state gates

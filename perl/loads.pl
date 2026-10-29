@@ -7,6 +7,7 @@ sub apply_loads {
 	my $text = read_file($file);
 	if (index($text, '/* Wump container-to-stack loads */') >= 0) {
 		apply_lvalue_loads($source);
+		apply_reference_loads($source);
 		return;
 	}
 	for my $spec (
@@ -78,6 +79,7 @@ C
 	$text .= "\n/* Wump container-to-stack loads */\n";
 	write_file($file, $text);
 	apply_lvalue_loads($source);
+	apply_reference_loads($source);
 }
 
 sub apply_lvalue_loads {
@@ -112,5 +114,47 @@ sub apply_lvalue_loads {
 	}
 	$text .= "\n$marker\n";
 	write_file($file, $text);
+}
+sub apply_reference_loads {
+	my ($source) = @_;
+	my $file = "$source/pp_hot.c";
+	my $text = read_file($file);
+	my $marker = '/* Wump aggregate reference loads */';
+	return if index($text, $marker) >= 0;
+	my $start = index($text, "PP(pp_rv2av)\n{");
+	$start >= 0 or die "missing rv2av opcode\n";
+	my $at = index($text, '    SvGETMAGIC(sv);', $start);
+	$at >= 0 or die "missing rv2av magic anchor\n";
+	my $capture = <<'C';
+    /* Wump reference capture: rv2av */
+    if (PL_wump_task && !(PL_op->op_flags & OPf_MOD && PL_op->op_private & OPpLVAL_INTRO)) {
+        bool handled;
+        SV *loaded = Perl_wump_load_rv(aTHX_ sv, type, &handled);
+        if (handled) { sv = loaded; goto wump_aggregate_loaded; }
+    }
+    /* End Wump reference capture */
+C
+	substr($text, $at, 0, $capture);
+	$at = index($text, '    if (PL_op->op_flags & OPf_REF) {', $start);
+	$at >= 0 or die "missing rv2av aggregate anchor\n";
+	substr($text, $at, 0, "  wump_aggregate_loaded:\n");
+	for my $kind ('AV', 'HV') {
+		for my $vivify (0, 1) {
+			my $anchor = $vivify ? "            sv = vivify_ref(sv, OPpDEREF_$kind);"
+				: "        do_${kind}_rv2" . lc($kind) . "_aelem:";
+			$anchor =~ s/_aelem:/_helem:/ if $kind eq 'HV' && !$vivify;
+			$at = index($text, $anchor);
+			$at >= 0 or die "missing $kind reference anchor: $anchor\n";
+			$at += length($anchor) + 1 unless $vivify;
+			my $label = $kind eq 'AV' ? 'do_AV_aelem' : 'do_HV_helem';
+			$capture = "            /* Wump reference capture: multideref $kind $vivify */\n"
+				. "            if (PL_wump_task) {\n                bool handled;\n"
+				. "                SV *loaded = Perl_wump_load_rv(aTHX_ sv, SVt_PV$kind, &handled);\n"
+				. "                if (handled) { sv = loaded; goto $label; }\n            }\n"
+				. "            /* End Wump reference capture */\n";
+			substr($text, $at, 0, $capture);
+		}
+	}
+	write_file($file, "$marker\n$text");
 }
 1;

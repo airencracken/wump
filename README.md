@@ -136,6 +136,9 @@ make perl-operands-memcheck     # operand callbacks, unwind, and native teardown
 make perl-loads-test            # shared elements retained across container writes
 make perl-loads-tsan            # whole-core concurrent container-to-stack loads
 make perl-loads-memcheck        # element pins, callbacks, and task teardown
+make perl-references-test       # aggregate referents survive source RV replacement
+make perl-references-tsan       # whole-core dereference handoff and writer checks
+make perl-references-memcheck   # referent pins, rejected paths, and callback cleanup
 make perl-memory-test           # borrowed storage, concurrent publication/writes, migration
 make perl-memory-tsan           # whole-core reclamation stress and deliberate-race control
 ```
@@ -589,12 +592,28 @@ seven readers through 896 read-only and 896 writable opcode loads while a writer
 removes elements and clears containers. Bypassing retention must fail its
 lifetime assertion before attempting a dangling read.
 
+Ordinary strong array/hash references now retain their extracted referent under
+a short source claim before releasing that claim. A second short claim checks
+the referent's type and object status; no claim spans index/key evaluation.
+Coverage includes `rv2av`/`rv2hv` and the array/hash reference actions in
+`multideref`, including its existing-reference vivification fast paths. If
+another act assigns a new reference into the same source scalar while an index
+or key callback yields, the opcode still uses the originally extracted array
+or hash. Retaining the source scalar alone would leave that earlier container
+unprotected. The C/C++ fixture checks 896 actual dereference opcodes across 512
+source replacements, after all extraction claims have ended. Exceptions and
+abandoned callbacks release these referent holders with the act's temporaries.
+Weak references, blessed referents, tied/magical sources and mismatched types
+keep their native paths; rejected captures drop their temporary strong pin
+before falling back, preserving weak behavior, overload and destructor timing.
+
 Perl execution still uses one slot. This covers the listed scalar destinations,
 plain binary inputs and ordinary element loads, not a complete opcode or XS
-audit. Missing/deferred lvalue creation, autovivification, root-reference
-extraction and in-place RV changes, mixed key/magic paths, other aggregate fast
+audit. Missing/deferred lvalue creation, autovivification, scalar/weak/object
+reference extraction and in-place RV changes, mixed key/magic paths, other aggregate fast
 paths and direct XS field access remain open. The caller must already retain the aggregate passed
-to a load; these element holders do not establish that earlier root lifetime.
+to an element load; aggregate reference extraction now establishes that lifetime
+for the ordinary strong-reference paths listed above.
 Raw `SvPVX`/`AvARRAY`/`HvARRAY` access needs an explicit borrow or external
 lifetime management. Magical containers, mutable-buffer escapes, element-overlay
 base writes, regex/compiler/method caches, and the remaining interpreter/XS
