@@ -237,7 +237,13 @@ edit('perl.h', "    struct wump_read_frame *Iwump_read_frame;",
 my $vars = "\n/* Wump execution state: root execution retains the upstream fields. */\n";
 $vars .= "#if defined(MULTIPLICITY)\n#define PL_wump_task Perl_wump_task_current(aTHX)\n";
 for my $name (@vars) {
-	$vars .= "#undef PL_$name\n#define PL_$name (*(PL_wump_task && !PL_wump_task->main ? &PL_wump_task->I$name : &aTHX->I$name))\n";
+	# Select once per field access. Keep the TLS selector out of line so a
+	# resumed C frame reloads its executor's TLS after migration; the field
+	# helper may inline without repeating that selector for every condition.
+	$vars .= "PERL_STATIC_INLINE $types{$name} *\nS_wump_state_$name(pTHX)\n{\n"
+		. "    struct wump_perl_task *task = PL_wump_task;\n"
+		. "    return task && !task->main ? &task->I$name : &aTHX->I$name;\n}\n"
+		. "#undef PL_$name\n#define PL_$name (*S_wump_state_$name(aTHX))\n";
 }
 for my $name (qw(sv_root sv_arenaroot sv_count body_arenas body_roots nomemok)) {
 	$vars .= "#undef PL_$name\n#define PL_$name (*Perl_wump_allocator_$name(aTHX))\n";

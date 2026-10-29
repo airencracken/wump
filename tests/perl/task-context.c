@@ -36,6 +36,7 @@ static void *exercise(void *arg) {
 	OP ops[2] = {{0}, {0}};
 	SV *stack[2] = {NULL, NULL};
 	struct wump_perl_task task = {.interp = aTHX, .Iop = &ops[0], .Istack_sp = stack};
+	struct wump_perl_task main_task = {.interp = aTHX, .main = 1, .Iop = &ops[1]};
 	if (PL_wump_task != NULL) atomic_store(&f->failed, 1);
 	rendezvous(f);
 	/* Order activations so the old shared-slot failure is deterministic,
@@ -53,10 +54,23 @@ static void *exercise(void *arg) {
 		if (PL_wump_task != &task || PL_op != &ops[i % 2]
 			|| PL_stack_sp != &stack[i % 2] || PL_savestack_ix != i)
 			atomic_store(&f->failed, 1);
+		if (&PL_op != &task.Iop || &PL_stack_sp != &task.Istack_sp
+			|| &PL_savestack_ix != &task.Isavestack_ix || &PL_start_env != &task.Istart_env)
+			atomic_store(&f->failed, 1);
+		if (!(i % 100)) {
+			/* A selected main act still uses the interpreter's original
+			 * fields. Returning to a child must select its lvalues afresh. */
+			OP **child_slot = &PL_op;
+			activate(aTHX_ &main_task);
+			if (PL_wump_task != &main_task || &PL_op != &aTHX->Iop || PL_op != f->root)
+				atomic_store(&f->failed, 1);
+			activate(aTHX_ &task);
+			if (&PL_op != child_slot || PL_op != &ops[i % 2]) atomic_store(&f->failed, 1);
+		}
 		PERL_SET_CONTEXT(f->other);
 		{
 			dTHX;
-			if (PL_wump_task != NULL || PL_op != f->other_root)
+			if (PL_wump_task != NULL || PL_op != f->other_root || &PL_op != &aTHX->Iop)
 				atomic_store(&f->failed, 1);
 		}
 		PERL_SET_CONTEXT(f->interp);
