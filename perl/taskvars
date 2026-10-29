@@ -55,3 +55,4 @@ statusvalue
 statusvalue_posix
 maxsysfd
 last_in_gv
+multideref_pc

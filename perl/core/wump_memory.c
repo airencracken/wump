@@ -543,6 +543,79 @@ char *Perl_wump_pv_encoded(pTHX_ SV *value, STRLEN *length, U32 flags, int encod
 	return Perl_wump_read_snapshot_pv(aTHX_ value, copy, length, flags, encoding);
 }
 
+/* A raw slot/HE cannot escape the container's read claim. Retain the actual
+ * element head in a private mortal RV before releasing that claim. Making the
+ * shared head itself mortal (or newRV_noinc) would change its TEMP flag. */
+static SV *wump_load_keep(pTHX_ SV *holder, SV *value) {
+	if (!value) return &PL_sv_undef;
+	SvRV_set(holder, SvREFCNT_inc(value));
+	SvROK_on(holder);
+	return value;
+}
+
+SV *Perl_wump_load_av(pTHX_ AV *value, SSize_t index, bool *handled) {
+	*handled = FALSE;
+	SV *holder = sv_2mortal(newSV_type(SVt_IV));
+	wump_borrow *borrow = wump_borrow_start(aTHX_ (SV *)value);
+	if (!borrow) return NULL;
+	bool plain = SvTYPE(value) == SVt_PVAV && AvREAL(value)
+		&& !Perl_wump_overlay_active(aTHX_ (SV *)value);
+	if (plain) {
+		for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic) {
+			if (!Perl_wump_publish_magic(mg) && !Perl_wump_element_magic(mg)
+				&& mg->mg_type != PERL_MAGIC_backref) plain = FALSE;
+		}
+	}
+	SV *result = NULL;
+	if (plain) {
+		if (index < 0) index += AvFILLp(value) + 1;
+		result = wump_load_keep(aTHX_ holder,
+			index >= 0 && index <= AvFILLp(value) ? AvARRAY(value)[index] : NULL);
+		*handled = TRUE;
+	}
+	wump_borrow_cancel(aTHX_ borrow);
+	return result;
+}
+
+SV *Perl_wump_load_hv(pTHX_ HV *value, SV *key, bool *handled) {
+	*handled = FALSE;
+	/* Only cached ordinary string keys belong to this callback-free path.
+	 * Copy under the key's claim so hash UTF-8 canonicalization cannot change
+	 * shared caches. Numeric, tied and overloaded keys keep the core path. */
+	wump_borrow *key_borrow = wump_borrow_start(aTHX_ key);
+	bool plain = SvTYPE(key) <= SVt_PVMG && !SvROK(key) && !SvOBJECT(key)
+		&& !SvVALID(key) && SvPOK(key);
+	if (plain && SvTYPE(key) == SVt_PVMG) {
+		for (MAGIC *mg = SvMAGIC(key); mg; mg = mg->mg_moremagic)
+			if (!Perl_wump_publish_magic(mg)) plain = FALSE;
+	}
+	if (!plain) {
+		wump_borrow_cancel(aTHX_ key_borrow);
+		return NULL;
+	}
+	SV *copy = sv_2mortal(newSVpvn_flags(SvPVX_const(key), SvCUR(key),
+		SvUTF8(key) ? SVf_UTF8 : 0));
+	wump_borrow_cancel(aTHX_ key_borrow);
+	SV *holder = sv_2mortal(newSV_type(SVt_IV));
+	wump_borrow *borrow = wump_borrow_start(aTHX_ (SV *)value);
+	if (!borrow) return NULL;
+	SV *result = NULL;
+	if (Perl_wump_hv_readable(aTHX_ value)) {
+		/* A disallowed restricted-hash key croaks through a Perl die hook.
+		 * Probe without that callback, then let the native path diagnose a
+		 * miss after this claim is gone. Existing entries still get pinned. */
+		bool restricted = SvREADONLY(value);
+		HE *entry = (HE *)hv_common(value, NULL, SvPVX_const(copy), SvCUR(copy),
+			SvUTF8(copy) ? HVhek_UTF8 : 0, restricted ? HV_FETCH_ISEXISTS : 0, NULL, 0);
+		if (entry || !restricted) {
+			result = wump_load_keep(aTHX_ holder, entry ? HeVAL(entry) : NULL);
+			*handled = TRUE;
+		}
+	}
+	wump_borrow_cancel(aTHX_ borrow);
+	return result;
+}
+
 SV **Perl_wump_borrow_av(pTHX_ AV *value, SSize_t index) {
 	wump_borrow *borrow = wump_borrow_start(aTHX_ (SV *)value);
 	if (!borrow) croak("Wump: array borrowing requires a published array");

@@ -133,6 +133,9 @@ make perl-writes-tsan           # instrumented opcode tests and allocator race c
 make perl-operands-test         # opcode operand snapshots and native contention
 make perl-operands-tsan         # whole-core concurrent opcode reads/writes
 make perl-operands-memcheck     # operand callbacks, unwind, and native teardown
+make perl-loads-test            # shared elements retained across container writes
+make perl-loads-tsan            # whole-core concurrent container-to-stack loads
+make perl-loads-memcheck        # element pins, callbacks, and task teardown
 make perl-memory-test           # borrowed storage, concurrent publication/writes, migration
 make perl-memory-tsan           # whole-core reclamation stress and deliberate-race control
 ```
@@ -564,12 +567,28 @@ opcode. Disabling operand preparation must expose an unguarded cached read.
 The TSan target instruments Perl and the fixture and checks the deliberate
 allocator-race control.
 
-Perl execution still uses one slot. This is coverage for the listed scalar
-destinations and plain binary inputs, not a complete opcode or XS audit.
-Other raw operand reads, aggregate opcode fast paths, other lvalue magic and
-direct XS field access remain open. Shared-container loads also need to retain
-operand heads before placing them on an act's stack; opcode entry protection
-does not establish that earlier lifetime boundary.
+Ordinary published array/hash element reads now retain the actual element head
+before releasing the container's read claim. A private mortal holder keeps that
+head alive through the act's temporary scope, including yields, exceptions and
+task abandonment, without changing its flags or copying away its alias identity.
+The claim ends before the opcode returns; a later container deletion or resize
+does not need to retain its old table just for an already-loaded operand.
+Coverage includes read-only `aelemfast`/`aelemfast_lex`, `aelem`, `helem`, and
+existing intermediate and read-only final `multideref` elements. Hash keys on
+this path are ordinary cached strings, including UTF-8 and embedded NULs;
+numeric, tied and overloaded keys retain the native conversion path. Active
+act-local element overlays and magical containers retain their existing paths.
+The `multideref` diagnostic cursor is also act-local. The C/C++ fixture runs
+seven readers through 896 actual opcode loads while a writer removes elements
+and clears containers. Bypassing retention must fail its lifetime assertion
+before attempting a dangling read.
+
+Perl execution still uses one slot. This covers the listed scalar destinations,
+plain binary inputs and ordinary element loads, not a complete opcode or XS
+audit. Mutable lvalues, autovivification, root-reference extraction and in-place
+RV changes, mixed key/magic paths, other aggregate fast paths and direct XS
+field access remain open. The caller must already retain the aggregate passed
+to a load; these element holders do not establish that earlier root lifetime.
 Raw `SvPVX`/`AvARRAY`/`HvARRAY` access needs an explicit borrow or external
 lifetime management. Magical containers, mutable-buffer escapes, element-overlay
 base writes, regex/compiler/method caches, and the remaining interpreter/XS

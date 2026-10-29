@@ -727,9 +727,14 @@ the amount of completed infrastructure is not a reliable time estimate.
      Native tests execute actual scalar opcodes with multiple executors. The
      listed binary arithmetic/comparison entries now snapshot plain published
      inputs before raw cache reads; native contention tests do not hold an
-     external read claim around those opcode calls. Mixed magic/reference
-     paths and operand lifetimes between container loads and opcode entry
-     remain separate gates.
+     external read claim around those opcode calls. Ordinary shared element
+     reads in aelemfast/aelem/helem/multideref retain the original SV head under
+     a container claim, then release that claim before later operand use.
+     Native readers retain loaded elements across container deletion/clearing;
+     Perl regressions check alias identity, yielding callbacks and teardown.
+     The multideref diagnostic cursor belongs to the act. Mutable lvalues,
+     autovivification, root RV extraction/mutation, mixed magic/key paths and
+     other aggregate opcodes remain separate gates.
      Task-private special globs and localization anchors no longer create
      prototype CVs or participate in namespace backreference lists.
      The interpreter bridge remains single-slot until the remaining state gates
