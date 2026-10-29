@@ -2,6 +2,34 @@
 # Actual Perl method bodies execute only after that region has ended.
 sub apply_parallel {
 	my ($source) = @_;
+	# A shared value can acquire a new mortal ownership too. Keep that
+	# ownership in a private holder instead of changing the shared TEMP bit.
+	edit('sv.c', "Perl_sv_2mortal(pTHX_ SV *const sv)\n{\n    if (!sv)\n        return sv;", <<'C');
+Perl_sv_2mortal(pTHX_ SV *const sv)
+{
+    if (!sv)
+        return sv;
+    if (PL_wump_task && Perl_wump_memory_shared(aTHX_ sv) == 1) {
+        EXTEND_MORTAL(1);
+        SV *holder = newSV_type(SVt_IV);
+        sv_setrv_noinc(holder, sv);
+        SvTEMP_on(holder);
+        PL_tmps_stack[++PL_tmps_ix] = holder;
+        return sv;
+    }
+C
+	my $scalar_file = "$source/sv.c";
+	my $scalar_text = read_file($scalar_file);
+	my $copy_start = index($scalar_text, "Perl_sv_mortalcopy_flags(pTHX_ SV *const oldstr, U32 flags)\n{");
+	my $copy_end = index($scalar_text, "\n}\n", $copy_start);
+	$copy_start >= 0 && $copy_end >= 0 or die "missing mortal scalar copy\n";
+	my $copy = substr($scalar_text, $copy_start, $copy_end - $copy_start);
+	unless (index($copy, 'return sv_2mortal(sv);') >= 0) {
+		$copy =~ s/    PUSH_EXTEND_MORTAL__SV_C\(sv\);\n    SvTEMP_on\(sv\);\n    return sv;/    return sv_2mortal(sv);/
+			or die "missing mortal scalar copy ownership\n";
+		substr($scalar_text, $copy_start, $copy_end - $copy_start, $copy);
+		write_file($scalar_file, $scalar_text);
+	}
 	# Overload-cache initialization rewrites the stash head's flags. These
 	# macros are also read outside method opcodes, including callee resolution.
 	edit('sv.h', "#define HvAMAGIC(hv)\t\t(SvFLAGS(hv) & SVf_AMAGIC)",
