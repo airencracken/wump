@@ -573,21 +573,27 @@ head alive through the act's temporary scope, including yields, exceptions and
 task abandonment, without changing its flags or copying away its alias identity.
 The claim ends before the opcode returns; a later container deletion or resize
 does not need to retain its old table just for an already-loaded operand.
-Coverage includes read-only `aelemfast`/`aelemfast_lex`, `aelem`, `helem`, and
-existing intermediate and read-only final `multideref` elements. Hash keys on
-this path are ordinary cached strings, including UTF-8 and embedded NULs;
-numeric, tied and overloaded keys retain the native conversion path. Active
+Coverage includes read-only and existing writable `aelemfast`/`aelemfast_lex`,
+`aelem`, `helem`, and intermediate/final `multideref` elements. Writable
+arguments retain the original scalar alias even when a later argument or the
+callee yields and another act deletes or replaces its slot. Existing undefined
+scalars remain writable aliases; lvalue-returning subs retain their identity.
+Localization and dereference/vivification side effects keep their native paths.
+Missing writable elements also retain Perl's deferred-lvalue behavior: passing
+an absent element need not create it until the callee assigns to the alias.
+Hash keys on this path are ordinary cached strings, including UTF-8 and embedded
+NULs; numeric, tied and overloaded keys retain the native conversion path. Active
 act-local element overlays and magical containers retain their existing paths.
 The `multideref` diagnostic cursor is also act-local. The C/C++ fixture runs
-seven readers through 896 actual opcode loads while a writer removes elements
-and clears containers. Bypassing retention must fail its lifetime assertion
-before attempting a dangling read.
+seven readers through 896 read-only and 896 writable opcode loads while a writer
+removes elements and clears containers. Bypassing retention must fail its
+lifetime assertion before attempting a dangling read.
 
 Perl execution still uses one slot. This covers the listed scalar destinations,
 plain binary inputs and ordinary element loads, not a complete opcode or XS
-audit. Mutable lvalues, autovivification, root-reference extraction and in-place
-RV changes, mixed key/magic paths, other aggregate fast paths and direct XS
-field access remain open. The caller must already retain the aggregate passed
+audit. Missing/deferred lvalue creation, autovivification, root-reference
+extraction and in-place RV changes, mixed key/magic paths, other aggregate fast
+paths and direct XS field access remain open. The caller must already retain the aggregate passed
 to a load; these element holders do not establish that earlier root lifetime.
 Raw `SvPVX`/`AvARRAY`/`HvARRAY` access needs an explicit borrow or external
 lifetime management. Magical containers, mutable-buffer escapes, element-overlay

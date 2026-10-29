@@ -16,7 +16,7 @@ extern SV *__real_Perl_wump_load_av(pTHX_ AV *, SSize_t, bool *);
 extern SV *__real_Perl_wump_load_hv(pTHX_ HV *, SV *, bool *);
 END_EXTERN_C
 
-enum { workers = 8, rounds = 128 };
+enum { workers = 8, rounds = 256 };
 static bool unguarded;
 START_EXTERN_C
 SV *__wrap_Perl_wump_load_av(pTHX_ AV *av, SSize_t index, bool *handled) {
@@ -37,7 +37,7 @@ typedef struct fixture {
 	pthread_barrier_t barrier;
 	struct wump_perl_allocator pools[workers];
 } fixture;
-typedef struct request { fixture *f; int kind; } request;
+typedef struct request { fixture *f; int kind; bool lvalue; } request;
 #ifdef __cplusplus
 static thread_local request *current_request;
 #else
@@ -60,7 +60,7 @@ XS_INTERNAL(execute_load) {
 	UNOP_AUX_item aux[3];
 	Zero(aux, 3, UNOP_AUX_item);
 	OP *entry = (OP *)&op;
-	entry->op_flags = OPf_WANT_SCALAR;
+	entry->op_flags = OPf_WANT_SCALAR | (req->lvalue ? OPf_MOD : 0);
 	OP *previous = PL_op;
 	SSize_t stack_mark = SP - PL_stack_base;
 	EXTEND(SP, 2);
@@ -148,7 +148,7 @@ static void *exercise(void *arg) {
 	SvUPGRADE(key, SVt_PVMG);
 	SV *pad[6] = {NULL, (SV *)f->av, (SV *)ctx->array_glob, key, newSViv(0), (SV *)f->hv};
 	PL_curpad = pad;
-	request req = {f, 0};
+	request req = {f, 0, FALSE};
 	current_request = &req;
 	for (int pass = 0; pass < rounds; pass++) {
 		ENTER;
@@ -174,7 +174,8 @@ static void *exercise(void *arg) {
 			}
 			meet(f);
 		} else {
-			req.kind = (pass + ctx->id) % 6;
+			req.kind = (pass / 2 + ctx->id) % 6;
+			req.lvalue = pass % 2;
 			dSP;
 			PUSHMARK(SP); PUTBACK;
 			call_sv((SV *)f->entry, G_DISCARD | G_EVAL);
@@ -244,7 +245,7 @@ int main(int argc, char **argv, char **env) {
 	CHECK(perl_destruct(interp) == 0);
 	perl_free(interp);
 	PERL_SYS_TERM();
-	puts("ok - seven readers retain 896 actual opcode results across concurrent container deletion and clearing");
+	puts("ok - seven readers retain 896 read-only and 896 writable opcode results across concurrent container deletion and clearing");
 	puts("ok - multideref diagnostic cursors remain local to each executor");
 	puts("ok - each round releases all storage pins and retired tables");
 	return 0;

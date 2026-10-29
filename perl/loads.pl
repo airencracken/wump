@@ -1,10 +1,14 @@
 # Retain ordinary shared elements before their container read claim ends.
-# Lvalues, magic, overlays and autovivification keep their existing paths.
+# Existing lvalues keep their original heads; magic, overlays, missing lvalues
+# and autovivification keep their existing paths.
 sub apply_loads {
 	my ($source) = @_;
 	my $file = "$source/pp_hot.c";
 	my $text = read_file($file);
-	return if index($text, '/* Wump container-to-stack loads */') >= 0;
+	if (index($text, '/* Wump container-to-stack loads */') >= 0) {
+		apply_lvalue_loads($source);
+		return;
+	}
 	for my $spec (
 		['aelemfast', '    assert(SvTYPE(av) == SVt_PVAV);', <<'C'],
     if (PL_wump_task && !lval) {
@@ -72,6 +76,41 @@ C
 		substr($text, $at, 0, $insert);
 	}
 	$text .= "\n/* Wump container-to-stack loads */\n";
+	write_file($file, $text);
+	apply_lvalue_loads($source);
+}
+
+sub apply_lvalue_loads {
+	my ($source) = @_;
+	my $file = "$source/pp_hot.c";
+	my $text = read_file($file);
+	my $marker = '/* Wump existing lvalue loads */';
+	return if index($text, $marker) >= 0;
+	# Upgrade sources which already have the read-only load patch. Never jump
+	# past localization/vivification side effects, or turn a missing lvalue into
+	# the immortal undef scalar. Existing real undef heads remain valid aliases.
+	for my $spec (
+		['    ', 'sv', 'av, key', 'av', 'ret', ''],
+		['    ', 'retsv', 'av, elem', 'av', 'ret', ' && !localizing && !(PL_op->op_private & OPpDEREF)'],
+		['    ', 'retsv', 'hv, keysv', 'hv', 'ret', ' && !localizing && !(PL_op->op_private & OPpDEREF)'],
+		['                    ', 'loaded', '(AV *)sv, elem', 'av', 'finish', ' && !localizing'],
+		['                    ', 'loaded', '(HV *)sv, keysv', 'hv', 'finish', ' && !localizing'],
+	) {
+		my ($indent, $result, $args, $kind, $label, $condition) = @$spec;
+		my $declaration = $result eq 'loaded' ? 'SV *' : '';
+		my $tail = $result eq 'loaded' ? "{ sv = loaded; goto $label; }" : "goto $label;";
+		my $old = "${indent}if (PL_wump_task && !lval) {\n"
+			. "${indent}    bool handled;\n"
+			. "${indent}    $declaration$result = Perl_wump_load_$kind(aTHX_ $args, &handled);\n"
+			. "${indent}    if (handled) $tail\n${indent}}";
+		my $new = $old;
+		$new =~ s/PL_wump_task && !lval/PL_wump_task$condition/;
+		$new =~ s/if \(handled\)/if (handled \&\& (!lval || $result != \&PL_sv_undef))/;
+		my $at = index($text, $old);
+		$at >= 0 or die "missing existing-lvalue load anchor: $kind $args\n";
+		substr($text, $at, length($old), $new);
+	}
+	$text .= "\n$marker\n";
 	write_file($file, $text);
 }
 1;

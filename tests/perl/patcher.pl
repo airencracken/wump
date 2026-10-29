@@ -48,6 +48,27 @@ for my $file ('perl.c', 'sv.c') {
 	print {$output} $text or die "$file: $!\n";
 	close $output or die "$file: $!\n";
 }
+{
+	my $file = "$legacy/pp_hot.c";
+	open my $input, '<', $file or die "$file: $!\n";
+	local $/;
+	my $text = <$input>;
+	close $input or die "$file: $!\n";
+	# Recreate the previous read-only load guards in a complete generated tree.
+	# Reapplying must upgrade all five sites and preserve every other patch.
+	my $count = $text =~ s{
+		^([ ]*)if\ \(PL_wump_task(?:\ &&\ !localizing(?:\ &&\ !\(PL_op->op_private\ &\ OPpDEREF\))?)?\)\ \{\n
+		\1\ \ \ \ bool\ handled;\n
+		(\1\ \ \ \ (?:SV\ \*)?\w+\ =\ Perl_wump_load_[ah]v[^\n]+\n)
+		\1\ \ \ \ if\ \(handled\ &&\ \(!lval\ \|\|\ \w+\ !=\ &PL_sv_undef\)\)([^\n]+)\n
+		\1\}
+	}{"$1" . "if (PL_wump_task && !lval) {\n$1    bool handled;\n$2$1    if (handled)$3\n$1}"}gmex;
+	$count == 5 or die "expected five existing-lvalue guards, found $count\n";
+	$text =~ s{\n/\* Wump existing lvalue loads \*/\n}{} or die "missing lvalue upgrade marker\n";
+	open my $output, '>', $file or die "$file: $!\n";
+	print {$output} $text or die "$file: $!\n";
+	close $output or die "$file: $!\n";
+}
 system 'perl', 'perl/apply.pl', $legacy;
 $? == 0 or die "legacy lifecycle upgrade failed: $?\n";
 my $upgraded = snapshot($legacy);
@@ -56,4 +77,4 @@ for my $file (keys %$after) {
 	$upgraded->{"$legacy/$relative"} eq $after->{$file}
 		or die "legacy lifecycle upgrade changed $relative\n";
 }
-print "ok - upgrading earlier key-lock lifecycle preserves mutex initialization and clone resets\n";
+print "ok - upgrading earlier key-lock lifecycle and read-only element loads preserves the complete generated tree\n";
