@@ -139,6 +139,9 @@ make perl-loads-memcheck        # element pins, callbacks, and task teardown
 make perl-references-test       # aggregate referents survive source RV replacement
 make perl-references-tsan       # whole-core dereference handoff and writer checks
 make perl-references-memcheck   # referent pins, rejected paths, and callback cleanup
+make perl-materialization-test # created/deferred lvalues and autovivification
+make perl-materialization-tsan # whole-core creation and ownership handoffs
+make perl-materialization-memcheck # deferred owners, cell lifetimes, and cleanup
 make perl-memory-test           # borrowed storage, concurrent publication/writes, migration
 make perl-memory-tsan           # whole-core reclamation stress and deliberate-race control
 ```
@@ -581,9 +584,10 @@ Coverage includes read-only and existing writable `aelemfast`/`aelemfast_lex`,
 arguments retain the original scalar alias even when a later argument or the
 callee yields and another act deletes or replaces its slot. Existing undefined
 scalars remain writable aliases; lvalue-returning subs retain their identity.
-Localization and dereference/vivification side effects keep their native paths.
-Missing writable elements also retain Perl's deferred-lvalue behavior: passing
-an absent element need not create it until the callee assigns to the alias.
+Localization keeps its act-local path. Missing writable elements are rechecked
+under a container writer before creation, then retained before that writer
+ends. They retain Perl's deferred-lvalue behavior: passing an absent element
+need not create it until the callee assigns to the alias.
 Hash keys on this path are ordinary cached strings, including UTF-8 and embedded
 NULs; numeric, tied and overloaded keys retain the native conversion path. Active
 act-local element overlays and magical containers retain their existing paths.
@@ -591,6 +595,21 @@ The `multideref` diagnostic cursor is also act-local. The C/C++ fixture runs
 seven readers through 896 read-only and 896 writable opcode loads while a writer
 removes elements and clears containers. Bypassing retention must fail its
 lifetime assertion before attempting a dangling read.
+
+Deferred lvalue resolution guards both its delegate and its original container
+through lookup, creation and ownership transfer. It retains the resolved cell
+and commits the delegate's fields before dropping its old owners. Nonextendible
+array misses release their old array owner as well. Publication follows owned
+lvalue targets, including deferred containers, while skipping native tied
+delegates whose target field holds an opaque pointer. Autovivification guards
+the source scalar and publishes a new referent before exposing its reference.
+`make perl-materialization-test` checks created aliases across yields, deferred
+and negative-index behavior, conflict rejection, exceptions and abandonment.
+Its C/C++ fixture creates, resolves and vivifies 896 actual opcode results while
+another executor clears their containers. Two standalone embedding regressions
+also cover deferred owner leaks and premature target release in native Perl.
+Focused `perl-materialization-tsan` and `perl-materialization-memcheck` targets
+exercise these paths under ThreadSanitizer and Valgrind.
 
 Ordinary strong array/hash references now retain their extracted referent under
 a short source claim before releasing that claim. A second short claim checks
@@ -609,8 +628,8 @@ before falling back, preserving weak behavior, overload and destructor timing.
 
 Perl execution still uses one slot. This covers the listed scalar destinations,
 plain binary inputs and ordinary element loads, not a complete opcode or XS
-audit. Missing/deferred lvalue creation, autovivification, scalar/weak/object
-reference extraction and in-place RV changes, mixed key/magic paths, other aggregate fast
+audit. Scalar/weak/object reference extraction and in-place RV changes outside
+the audited vivification path, mixed key/magic paths, other aggregate fast
 paths and direct XS field access remain open. The caller must already retain the aggregate passed
 to an element load; aggregate reference extraction now establishes that lifetime
 for the ordinary strong-reference paths listed above.

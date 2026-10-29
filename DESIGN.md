@@ -734,10 +734,17 @@ the amount of completed infrastructure is not a reliable time estimate.
      Native readers retain loaded elements across container deletion/clearing;
      Perl regressions check alias identity, yielding callbacks and teardown.
      Writable call arguments preserve aliases across yields and slot deletion;
-     missing lvalues, local views and vivification retain their native paths.
-     The multideref diagnostic cursor belongs to the act. Missing/deferred
-     lvalues, autovivification, scalar/weak/object reference extraction,
-     direct RV mutation, mixed magic/key paths and
+     missing lvalues are created and retained under container writers, while
+     local views retain their existing paths. Deferred delegates guard their
+     own fields and container through resolution, retain resolved targets
+     before releasing old owners, and commit fields before owner destruction.
+     Nonextendible misses release their original array ownership. Publication
+     follows owned lvalue targets and skips opaque native tied target pointers.
+     Autovivification guards the source and publishes its new referent before
+     committing the reference. Perl and C/C++ fixtures cover creation, deferred
+     resolution, yields, container clearing, conflict rejection and cleanup.
+     The multideref diagnostic cursor belongs to the act. Scalar/weak/object
+     reference extraction, other direct RV mutation, mixed magic/key paths and
      other aggregate opcodes remain separate gates.
      Ordinary strong aggregate reference extraction in rv2av/rv2hv and
      multideref retains the referent independently of its source RV before

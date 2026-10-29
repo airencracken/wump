@@ -118,6 +118,11 @@ static void wump_publish_edges(pTHX_ wump_publish_work *work, SV *value) {
 					wump_publish_queue(aTHX_ work, HeVAL(he));
 			}
 		}
+	} else if (SvTYPE(value) == SVt_PVLV) {
+		/* These are the same owned target edges released by sv_clear. Tied
+		 * T/t delegates instead carry an HE or a fake SV**, never an SV*. */
+		if (LvTYPE(value) != 'T' && LvTYPE(value) != 't')
+			wump_publish_queue(aTHX_ work, LvTARG(value));
 	} else if (SvTYPE(value) == SVt_PVOBJ) {
 		for (SSize_t i = 0; i <= ObjectMAXFIELD(value); i++)
 			wump_publish_queue(aTHX_ work, ObjectFIELDS(value)[i]);

@@ -1,5 +1,5 @@
 sub memory_guard {
-	my ($source, $file, $name, $type, $value, $condition) = @_;
+	my ($source, $file, $name, $type, $value, $condition, $second) = @_;
 	my $text = read_file("$source/$file");
 	my $marker = "/* Wump mutation wrapper: $name */";
 	return if index($text, $marker) >= 0;
@@ -20,8 +20,11 @@ sub memory_guard {
 	my $call = "wump_memory_impl_$name(aTHX_ " . join(', ', @args) . ')';
 	my $invoke = $type eq 'void' ? "$call;" : "$type result = $call;";
 	my $return = $type eq 'void' ? '' : "\n    return result;";
+	my $extra = defined($second) ? "    SV *second = $second;\n"
+		. "    struct wump_mutation *other = second != (SV *)$value ? Perl_wump_mutation_begin(aTHX_ second) : NULL;\n" : '';
+	my $release = defined($second) ? "    Perl_wump_mutation_end(aTHX_ other);\n" : '';
 	$body = "#define Perl_$name wump_memory_impl_$name\n$body#undef Perl_$name\n\n"
-		. "$marker\n$type\n$signature\n{\n    struct wump_mutation *guard = $begin;\n    $invoke\n    Perl_wump_mutation_end(aTHX_ guard);$return\n}\n";
+		. "$marker\n$type\n$signature\n{\n    struct wump_mutation *guard = $begin;\n$extra    $invoke\n$release    Perl_wump_mutation_end(aTHX_ guard);$return\n}\n";
 	substr($text, $start, $end - $start, $body);
 	write_file("$source/$file", $text);
 }
@@ -126,6 +129,16 @@ C
 	for my $name (qw(hv_clear hv_undef_flags hv_ksplit)) {
 		memory_guard($source, 'hv.c', $name, 'void', 'hv');
 	}
+	# Deferred delegates mutate their own target fields as well as looking up
+	# or creating a cell. Keep the container claim through the ownership handoff.
+	memory_guard($source, 'mg.c', 'defelem_target', 'SV *', 'sv', undef,
+		'LvTARGLEN(sv) ? LvTARG(sv) : NULL');
+	memory_guard($source, 'mg.c', 'vivify_defelem', 'void', 'sv', undef,
+		'LvTARGLEN(sv) ? LvTARG(sv) : NULL');
+	for my $name (qw(magic_getdefelem magic_setdefelem)) {
+		memory_guard($source, 'mg.c', $name, 'int', 'sv');
+	}
+	memory_guard($source, 'pp_hot.c', 'vivify_ref', 'SV *', 'sv');
 	# Route ordinary PV macros through a protected capture. Mutable access
 	# remains a writer API. Explicit byte/UTF-8 conversions retain snapshots.
 	my $header = read_file("$source/sv.h");

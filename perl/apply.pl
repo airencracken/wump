@@ -152,6 +152,9 @@ SV **Perl_wump_borrow_av(pTHX_ AV *value, SSize_t index);
 SV *Perl_wump_load_rv(pTHX_ SV *value, svtype type, bool *handled);
 SV *Perl_wump_load_av(pTHX_ AV *value, SSize_t index, bool *handled);
 SV *Perl_wump_load_hv(pTHX_ HV *value, SV *key, bool *handled);
+SV *Perl_wump_lvalue_av(pTHX_ AV *value, SSize_t index, bool defer, bool *handled);
+SV *Perl_wump_lvalue_hv(pTHX_ HV *value, SV *key, bool defer, bool *handled);
+void Perl_wump_vivify_value(pTHX_ SV *value, U32 kind);
 HE *Perl_wump_borrow_hv(pTHX_ HV *value, const char *key, STRLEN length, U32 hash);
 void Perl_wump_sv_detach(pTHX_ SV *value);
 bool Perl_wump_cow_retain(pTHX_ SV *value);
@@ -412,6 +415,8 @@ require "$FindBin::Bin/opreads.pl";
 apply_opreads($source);
 require "$FindBin::Bin/loads.pl";
 apply_loads($source);
+require "$FindBin::Bin/materialization.pl";
+apply_materialization($source);
 edit('regcomp.c', '#include "regcomp_internal.h"',
 	"#include \"regcomp_internal.h\"\n#include \"wump_regex_roots.c\"");
 edit('class.c', '    fields[fieldix] = val;',
@@ -424,6 +429,7 @@ for my $pair (
 	["$FindBin::Bin/core/wump_alloc.c", "$source/wump_alloc.c"],
 	["$FindBin::Bin/core/wump_reads.c", "$source/wump_reads.c"],
 	["$FindBin::Bin/core/wump_memory.c", "$source/wump_memory.c"],
+	["$FindBin::Bin/core/wump_lvalues.c", "$source/wump_lvalues.c"],
 	["$FindBin::Bin/core/wump_storage_sv.c", "$source/wump_storage_sv.c"],
 	["$FindBin::Bin/core/wump_storage_av.c", "$source/wump_storage_av.c"],
 	["$FindBin::Bin/core/wump_storage_hv.c", "$source/wump_storage_hv.c"],

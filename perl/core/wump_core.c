@@ -52,6 +52,7 @@ int Perl_wump_runops(pTHX) {
 #include "wump_publish.c"
 #include "wump_local.c"
 #include "wump_elements.c"
+#include "wump_lvalues.c"
 #include "wump_magic.c"
 
 typedef struct wump_cv_slot {

@@ -54,6 +54,43 @@ for my $file ('perl.c', 'sv.c') {
 	local $/;
 	my $text = <$input>;
 	close $input or die "$file: $!\n";
+	# Restore the previous existing-cell load blocks before exercising the
+	# older read-only/reference upgrades. The new pass must rebuild them all.
+	for my $spec (
+		['aelemfast', 'sv', 'av, key', 'av', ''],
+		['aelem', 'retsv', 'av, elem', 'av', ' && !localizing && !(PL_op->op_private & OPpDEREF)'],
+		['helem', 'retsv', 'hv, keysv', 'hv', ' && !localizing && !(PL_op->op_private & OPpDEREF)'],
+	) {
+		my ($name, $result, $args, $kind, $condition) = @$spec;
+		my $start = index($text, "PP(pp_$name)\n{");
+		my $call = index($text, "$result = lval ? Perl_wump_lvalue_$kind", $start);
+		$call >= 0 or die "missing materialized $name load\n";
+		my $at = rindex($text, '    if (PL_wump_task', $call);
+		my $end = index($text, "\n    }\n", $call) + 6;
+		my $old = "    if (PL_wump_task$condition) {\n        bool handled;\n"
+			. "        $result = Perl_wump_load_$kind(aTHX_ $args, &handled);\n"
+			. "        if (handled && (!lval || $result != &PL_sv_undef)) goto ret;\n    }";
+		substr($text, $at, $end - $at, $old);
+	}
+	for my $kind ('av', 'hv') {
+		my $cast = uc($kind);
+		my $key = $kind eq 'av' ? 'elem' : 'keysv';
+		$text =~ s/Perl_wump_lvalue_\Q$kind\E\(aTHX_ \(\Q$cast\E \*\)sv, \Q$key\E, FALSE, &handled\)/Perl_wump_load_$kind(aTHX_ ($cast *)sv, $key, \&handled)/
+			or die "missing materialized intermediate $kind\n";
+		my $call = index($text, "SV *loaded = lval ? Perl_wump_lvalue_$kind");
+		$call >= 0 or die "missing materialized final $kind\n";
+		my $at = rindex($text, '                    if (PL_wump_task', $call);
+		my $end = index($text, "\n                    }\n", $call) + 22;
+		my $old = "                    if (PL_wump_task && !localizing) {\n                        bool handled;\n"
+			. "                        SV *loaded = Perl_wump_load_$kind(aTHX_ ($cast *)sv, $key, &handled);\n"
+			. "                        if (handled && (!lval || loaded != &PL_sv_undef)) { sv = loaded; goto finish; }\n                    }";
+		substr($text, $at, $end - $at, $old);
+	}
+	$text =~ s{^/\* Wump lvalue materialization \*/\n}{} or die "missing materialization marker\n";
+	$text =~ s{        if \(PL_wump_task\) Perl_wump_vivify_value\(aTHX_ sv, to_what\);\n        else \{\n}{}
+		or die "missing vivification materialization\n";
+	$text =~ s{        SvROK_on\(sv\);\n        \}\n        SvSETMAGIC\(sv\);}{        SvROK_on(sv);\n        SvSETMAGIC(sv);}
+		or die "missing vivification materialization end\n";
 	# Remove the aggregate reference upgrade as well as the later lvalue
 	# guards so an old generated tree exercises both upgrade stages.
 	my $references = $text =~ s{^[ ]*/\* Wump reference capture:[^\n]+\*/\n.*?^[ ]*/\* End Wump reference capture \*/\n}{}gms;
@@ -75,6 +112,33 @@ for my $file ('perl.c', 'sv.c') {
 	print {$output} $text or die "$file: $!\n";
 	close $output or die "$file: $!\n";
 }
+for my $spec (
+	['mg.c', [qw(defelem_target vivify_defelem magic_getdefelem magic_setdefelem)]],
+	['pp_hot.c', ['vivify_ref']],
+) {
+	my ($file, $names) = @$spec;
+	open my $input, '<', "$legacy/$file" or die "$file: $!\n";
+	my $text = do { local $/; <$input> };
+	close $input or die "$file: $!\n";
+	for my $name (@$names) {
+		$text =~ s/^#define Perl_\Q$name\E wump_memory_impl_\Q$name\E\n//m
+			or die "missing $name wrapper definition\n";
+		$text =~ s{^#undef Perl_\Q$name\E\n\n/\* Wump mutation wrapper: \Q$name\E \*/\n[^\n]+\nPerl_\Q$name\E\([^\n]*\n\{\n.*?^\}\n}{}ms
+			or die "missing $name wrapper body\n";
+	}
+	if ($file eq 'mg.c') {
+		$text =~ s{^/\* Wump deferred ownership commit \*/\n}{} or die "missing deferred ownership marker\n";
+		$text =~ s/NOOP; \/\* no value; common commit releases the old array \*\//LvTARG(sv) = NULL;\t\/\* array can't be extended *\//
+			or die "missing nonextendible ownership fix\n";
+		$text =~ s{    SV \*old_target = LvTARG\(sv\), \*old_key = mg->mg_obj;\n    LvTARG\(sv\) = SvREFCNT_inc\(value\);\n    LvTARGLEN\(sv\) = 0;\n    mg->mg_obj = NULL;\n    mg->mg_flags &= ~MGf_REFCOUNTED;\n    SvREFCNT_dec\(old_target\);\n    SvREFCNT_dec\(old_key\);}{    SvREFCNT_inc_simple_void(value);\n    SvREFCNT_dec(LvTARG(sv));\n    LvTARG(sv) = value;\n    LvTARGLEN(sv) = 0;\n    SvREFCNT_dec(mg->mg_obj);\n    mg->mg_obj = NULL;\n    mg->mg_flags &= ~MGf_REFCOUNTED;}
+			or die "missing deferred creation commit\n";
+		$text =~ s{            SV \*old_target = LvTARG\(sv\), \*old_key = mg->mg_obj;\n            LvTARG\(sv\) = SvREFCNT_inc_simple_NN\(targ\);\n            LvTARGLEN\(sv\) = 0;\n            mg->mg_obj = NULL;\n            mg->mg_flags &= ~MGf_REFCOUNTED;\n            SvREFCNT_dec\(old_target\);\n            SvREFCNT_dec\(old_key\);}{            SvREFCNT_dec(LvTARG(sv));\n            LvTARG(sv) = SvREFCNT_inc_simple_NN(targ);\n            LvTARGLEN(sv) = 0;\n            SvREFCNT_dec(mg->mg_obj);\n            mg->mg_obj = NULL;\n            mg->mg_flags &= ~MGf_REFCOUNTED;}
+			or die "missing deferred lookup commit\n";
+	}
+	open my $output, '>', "$legacy/$file" or die "$file: $!\n";
+	print {$output} $text or die "$file: $!\n";
+	close $output or die "$file: $!\n";
+}
 system 'perl', 'perl/apply.pl', $legacy;
 $? == 0 or die "legacy lifecycle upgrade failed: $?\n";
 my $upgraded = snapshot($legacy);
@@ -83,4 +147,4 @@ for my $file (keys %$after) {
 	$upgraded->{"$legacy/$relative"} eq $after->{$file}
 		or die "legacy lifecycle upgrade changed $relative\n";
 }
-print "ok - upgrading earlier key-lock lifecycle, element and reference loads preserves the complete generated tree\n";
+print "ok - upgrading earlier lifecycle, element/reference loads and deferred ownership preserves the complete generated tree\n";

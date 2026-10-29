@@ -19,6 +19,80 @@ static XS(xs_scalar_publish) {
 	XSRETURN_EMPTY;
 }
 
+static XS(xs_vivify) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items != 2) croak("Usage: RootFixture::vivify(REFERENCE, KIND)");
+	U32 kind = SvIV(ST(1)) == 0 ? OPpDEREF_SV : SvIV(ST(1)) == 1 ? OPpDEREF_AV : OPpDEREF_HV;
+	SV *pad[2] = {NULL, read_target(aTHX_ ST(0))};
+	OP op;
+	Zero(&op, 1, OP);
+	op.op_type = OP_PADSV;
+	op.op_flags = OPf_MOD | OPf_WANT_SCALAR;
+	op.op_private = kind;
+	op.op_targ = 1;
+	SSize_t stack_mark = SP - PL_stack_base;
+	ENTER;
+	SAVEVPTR(PL_curpad);
+	SAVEVPTR(PL_op);
+	PL_curpad = pad;
+	PL_op = &op;
+	PUTBACK;
+	(void)PL_ppaddr[OP_PADSV](aTHX);
+	PL_stack_sp = PL_stack_base + stack_mark;
+	LEAVE;
+	XSRETURN_EMPTY;
+}
+
+static XS(xs_deferred) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items != 3) croak("Usage: RootFixture::deferred(ARRAY, INDEX, EXTENDIBLE)");
+	SV *lv = newSV_type(SVt_PVLV);
+	LvTYPE(lv) = 'y';
+	sv_magic(lv, NULL, PERL_MAGIC_defelem, NULL, 0);
+	LvTARG(lv) = SvREFCNT_inc(read_target(aTHX_ ST(0)));
+	LvSTARGOFF(lv) = SvIV(ST(1));
+	LvTARGLEN(lv) = SvTRUE(ST(2)) ? 1 : (STRLEN)UV_MAX;
+	ST(0) = sv_2mortal(newRV_noinc(lv));
+	XSRETURN(1);
+}
+
+static XS(xs_lvalue_state) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items != 1) croak("Usage: RootFixture::lvalue_state(REFERENCE)");
+	SV *value = read_target(aTHX_ ST(0));
+	if (SvTYPE(value) != SVt_PVLV) croak("lvalue reference required");
+	AV *state = newAV();
+	av_push(state, newSVuv(LvTARGLEN(value)));
+	av_push(state, newSViv(LvTARG(value) != NULL));
+	ST(0) = sv_2mortal(newRV_noinc((SV *)state));
+	XSRETURN(1);
+}
+
+static XS(xs_resolve_deferred) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items != 2) croak("Usage: RootFixture::resolve_deferred(REFERENCE, CREATE)");
+	SV *value = read_target(aTHX_ ST(0));
+	if (SvTYPE(value) != SVt_PVLV) croak("lvalue reference required");
+	if (SvTRUE(ST(1))) Perl_vivify_defelem(aTHX_ value);
+	else mg_get(value);
+	XSRETURN_EMPTY;
+}
+
+static XS(xs_opaque_lvalue) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items) croak("Usage: RootFixture::opaque_lvalue()");
+	SV *value = newSV_type(SVt_PVLV);
+	LvTYPE(value) = 't';
+	LvTARG(value) = INT2PTR(SV *, 1); /* native fake SV**, deliberately not an SV */
+	ST(0) = sv_2mortal(newRV_noinc(value));
+	XSRETURN(1);
+}
+
 static XS(xs_scalar_state) {
 	dXSARGS;
 	PERL_UNUSED_VAR(cv);
@@ -419,6 +493,11 @@ XS_EXTERNAL(boot_RootFixture) {
 	newXS("RootFixture::key_too_large", xs_key_too_large, __FILE__);
 	newXS("RootFixture::key_missing", xs_key_missing, __FILE__);
 	newXS("RootFixture::scalar_publish", xs_scalar_publish, __FILE__);
+	newXS("RootFixture::vivify", xs_vivify, __FILE__);
+	newXS("RootFixture::deferred", xs_deferred, __FILE__);
+	newXS("RootFixture::lvalue_state", xs_lvalue_state, __FILE__);
+	newXS("RootFixture::resolve_deferred", xs_resolve_deferred, __FILE__);
+	newXS("RootFixture::opaque_lvalue", xs_opaque_lvalue, __FILE__);
 	newXS("RootFixture::scalar_state", xs_scalar_state, __FILE__);
 	newXS("RootFixture::scalar_read", xs_scalar_read, __FILE__);
 	newXS("RootFixture::read_frame_active", xs_read_frame_active, __FILE__);
