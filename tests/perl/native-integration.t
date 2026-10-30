@@ -12,19 +12,27 @@ for my $slots (1, 2, 4) {
 		use Scalar::Util qw(dualvar looks_like_number);
 		{ package AncestryRoot; sub DESTROY {} }
 		{ package AncestryChild; our @ISA; BEGIN { @ISA = ('AncestryRoot') } }
-		our (@values, @numbers, @expected, $object, $latin);
+		our (@values, @numbers, @expected, @arithmetic, $object, $latin);
 		BEGIN {
 			@values = (dualvar(7, 'seven'), -2, 42, 42, 0.5);
 			@numbers = (undef, '', 'abc', '12', '-3.5', '1e9', 'Inf', 'NaN', 123);
 			@expected = map { !!looks_like_number($_) } @numbers;
 			$object = bless {}, 'AncestryChild';
 			$latin = "Caf\x{e9}"; utf8::upgrade($latin);
+			@arithmetic = map { [@$_, $_->[0] + $_->[1], $_->[0] % $_->[1]] }
+				([0, 1], [-42, 5], [42, -5], [9223372036854775807, 2], [1 << 63, 3], [1.25, 2]);
 		}
 		my $out = chan(4);
 		for (1..8) {
 			act {
 				RootFixture::executor_rendezvous();
 				for (1..32) {
+					for my $case (@arithmetic) {
+						die "addition boundary changed\n" unless $case->[0] + $case->[1] == $case->[2];
+						die "modulo boundary changed\n" unless $case->[0] % $case->[1] == $case->[3];
+					}
+					eval { my $zero = 0; my $value = 42 % $zero };
+					die "zero divisor diagnostic changed: $@" unless $@ =~ /Illegal modulus zero/;
 					die "min alias changed\n" unless \min(@values) == \$values[1];
 					die "max tie alias changed\n" unless \max(@values) == \$values[3];
 					die "dualvar changed\n" unless min($values[0]) eq 'seven';
