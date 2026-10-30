@@ -9,7 +9,7 @@ my ($source, $build) = map { abs_path($_) // die "$_: $!\n" } @ARGV;
 for my $spec (['read-cache', 'c'], ['read-cache', 'c++'], ['readers', 'c'], ['read-claims', 'c']) {
 	my ($fixture, $language) = @$spec;
 	my $target = "$build/$fixture" . ($language eq 'c++' ? '-cpp' : '');
-	my @command = ($language eq 'c++' ? 'c++' : shellwords($Config{cc}), shellwords($Config{ccflags}),
+	my @command = ($language eq 'c++' ? shellwords($ENV{CXX} // 'c++') : shellwords($Config{cc}), shellwords($Config{ccflags}),
 		'-O2', '-g', '-pthread', "-I$source", '-x', $language, "tests/perl/$fixture.c", '-x', 'none',
 		"$source/libperl.a", shellwords($Config{ldflags}), shellwords($Config{perllibs}), '-o', $target);
 	system @command;

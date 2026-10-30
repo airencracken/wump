@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "internal.h"
+#include "test_budget.h"
 
 /* Calls below can migrate; never cache libc's native errno pointer. */
 extern int wump_test_get_errno(void);
@@ -133,6 +134,37 @@ static void ready_program(void *arg) {
 
 static void test_ready(void) {
 	CHECK(wump_run(ready_program, NULL, 4) == 0);
+}
+
+static void address_order_program(void *arg) {
+	(void)arg;
+	wump_chan *channels[3];
+	for (int i = 0; i < 3; i++) {
+		channels[i] = wump_chan_make(sizeof(int), 1);
+		CHECK(channels[i] != NULL);
+		int value = i + 1;
+		CHECK(wump_chan_send(channels[i], &value) == 0);
+	}
+	wump_case cases[33] = {{0}};
+	int value = -1;
+	/* Include NULLs, reversed addresses and duplicate channels beyond the
+	 * inline selection storage. Address sorting must retain case identity. */
+	for (int i = 0; i < 33; i++) {
+		cases[i] = (wump_case){NULL, WUMP_RECV, NULL, 123};
+	}
+	cases[0] = (wump_case){channels[2], WUMP_RECV, &value, 123};
+	cases[16] = (wump_case){channels[0], WUMP_RECV, &value, 123};
+	cases[32] = (wump_case){channels[2], WUMP_RECV, &value, 123};
+	size_t chosen;
+	CHECK(wump_sel(cases, 33, 0, &chosen) == 1);
+	CHECK(chosen == 0 || chosen == 16 || chosen == 32);
+	CHECK(value == (chosen == 16 ? 1 : 3));
+	for (int i = 0; i < 33; i++) CHECK(cases[i].result == ((size_t)i == chosen ? 1 : 123));
+	for (int i = 0; i < 3; i++) wump_chan_free(channels[i]);
+}
+
+static void test_address_order(void) {
+	CHECK(wump_run(address_order_program, NULL, 4) == 0);
 }
 
 typedef struct exchange {
@@ -553,6 +585,7 @@ int main(int argc, char **argv) {
 		{ "ready cases, duplicate channels, and randomized choice", test_ready },
 		{ "parked send/receive and losing waiter cleanup", test_parked },
 		{ "selection-to-selection rendezvous and lock ordering", test_pairs },
+		{ "integer address ordering with disabled and duplicate cases", test_address_order },
 		{ "selection cannot rendezvous with itself", test_self },
 		{ "timers progress while idle and while work remains runnable", test_sleep },
 		{ "multiple timer expiry and earlier deadline insertion", test_expiry },
@@ -583,13 +616,7 @@ int main(int argc, char **argv) {
 			pid_t pid = fork();
 			CHECK(pid >= 0);
 			if (pid == 0) {
-				unsigned deadline = 30;
-#ifdef WUMP_VALGRIND
-				if (RUNNING_ON_VALGRIND) {
-					deadline = 120;
-				}
-#endif
-				alarm(deadline);
+				alarm(wump_test_case_timeout());
 				tests[i].run();
 				_exit(0);
 			}

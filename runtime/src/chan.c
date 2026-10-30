@@ -335,8 +335,11 @@ size_t wump_chan_cap(wump_chan *ch) {
 }
 
 static int compare_slots(const void *a, const void *b) {
-	uintptr_t left = (uintptr_t)((const sel_slot *)a)->wait.ch;
-	uintptr_t right = (uintptr_t)((const sel_slot *)b)->wait.ch;
+	/* This is an integer address order, including disabled NULL cases.
+	 * Materialize the integers so Clang cannot fold the comparison back
+	 * into an unrelated-pointer comparison before ASan instrumentation. */
+	volatile uintptr_t left = (uintptr_t)((const sel_slot *)a)->wait.ch;
+	volatile uintptr_t right = (uintptr_t)((const sel_slot *)b)->wait.ch;
 	return (left > right) - (left < right);
 }
 

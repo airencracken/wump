@@ -14,7 +14,7 @@ my @common = (shellwords($Config{ccflags}), '-O2', '-pthread', "-I$source");
 push @common, '-g', '-fsanitize=thread' if $tsan;
 for my $language ('c', 'c++') {
 	my $output = "$build/refcount-$language" . ($tsan ? '-tsan' : '');
-	my @command = ($language eq 'c' ? shellwords($Config{cc}) : 'c++',
+	my @command = ($language eq 'c' ? shellwords($ENV{WUMP_REFCOUNT_CC} // $Config{cc}) : shellwords($ENV{CXX} // 'c++'),
 		@common, '-x', $language, 'tests/perl/refcount.c', '-x', 'none',
 		"$source/libperl.a", shellwords($Config{ldflags}), @libraries, '-o', $output);
 	system @command;

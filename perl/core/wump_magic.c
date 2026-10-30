@@ -34,7 +34,7 @@ static int wump_magic_local(pTHX_ SV *value, MAGIC *source) {
 	return 0;
 }
 
-char Perl_wump_magic_kind(pTHX_ SV *value) {
+static char wump_magic_kind(pTHX_ SV *value) {
 	if (!value || SvTYPE(value) < SVt_PVMG || !SvMAGIC(value)) return 0;
 	char kind = 0;
 	for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic) {
@@ -44,8 +44,16 @@ char Perl_wump_magic_kind(pTHX_ SV *value) {
 			kind = mg->mg_ptr[0];
 		} else if (mg->mg_type == PERL_MAGIC_sigelem
 			&& mg->mg_virtual == &PL_vtbl_sigelem && mg->mg_ptr) {
-			STRLEN len;
-			const char *key = MgPV_const(mg, len);
+			STRLEN len = mg->mg_len;
+			const char *key = mg->mg_ptr;
+			if (mg->mg_len == HEf_SVKEY) {
+				/* The scan runs under the publication lock. Read an existing
+				 * key cache without stringification, allocation or magic. */
+				SV *name = MUTABLE_SV(mg->mg_ptr);
+				if (!SvPOK(name) || SvGMAGICAL(name) || SvROK(name)) return 0;
+				key = SvPVX_const(name);
+				len = SvCUR(name);
+			}
 			if (memEQs(key, len, "__DIE__")) kind = 'D';
 			else if (memEQs(key, len, "__WARN__")) kind = 'W';
 			else return 0;
@@ -59,6 +67,18 @@ char Perl_wump_magic_kind(pTHX_ SV *value) {
 			return 0;
 		}
 	}
+	return kind;
+}
+
+char Perl_wump_magic_kind(pTHX_ SV *value) {
+	/* A package scalar's first publication can upgrade its head and attach
+	 * magic while another act checks for a localized builtin alias. This
+	 * scan allocates nothing and invokes no callbacks, so share the short
+	 * publication lock without adding an unwind record to the save stack. */
+	bool guarded = value && Perl_wump_parallel(aTHX);
+	if (guarded) Perl_wump_memory_lock(aTHX);
+	char kind = wump_magic_kind(aTHX_ value);
+	if (guarded) Perl_wump_memory_unlock(aTHX);
 	return kind;
 }
 

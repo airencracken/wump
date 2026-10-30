@@ -1,5 +1,109 @@
 sub apply_regex {
 	my ($source) = @_;
+	# Bare qr values need no compiler. Admission and ownership happen before
+	# the original native bare-pattern path can call the subject's magic.
+	edit('pp_ctl.c', "PP(pp_regcomp)\n", <<'C');
+EXTCONST regexp_engine PL_core_reg_engine;
+
+STATIC REGEXP *
+S_wump_precompiled_regex(pTHX_ SV *input, SV *owner)
+{
+    struct wump_borrow *head = Perl_wump_capture_begin(aTHX_ input);
+    struct wump_borrow *body = NULL;
+    struct wump_mutation *guard = Perl_wump_metadata_begin(aTHX);
+    bool valid = !SvGMAGICAL(input) && !SvWEAKREF(input) && !SvTAINTED(input);
+    SV *value = input;
+    if (valid && SvROK(input)) {
+        value = SvRV(input);
+        body = Perl_wump_capture_begin(aTHX_ value);
+    }
+    valid = valid && SvTYPE(value) == SVt_REGEXP && !SvTAINTED(value);
+    if (valid) {
+        MAGIC *magic;
+        for (magic = SvMAGIC(value); magic; magic = magic->mg_moremagic) {
+            if (!Perl_wump_publish_magic(magic)) { valid = FALSE; break; }
+        }
+    }
+    if (valid && SvOBJECT(value)) {
+        HV *stash = SvSTASH(value);
+        const char *name = HvNAME_get(stash);
+        valid = name && strEQ(name, "Regexp") && !Gv_AMG(stash);
+    }
+    if (valid) {
+        REGEXP *rx = (REGEXP *)value;
+        valid = RX_ENGINE(rx) == &PL_core_reg_engine
+            && !(RX_EXTFLAGS(rx) & RXf_EVAL_SEEN);
+    }
+    if (valid) sv_setrv_inc(owner, value);
+    Perl_wump_mutation_end(aTHX_ guard);
+    Perl_wump_capture_end(aTHX_ body);
+    Perl_wump_capture_end(aTHX_ head);
+    if (!valid)
+        croak("Wump: runtime compilation is not supported during parallel execution");
+    return (REGEXP *)SvRV(owner);
+}
+
+PP(pp_regcomp)
+C
+	edit('pp_ctl.c', "    bool is_bare_re= FALSE;\n", <<'C');
+    bool is_bare_re= FALSE;
+    SV *wump_pattern_owner = NULL;
+    SSize_t wump_args_index = 0;
+C
+	my $regcomp = read_file("$source/pp_ctl.c");
+	my $start = index($regcomp, "PP(pp_regcomp)\n");
+	my $native = index($regcomp, "    /* prevent recompiling under /o and ithreads. */\n", $start);
+	$start >= 0 && $native >= 0 or die "missing native regex compilation entry\n";
+	my $admission = index($regcomp, "    if (Perl_wump_parallel(aTHX)) {\n", $start);
+	$admission = $native if $admission < 0 || $admission > $native;
+	# Replace earlier generated admission blocks as well as inserting into a
+	# fresh tree. Updating the policy must not retain an older gate before it.
+	substr($regcomp, $admission, $native - $admission) = <<'C';
+    if (Perl_wump_parallel(aTHX)) {
+        if ((pm->op_pmflags & PMf_KEEP) && PM_GETRE(pm)) goto finish;
+        if (nargs != 1 || pm->op_code_list || (pm->op_pmflags & PMf_HAS_CV) || TAINT_get)
+            croak("Wump: runtime compilation is not supported during parallel execution");
+        wump_args_index = args - PL_stack_base;
+        wump_pattern_owner = sv_2mortal(newSV_type(SVt_IV));
+        new_re = S_wump_precompiled_regex(aTHX_ args[0], wump_pattern_owner);
+        re = PM_GETRE(pm);
+        is_bare_re = TRUE;
+        goto wump_bare_pattern;
+    }
+
+C
+	write_file("$source/pp_ctl.c", $regcomp);
+	edit('pp_ctl.c', "        tmp = reg_temp_copy(NULL, new_re);\n", <<'C');
+        if (wump_pattern_owner) re = PM_GETRE(pm);
+        tmp = reg_temp_copy(NULL, new_re);
+C
+	edit('pp_ctl.c', "    rpp_popfree_to_NN(args - 1);\n", <<'C');
+    if (wump_pattern_owner) args = PL_stack_base + wump_args_index;
+    rpp_popfree_to_NN(args - 1);
+C
+	edit('pp_ctl.c', "    if (is_bare_re) {\n        REGEXP *tmp;", <<'C');
+  wump_bare_pattern:
+    if (is_bare_re) {
+        REGEXP *tmp;
+C
+	edit('pp_ctl.c', "        tmp = reg_temp_copy(NULL, new_re);\n        ReREFCNT_dec(new_re);\n", <<'C');
+        tmp = reg_temp_copy(NULL, new_re);
+        /* Move private ownership to the clone before releasing the source.
+         * Subject magic and allocation failures retain an unwind root. */
+        if (wump_pattern_owner) SvRV_set(wump_pattern_owner, (SV *)tmp);
+        ReREFCNT_dec(new_re);
+C
+	edit('pp_ctl.c', "        PM_SETRE(pm, new_re);\n    }\n\n\n    assert(TAINTING_get || !TAINT_get);", <<'C');
+        PM_SETRE(pm, new_re);
+    }
+    if (wump_pattern_owner) {
+        /* PM_SETRE now owns the clone. */
+        SvRV_set(wump_pattern_owner, NULL);
+        SvROK_off(wump_pattern_owner);
+    }
+
+    assert(TAINTING_get || !TAINT_get);
+C
 	# Unicode inversion lists are immutable during execution, but searching
 	# them updates a last-index hint shared by regexes and case folding. The
 	# hint needs no ordering with table contents, only race-free access.

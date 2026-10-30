@@ -4,6 +4,12 @@ sub apply_xs {
 	my ($source) = @_;
 	require "$FindBin::Bin/mro.pl";
 	apply_mro($source);
+	require "$FindBin::Bin/universal.pl";
+	apply_universal($source);
+	require "$FindBin::Bin/named-capture.pl";
+	apply_named_capture($source);
+	require "$FindBin::Bin/socket.pl";
+	apply_socket($source);
 	# The HAS_GETCWD path uses a local buffer and the caller's private XS
 	# target. Other Cwd helpers use different native/context paths. Never
 	# admit the fallback implementation which walks by changing process cwd.

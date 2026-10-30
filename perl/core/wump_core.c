@@ -41,7 +41,7 @@ int Perl_wump_runops(pTHX) {
 	while (op) {
 		PL_op = op;
 		if (parallel && (op->op_type == OP_ENTEREVAL || op->op_type == OP_REQUIRE
-			|| op->op_type == OP_DOFILE || op->op_type == OP_REGCOMP))
+			|| op->op_type == OP_DOFILE))
 			croak("Wump: runtime compilation is not supported during parallel execution");
 		op = op->op_ppaddr(aTHX);
 		PL_op = op;
@@ -161,19 +161,37 @@ HV *Perl_wump_regex_names(pTHX_ HV *original) {
 	return (HV *)wump_regex_hash(aTHX_ original, WUMP_REGEX_NAMES, NULL)->value;
 }
 
+static MAGIC *wump_named_capture_tie(pTHX_ HV *hash) {
+	/* HvNAME reads stash head flags, including the word updated by overload
+	 * cache discovery. Classify under its metadata lock, then release it
+	 * before allocating an act's private capture hash. No callbacks here. */
+	bool guarded = Perl_wump_parallel(aTHX);
+	if (guarded) Perl_wump_memory_lock(aTHX);
+	MAGIC *tied = NULL;
+	if (!hash || !SvMAGICAL(hash)) goto done;
+	tied = mg_find((SV *)hash, PERL_MAGIC_tied);
+	if (tied == NULL || tied->mg_obj == NULL || !SvROK(tied->mg_obj)) {
+		tied = NULL;
+		goto done;
+	}
+	SV *object = SvRV(tied->mg_obj);
+	if (!SvOBJECT(object)) { tied = NULL; goto done; }
+	const char *name = HvNAME(SvSTASH(object));
+	if (name == NULL || strNE(name, "Tie::Hash::NamedCapture")) tied = NULL;
+done:
+	if (guarded) Perl_wump_memory_unlock(aTHX);
+	return tied;
+}
+
 HV **Perl_wump_gv_hv(GV *gv) {
 	dTHX;
 	wump_local *binding = wump_local_find(aTHX_ gv, 'h', FALSE);
 	if (binding != NULL) return (HV **)&binding->value;
 	HV **original = &GvGP(gv)->gp_hv;
-	if (PL_wump_task) Perl_wump_publish(aTHX_ (SV *)*original);
-	if (PL_wump_task == NULL || *original == NULL || !SvMAGICAL(*original)) return original;
-	MAGIC *tied = mg_find((SV *)*original, PERL_MAGIC_tied);
-	if (tied == NULL || tied->mg_obj == NULL || !SvROK(tied->mg_obj)) return original;
-	SV *object = SvRV(tied->mg_obj);
-	if (!SvOBJECT(object)) return original;
-	const char *name = HvNAME(SvSTASH(object));
-	if (name == NULL || strNE(name, "Tie::Hash::NamedCapture")) return original;
+	if (PL_wump_task == NULL) return original;
+	Perl_wump_publish(aTHX_ (SV *)*original);
+	MAGIC *tied = wump_named_capture_tie(aTHX_ *original);
+	if (tied == NULL) return original;
 	/* The builtin tie object only stores immutable API flags. The hash
 	 * itself owns each() state, so %+ / %- and aliases need private HVs. */
 	return (HV **)&wump_regex_hash(aTHX_ *original, WUMP_REGEX_HASH, tied)->value;

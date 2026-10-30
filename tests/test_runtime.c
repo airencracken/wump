@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include "internal.h"
+#include "test_budget.h"
 
 #define CHECK(expr) do { \
 	if (!(expr)) { \
@@ -744,13 +745,7 @@ int main(int argc, char **argv) {
 			pid_t pid = fork();
 			CHECK(pid >= 0);
 			if (pid == 0) {
-				unsigned deadline = 30;
-#ifdef WUMP_VALGRIND
-				if (RUNNING_ON_VALGRIND) {
-					deadline = 120;
-				}
-#endif
-				alarm(deadline);
+				alarm(wump_test_case_timeout());
 				tests[i].run();
 				_exit(0);
 			}

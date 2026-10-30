@@ -5,6 +5,201 @@ use Test::More;
 use lib 'tests/perl/lib';
 use WumpTest ();
 
+for my $slots (1, 2, 4) {
+	local $ENV{WUMPPROCS} = $slots;
+	WumpTest::check_program(q{
+		use Wump; use RootFixture;
+		our $upgraded;
+		BEGIN { $upgraded = 'ascii'; utf8::upgrade($upgraded) }
+		my ($wide, $bytes) = ("\x{100}", 'bytes');
+		my $out = chan(4);
+		for (1..8) {
+			act {
+				RootFixture::executor_rendezvous();
+				for (1..128) {
+					die "UTF-8 query lost encoding\n" unless utf8::is_utf8($wide) && utf8::is_utf8($upgraded);
+					die "UTF-8 query changed plain inputs\n" if utf8::is_utf8($bytes) || utf8::is_utf8(123) || utf8::is_utf8(undef);
+					yield;
+				}
+				$out->send(1);
+			};
+		}
+		die "missing UTF-8 query workers\n" if grep { $out->recv != 1 } 1..8;
+		if (Wump::execution_slots() > 1) {
+			{ package Utf8QueryTie; sub TIESCALAR { bless {}, shift }
+				sub FETCH { die "UTF-8 query called FETCH\n" } }
+			tie my $value, 'Utf8QueryTie';
+			eval { utf8::is_utf8($value) };
+			die "UTF-8 query admitted magic: $@" unless $@ =~ /requires a nonmagical value/;
+			eval { utf8::valid($wide) };
+			die "UTF-8 query admitted other entries: $@" unless $@ =~ /XS function has not declared parallel safety/;
+		}
+		die "UTF-8 query failed after rejection\n" unless utf8::is_utf8($wide);
+		print "UTF-8 flag queries preserve encoding and admission\n";
+	}, 0, qr/\AUTF-8 flag queries preserve encoding and admission\n\z/,
+		"UTF-8 flag queries run on $slots slots with shared inputs and recovery");
+}
+
+for my $slots (1, 2, 4) {
+	local $ENV{WUMPPROCS} = $slots;
+	WumpTest::check_program(q{
+		use Wump; use RootFixture; use Socket qw(:all);
+		our ($address, $address6, $numeric, $nohost, $noserv);
+		BEGIN {
+			$address = pack_sockaddr_in(4321, inet_aton('127.0.0.1'));
+			$address6 = pack_sockaddr_in6(4321, inet_pton(AF_INET6, '::1'));
+			$numeric = NI_NUMERICHOST | NI_NUMERICSERV;
+			$nohost = NIx_NOHOST; $noserv = NIx_NOSERV;
+		}
+		my $out = chan(4);
+		for (1..8) {
+			act {
+				RootFixture::executor_rendezvous();
+				for (1..32) {
+					my ($error, $host, $service) = getnameinfo($address, $numeric);
+					die "numeric socket metadata changed\n" if $error || $host ne '127.0.0.1' || $service ne '4321';
+					($error, $host, $service) = getnameinfo($address6, $numeric);
+					die "numeric IPv6 metadata changed\n" if $error || $host ne '::1' || $service ne '4321';
+					($error, $host, $service) = getnameinfo($address, $numeric, $nohost);
+					die "no-host metadata changed\n" if $error || defined($host) || $service ne '4321';
+					($error, $host, $service) = getnameinfo($address, $numeric, $noserv);
+					die "no-service metadata changed\n" if $error || $host ne '127.0.0.1' || defined($service);
+					yield;
+				}
+				$out->send(1);
+			};
+		}
+		die "missing socket metadata workers\n" if grep { $out->recv != 1 } 1..8;
+		if (Wump::execution_slots() > 1) {
+			for my $call (sub { getnameinfo($address, 0) },
+				sub { getnameinfo($address, $numeric, 4) }) {
+				eval { $call->() };
+				die "resolver policy bypassed: $@" unless $@ =~ /numeric host and service/;
+			}
+			for my $invalid ('short', substr($address, 0, -1), "$address\0", substr($address6, 0, -1), "$address6\0") {
+				my $bytes = "$invalid";
+				eval { getnameinfo($bytes, $numeric) };
+				die "invalid socket address admitted: $@" unless $@ =~ /IPv4 or IPv6 sockaddr/;
+			}
+			for my $invalid (0.5, 'numeric', [], 1 << 63) {
+				eval { getnameinfo($address, $invalid) };
+				die "invalid socket flags admitted: $@" unless $@ =~ /requires plain/;
+			}
+			{ package SocketTie; sub TIESCALAR { bless {}, shift }
+				sub FETCH { die "socket metadata called FETCH\n" } }
+			tie my $bad, 'SocketTie';
+			for my $call (sub { getnameinfo($bad, $numeric) }, sub { getnameinfo($address, $bad) }) {
+				eval { $call->() };
+				die "magical socket input admitted: $@" unless $@ =~ /requires plain/;
+			}
+			eval { getaddrinfo('localhost', 'http') };
+			die "socket audit admitted DNS: $@" unless $@ =~ /XS function has not declared parallel safety/;
+		}
+		my ($error, $host, $service) = getnameinfo($address, $numeric);
+		die "socket metadata did not recover\n" if $error || $host ne '127.0.0.1' || $service ne '4321';
+		print "numeric socket metadata preserved outputs and resolver policy\n";
+	}, 0, qr/\Anumeric socket metadata preserved outputs and resolver policy\n\z/,
+		"numeric nameinfo runs on $slots slots with shared input and failure recovery");
+}
+
+for my $slots (1, 2, 4) {
+	local $ENV{WUMPPROCS} = $slots;
+	WumpTest::check_program(q{
+		use Wump; use RootFixture; use Time::HiRes ();
+		{ package CanRoot;
+			sub inherited { Wump::yield(); return 'root' }
+			sub replacement { return 'replacement' }
+			sub AUTOLOAD { die "can invoked AUTOLOAD\n" }
+			sub DESTROY { }
+			BEGIN { no strict 'refs'; *{"CanRoot::caf\x{e9}"} = sub { return 'unicode' } }
+		}
+		{ package CanChild; our @ISA; BEGIN { @ISA = ('CanRoot') } sub own { return 'child' } }
+		{ package CanOther; sub inherited { return 'other' } }
+		{ package CanColdRoot; sub cold { Wump::yield(); return 'cold' } }
+		{ package CanColdChild; our @ISA = ('CanColdRoot') }
+		our @expected;
+		sub cases {
+			return ([undef, 'own'], ['', 'own'], [!!0, 'own'],
+				['CanChild', 'own'], ['CanChild', 'inherited'], ['CanChild', 'missing'],
+				['CanUnknown', 'can'], ['CanUnknown', 'missing'],
+				[bless({}, 'CanChild'), 'inherited'], [[], 'own'],
+				['CanChild', "caf\x{e9}"], ['CanChild', "own\0suffix"],
+				['CanChild', 'CanRoot::inherited'], ['CanChild', 123], [123, 'can'],
+				[\*STDOUT, 'can']);
+		}
+		BEGIN { @expected = map { defined UNIVERSAL::can(@$_) ? 1 : 0 } cases() }
+		my ($class, $name) = ('CanChild', 'inherited');
+		my $shared_object = bless {}, 'CanChild';
+		my $out = chan(4);
+		for (1..8) {
+			act {
+				my @cases = cases();
+				RootFixture::executor_rendezvous();
+				die "cold capability lookup failed\n" unless CanColdChild->can('cold')->('CanColdChild') eq 'cold';
+				die "cold negative cache failed\n" if CanColdChild->can('absent');
+				for (1..32) {
+					for my $i (0..$#cases) {
+						my $method = UNIVERSAL::can(@{$cases[$i]});
+						die "can result changed at $i\n" unless (defined($method) ? 1 : 0) == $expected[$i];
+						die "can returned an unpublished method\n" if defined($method)
+							&& Wump::execution_slots() > 1 && !Wump::is_shared($method);
+					}
+					my $method = $class->can($name);
+					die "can returned the wrong inherited method\n" unless $method->($shared_object) eq 'root';
+					die "object can differs from class can\n" unless $shared_object->can($name) == $method;
+					yield;
+				}
+				$out->send(1);
+			};
+		}
+		die "missing capability workers\n" if grep { $out->recv != 1 } 1..8;
+		my $object = bless {}, 'CanChild';
+		my $method = $object->can('inherited');
+		die "returned method lost ownership\n" unless $method->($object) eq 'root';
+		@CanChild::ISA = ('CanOther');
+		die "can ignored inheritance invalidation\n" unless $object->can('inherited')->($object) eq 'other';
+		@CanChild::ISA = ('CanRoot');
+		die "can ignored restored inheritance\n" unless $object->can('inherited')->($object) eq 'root';
+		die "can invented a missing method\n" if $object->can('missing');
+		{ no warnings 'once'; *CanRoot::missing = \&CanRoot::replacement }
+		die "can retained a stale negative cache\n" unless $object->can('missing')->($object) eq 'replacement';
+		my $warnings = 0;
+		{
+			local $SIG{__WARN__} = sub {
+				my @padding = (1) x 20000;
+				Wump::yield();
+				$warnings++;
+			};
+			die "undefined method unexpectedly resolved\n" if $object->can(undef);
+		}
+		die "undefined method warning disappeared\n" unless $warnings == 1;
+		{
+			local $SIG{__WARN__} = sub { Wump::yield(); die "capability warning failed\n" };
+			eval { $object->can(undef) };
+			die "can lost the warning exception: $@" unless $@ =~ /capability warning failed/;
+		}
+		eval { UNIVERSAL::can('CanChild') };
+		die "can accepted missing arguments: $@" unless $@ =~ /Usage:/;
+		if (Wump::execution_slots() > 1) {
+			{ package CanTie; sub TIESCALAR { bless {}, shift }
+				sub FETCH { die "can called FETCH\n" } }
+			tie my $tied, 'CanTie';
+			eval { UNIVERSAL::can($tied, 'own') };
+			die "can admitted magical receiver: $@" unless $@ =~ /requires a plain scalar or reference/;
+			eval { $object->can($tied) };
+			die "can admitted magical method: $@" unless $@ =~ /requires a plain scalar/;
+			eval { $object->can([]) };
+			die "can admitted reference method: $@" unless $@ =~ /requires a plain scalar/;
+			my $unsafe = Time::HiRes->can('usleep');
+			eval { $unsafe->(0) };
+			die "can bypassed native admission: $@" unless $@ =~ /XS function has not declared parallel safety: Time::HiRes::usleep/;
+		}
+		die "can did not recover after rejection\n" unless $object->can('own')->($object) eq 'child';
+		print "capability lookup retained native results and released guards\n";
+	}, 0, qr/\Acapability lookup retained native results and released guards\n\z/,
+		"capability lookup handles shared inputs, caches and recovery on $slots slots");
+}
+
 WumpTest::check_program(q{
 	use Wump ();
 	BEGIN {

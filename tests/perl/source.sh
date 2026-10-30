@@ -69,8 +69,8 @@ done
 printf '%s\n' 'ok - failed downloads and invalid responses are rejected without leaving cached archives'
 
 if ! touch "$wump_build_dir/perl/perl-5.42.2/.wump-upstream"; then exit 1; fi
-for wump_config in '' address thread; do
-	for wump_request in '' address thread; do
+for wump_config in '' address thread memory undefined; do
+	for wump_request in '' address thread memory undefined; do
 		if [ "$wump_config" = "$wump_request" ]; then continue; fi
 		if ! printf "usemultiplicity='define'\nuseithreads='define'\n" >"$wump_build_dir/perl/perl-5.42.2/config.sh"; then exit 1; fi
 		if [ -n "$wump_config" ]; then
@@ -91,12 +91,18 @@ if PERL_SANITIZER=invalid bash "$wump_repo/perl/build.sh" "$wump_build_dir" >"$w
 	exit 1
 fi
 if ! grep -qF 'Unsupported PERL_SANITIZER' "$wump_test_dir/output"; then cat "$wump_test_dir/output"; exit 1; fi
-for wump_request in address thread; do
+for wump_request in address thread memory undefined; do
 	for wump_missing_flag in ccflags ldflags lddlflags shared; do
 		if ! printf "usemultiplicity='define'\nuseithreads='define'\n" >"$wump_build_dir/perl/perl-5.42.2/config.sh"; then exit 1; fi
 		for wump_flag in ccflags ldflags lddlflags; do
 			if [ "$wump_flag" = "$wump_missing_flag" ]; then continue; fi
-			if ! printf "%s='-fsanitize=%s'\n" "$wump_flag" "$wump_request" >>"$wump_build_dir/perl/perl-5.42.2/config.sh"; then exit 1; fi
+			wump_extra=
+			case "$wump_request/$wump_flag" in
+				memory/ccflags) wump_extra=' -fsanitize-memory-track-origins=2' ;;
+				memory/ldflags) wump_extra=' -pie' ;;
+				undefined/ccflags) wump_extra=' -fno-sanitize-recover=all' ;;
+			esac
+			if ! printf "%s='-fsanitize=%s%s'\n" "$wump_flag" "$wump_request" "$wump_extra" >>"$wump_build_dir/perl/perl-5.42.2/config.sh"; then exit 1; fi
 		done
 		if PERL_SANITIZER="$wump_request" bash "$wump_repo/perl/build.sh" "$wump_build_dir" >"$wump_test_dir/output" 2>&1; then
 			printf '%s\n' 'Build accepted an incompletely instrumented sanitizer configuration.' >&2
@@ -110,4 +116,25 @@ for wump_request in address thread; do
 		if ! grep -qF "$wump_expected" "$wump_test_dir/output"; then cat "$wump_test_dir/output"; exit 1; fi
 	done
 done
-printf '%s\n' 'ok - normal, ASan, and TSan configurations cannot be mixed or incompletely instrumented'
+for wump_missing in origins pie; do
+	if ! printf "usemultiplicity='define'\nuseithreads='define'\nccflags='-fsanitize=memory -fsanitize-memory-track-origins=2'\nldflags='-fsanitize=memory -pie'\nlddlflags='-shared -fsanitize=memory'\n" >"$wump_build_dir/perl/perl-5.42.2/config.sh"; then exit 1; fi
+	if [ "$wump_missing" = origins ]; then
+		wump_expected='lacks origin tracking'
+		if ! sed -i 's/ -fsanitize-memory-track-origins=2//' "$wump_build_dir/perl/perl-5.42.2/config.sh"; then exit 1; fi
+	else
+		wump_expected='lacks PIE linking'
+		if ! sed -i 's/ -pie//' "$wump_build_dir/perl/perl-5.42.2/config.sh"; then exit 1; fi
+	fi
+	if PERL_SANITIZER=memory bash "$wump_repo/perl/build.sh" "$wump_build_dir" >"$wump_test_dir/output" 2>&1; then
+		printf 'Build accepted MSan configuration missing %s.\n' "$wump_missing" >&2
+		exit 1
+	fi
+	if ! grep -qF "$wump_expected" "$wump_test_dir/output"; then cat "$wump_test_dir/output"; exit 1; fi
+done
+if ! printf "usemultiplicity='define'\nuseithreads='define'\nccflags='-fsanitize=undefined'\nldflags='-fsanitize=undefined'\nlddlflags='-shared -fsanitize=undefined'\n" >"$wump_build_dir/perl/perl-5.42.2/config.sh"; then exit 1; fi
+if PERL_SANITIZER=undefined bash "$wump_repo/perl/build.sh" "$wump_build_dir" >"$wump_test_dir/output" 2>&1; then
+	printf '%s\n' 'Build accepted recoverable UBSan instrumentation.' >&2
+	exit 1
+fi
+if ! grep -qF 'UBSan configuration allows recovery' "$wump_test_dir/output"; then cat "$wump_test_dir/output"; exit 1; fi
+printf '%s\n' 'ok - normal, ASan, TSan, UBSan and MSan configurations cannot be mixed or incompletely instrumented'

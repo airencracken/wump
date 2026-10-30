@@ -16,22 +16,38 @@ sub apply_refcount {
 		'        padname = PadnamelistREFCNT_inc(PL_comppad_name);');
 	edit('pad.c', 'PL_padlist_generation++;',
 		'__atomic_fetch_add(&PL_padlist_generation, 1, __ATOMIC_RELAXED);');
-	edit('sv.h', '/* start with 2 sv-head building blocks */', <<'C');
-/* start with 2 sv-head building blocks */
+	my $counters = <<'C';
 /* C++ XS retains the upstream head layout and lvalue API. Its standard
- * refcount helpers use the same compiler atomics as the C core. Direct
- * legacy XS head manipulation still requires serialization. */
+ * refcount helpers use compiler atomics; the C core uses C11 atomics on
+ * its atomic-qualified field. Both access the same integer representation. */
 #ifdef __cplusplus
 #  define WUMP_REFCNT_TYPE U32
-#else
-#  define WUMP_REFCNT_TYPE _Atomic(U32)
-#endif
-#define WUMP_REFCNT_INC(sv) __atomic_add_fetch(&(sv)->sv_refcnt, 1, __ATOMIC_RELAXED)
-#define WUMP_REFCNT_LOAD(sv) __atomic_load_n(&(sv)->sv_refcnt, __ATOMIC_ACQUIRE)
-#define WUMP_REFCNT_CAS(sv, rc) \
+#  define WUMP_REFCNT_INC(sv) __atomic_add_fetch(&(sv)->sv_refcnt, 1, __ATOMIC_RELAXED)
+#  define WUMP_REFCNT_LOAD(sv) __atomic_load_n(&(sv)->sv_refcnt, __ATOMIC_ACQUIRE)
+#  define WUMP_REFCNT_CAS(sv, rc) \
     __atomic_compare_exchange_n(&(sv)->sv_refcnt, &(rc), (rc)-1, 0, \
         __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)
+#else
+#  include <stdatomic.h>
+#  define WUMP_REFCNT_TYPE _Atomic(U32)
+#  define WUMP_REFCNT_INC(sv) atomic_fetch_add_explicit(&(sv)->sv_refcnt, 1, memory_order_relaxed)
+#  define WUMP_REFCNT_LOAD(sv) atomic_load_explicit(&(sv)->sv_refcnt, memory_order_acquire)
+#  define WUMP_REFCNT_CAS(sv, rc) \
+    atomic_compare_exchange_strong_explicit(&(sv)->sv_refcnt, &(rc), (rc)-1, \
+        memory_order_acq_rel, memory_order_acquire)
+#endif
 C
+	my $current = read_file("$source/sv.h");
+	my $start = index($current, "/* start with 2 sv-head building blocks */\n");
+	$start >= 0 or die "missing scalar head marker\n";
+	$start += length("/* start with 2 sv-head building blocks */\n");
+	my $end = index($current, '#define _SV_HEAD(ptrtype)', $start);
+	$end >= 0 or die "missing scalar head declaration\n";
+	my $existing = substr($current, $start, $end - $start);
+	$existing !~ /\S/ || index($existing, 'WUMP_REFCNT_TYPE') >= 0
+		or die "unexpected content before scalar head declaration\n";
+	substr($current, $start, $end - $start, "$counters\n");
+	write_file("$source/sv.h", $current);
 	edit('sv.h', "    U32\t\tsv_refcnt;", "    WUMP_REFCNT_TYPE sv_refcnt;");
 	my $head = read_file("$source/sv.h");
 	$head =~ s/\(\+\+\(SvREFCNT\(sv\)\),MUTABLE_SV\(sv\)\)/(WUMP_REFCNT_INC(sv),MUTABLE_SV(sv))/g;

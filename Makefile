@@ -7,10 +7,28 @@ CPPFLAGS = -Iruntime/include -Iruntime/src
 CFLAGS = -O2 -g -std=c11 -Wall -Wextra -Werror -pthread
 LDFLAGS = -pthread
 LDLIBS = -lm
+MSAN_CC = clang
+MSAN_CFLAGS = -O1 -fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer -fno-optimize-sibling-calls -fPIE
+MSAN_LDFLAGS = -fsanitize=memory -fsanitize-memory-track-origins=2 -pie
+UBSAN_CHECKS = undefined,float-divide-by-zero
+UBSAN_CONTROL = ubsan
+CLANG = clang
+CLANG_CXX = clang++
+CLANG_AR = llvm-ar
+CFI_CFLAGS = -O1 -flto -fvisibility=hidden -fsanitize=cfi -fno-sanitize-trap=cfi -fno-sanitize-recover=all
+CFI_LDFLAGS = -flto -fuse-ld=lld -fsanitize=cfi -fno-sanitize-trap=cfi -fno-sanitize-recover=all
+VALGRIND_ITERATIONS = 100
+VALGRIND_SLOTS = 4
+TEST_TIMEOUT = 60
+TEST_LONG_TIMEOUT = 90
+TEST_FAILURE_TIMEOUT = 30
+SANITIZER_TEST_ARGS = CPPFLAGS='$(CPPFLAGS) -DWUMP_TEST_CASE_TIMEOUT=120' TEST_TIMEOUT=300 TEST_LONG_TIMEOUT=300 TEST_FAILURE_TIMEOUT=300
 PERL_SUITES = entry waitgroup preempt tasks parallel xs-parallel regex-parallel regex local elements pocket pocket-deparse separators hooks locks shared keys reads read-claims scalar-writes operands stack-loads lvalue-loads reference-loads scalar-references materialization iteration memory publication hidden-roots
 
 RUNTIME = stack sched chan io error
 OBJECTS = $(addprefix $(BUILD)/,$(addsuffix .o,$(RUNTIME))) $(BUILD)/ctx_x86_64.o
+RUNTIME_PROGRAMS = hello select echo blocking test_runtime test_select test_io test_syscall test_context test_syscall_failures test_failures test_io_failures bench sanitizer_control msan_control ub_control tsan_race
+shell_quote = '$(subst ','"'"',$(1))'
 WRAPPED = pthread_mutex_init pthread_cond_init pthread_condattr_init pthread_condattr_setclock posix_memalign mmap munmap mprotect pthread_create pthread_join malloc calloc realloc
 IO_WRAPPED = calloc realloc pthread_mutex_init pthread_create epoll_create1 eventfd epoll_ctl epoll_wait fcntl poll __poll_chk read __read_chk write close accept4 connect getsockopt getpeername
 SYSCALL_WRAPPED = calloc pthread_cond_init pthread_cond_destroy pthread_cond_broadcast pthread_create pthread_join
@@ -259,6 +277,23 @@ perl-memory-tsan:
 perl-asan:
 	ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=1 PERL_DESTRUCT_LEVEL=2 PERL_SANITIZER=address $(MAKE) BUILD='$(BUILD)/perl-asan' PERL_TARBALL='$(abspath $(PERL_TARBALL))' CFLAGS='$(CFLAGS) -O1 -fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls' LDFLAGS='$(LDFLAGS) -fsanitize=address' perl-test
 
+.PHONY: perl-msan
+perl-msan: sanitizer-tooling-test
+	MSAN_OPTIONS=halt_on_error=1:exit_code=88 PERL_DESTRUCT_LEVEL=2 PERL_SANITIZER=memory PERL_MSAN_CC='$(MSAN_CC)' CXX='$(CLANG_CXX)' $(MAKE) BUILD='$(BUILD)/perl-msan' CC='$(MSAN_CC)' PERL_TARBALL='$(abspath $(PERL_TARBALL))' CFLAGS='$(CFLAGS) $(MSAN_CFLAGS)' LDFLAGS='$(LDFLAGS) $(MSAN_LDFLAGS)' msan-control perl-test
+
+.PHONY: perl-tsan perl-ubsan perl-sanitizers perl-refcount-clang
+perl-tsan:
+	TSAN_OPTIONS=halt_on_error=1:exitcode=66 PERL_DESTRUCT_LEVEL=2 PERL_SANITIZER=thread $(MAKE) BUILD='$(BUILD)/perl-tsan' PERL_TARBALL='$(abspath $(PERL_TARBALL))' CFLAGS='$(CFLAGS) -O1 -fsanitize=thread -fno-omit-frame-pointer' LDFLAGS='$(LDFLAGS) -fsanitize=thread' tsan-control perl-test
+
+perl-ubsan:
+	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:exitcode=89 PERL_DESTRUCT_LEVEL=2 PERL_SANITIZER=undefined $(MAKE) BUILD='$(BUILD)/perl-ubsan' PERL_TARBALL='$(abspath $(PERL_TARBALL))' CFLAGS='$(CFLAGS) -fsanitize=undefined,float-divide-by-zero -fno-sanitize-recover=all' LDFLAGS='$(LDFLAGS) -fsanitize=undefined,float-divide-by-zero' ubsan-control perl-test
+
+perl-sanitizers:
+	$(MAKE) -k -j1 perl-asan perl-lsan perl-tsan perl-ubsan perl-msan
+
+perl-refcount-clang: perl-build
+	WUMP_REFCOUNT_CC='$(CLANG)' CXX='$(CLANG_CXX)' $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/refcount.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
+
 perl-lsan: perl-asan
 	$(MAKE) BUILD='$(BUILD)/perl-asan' perl-leak-test
 
@@ -354,6 +389,20 @@ perl-mro-upstream-test: perl-build
 $(BUILD):
 	mkdir -p $@
 
+.PHONY: build-flags-force
+build-flags-force:
+
+# A reused directory must not silently retain objects from another compiler
+# or an earlier sanitizer flag set. Preserve timestamps for unchanged flags.
+$(BUILD)/.compile-flags: build-flags-force | $(BUILD)
+	@wump_flags=$$(mktemp '$(BUILD)/.compile-flags.XXXXXX'); \
+	if [ -z "$$wump_flags" ]; then exit 1; fi; \
+	if ! printf '%s\n' $(call shell_quote,CC=$(CC)) $(call shell_quote,AR=$(AR)) $(call shell_quote,CPPFLAGS=$(CPPFLAGS)) $(call shell_quote,CFLAGS=$(CFLAGS)) $(call shell_quote,LDFLAGS=$(LDFLAGS)) $(call shell_quote,LDLIBS=$(LDLIBS)) >"$$wump_flags"; then rm -f -- "$$wump_flags"; exit 1; fi; \
+	wump_same=1; \
+	if [ -f '$@' ]; then cmp -s -- "$$wump_flags" '$@'; wump_same=$$?; fi; \
+	if [ "$$wump_same" -gt 1 ]; then rm -f -- "$$wump_flags"; printf '%s\n' 'Cannot compare build configuration.' >&2; exit 1; fi; \
+	if [ "$$wump_same" -eq 0 ]; then rm -f -- "$$wump_flags"; else mv -- "$$wump_flags" '$@'; fi
+
 $(BUILD)/%.o: runtime/src/%.c runtime/src/internal.h runtime/include/wump.h | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
@@ -402,14 +451,14 @@ $(BUILD)/test_io_failures: tests/test_io_failures.c tests/errno_probe.c $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_io_failures.c tests/errno_probe.c $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) $(addprefix -Wl$(comma)--wrap=,$(IO_WRAPPED)) -o $@
 
 test: $(BUILD)/test_runtime $(BUILD)/test_select $(BUILD)/test_io $(BUILD)/test_syscall $(BUILD)/test_context $(BUILD)/test_failures $(BUILD)/test_io_failures $(BUILD)/test_syscall_failures
-	timeout 60s $(BUILD)/test_runtime
-	timeout 60s $(BUILD)/test_select
-	timeout 60s $(BUILD)/test_syscall
-	timeout 60s $(BUILD)/test_context
-	timeout 90s $(BUILD)/test_syscall_failures
-	timeout 60s $(BUILD)/test_io
-	timeout 30s $(BUILD)/test_failures
-	timeout 90s $(BUILD)/test_io_failures
+	timeout $(TEST_TIMEOUT)s $(BUILD)/test_runtime
+	timeout $(TEST_TIMEOUT)s $(BUILD)/test_select
+	timeout $(TEST_TIMEOUT)s $(BUILD)/test_syscall
+	timeout $(TEST_TIMEOUT)s $(BUILD)/test_context
+	timeout $(TEST_LONG_TIMEOUT)s $(BUILD)/test_syscall_failures
+	timeout $(TEST_TIMEOUT)s $(BUILD)/test_io
+	timeout $(TEST_FAILURE_TIMEOUT)s $(BUILD)/test_failures
+	timeout $(TEST_LONG_TIMEOUT)s $(BUILD)/test_io_failures
 
 stress: $(BUILD)/test_runtime $(BUILD)/test_select $(BUILD)/test_io $(BUILD)/test_syscall
 	timeout 180s $(BUILD)/test_runtime --stress
@@ -418,37 +467,110 @@ stress: $(BUILD)/test_runtime $(BUILD)/test_select $(BUILD)/test_io $(BUILD)/tes
 	timeout 180s $(BUILD)/test_io --stress
 
 ubsan:
-	$(MAKE) BUILD=build/ubsan CFLAGS='$(CFLAGS) -fsanitize=undefined -fno-sanitize-recover=all' LDFLAGS='$(LDFLAGS) -fsanitize=undefined' test
+	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:exitcode=89 $(MAKE) $(SANITIZER_TEST_ARGS) BUILD='$(BUILD)/ubsan' CFLAGS='$(CFLAGS) -fsanitize=$(UBSAN_CHECKS) -fno-sanitize-recover=all' LDFLAGS='$(LDFLAGS) -fsanitize=$(UBSAN_CHECKS)' ubsan-control test
+
+.PHONY: clang-ubsan gcc-ubsan cfi cfi-control ubsan-control
+clang-ubsan:
+	$(MAKE) CC='$(CLANG)' BUILD='$(BUILD)/clang' UBSAN_CONTROL=ubsan-clang UBSAN_CHECKS=undefined,local-bounds,float-divide-by-zero,implicit-conversion,nullability ubsan
+
+gcc-ubsan:
+	$(MAKE) CC=gcc BUILD='$(BUILD)/gcc' UBSAN_CHECKS=undefined,bounds-strict,float-divide-by-zero ubsan
+
+cfi:
+	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:exitcode=89 $(MAKE) $(SANITIZER_TEST_ARGS) BUILD='$(BUILD)/cfi' CC='$(CLANG)' AR='$(CLANG_AR)' CFLAGS='$(CFLAGS) $(CFI_CFLAGS)' LDFLAGS='$(LDFLAGS) $(CFI_LDFLAGS)' cfi-control test
+
+$(BUILD)/ub_control: tests/ub_control.c $(BUILD)/libwump.a
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) -o $@
+
+ubsan-control: $(BUILD)/ub_control
+	bash tests/sanitizers.sh '$(BUILD)' '$(UBSAN_CONTROL)'
+
+cfi-control: $(BUILD)/ub_control
+	bash tests/sanitizers.sh '$(BUILD)' cfi
 
 asan:
-	ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=1 $(MAKE) BUILD='$(BUILD)/asan' CFLAGS='$(CFLAGS) -O1 -fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls' LDFLAGS='$(LDFLAGS) -fsanitize=address' test asan-control
+	ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=1:detect_invalid_pointer_pairs=2 $(MAKE) $(SANITIZER_TEST_ARGS) BUILD='$(BUILD)/asan' CFLAGS='$(CFLAGS) -O1 -fsanitize=address,pointer-compare,pointer-subtract -fno-omit-frame-pointer -fno-optimize-sibling-calls' LDFLAGS='$(LDFLAGS) -fsanitize=address,pointer-compare,pointer-subtract' test asan-control
+
+.PHONY: msan msan-control sanitizer-tooling-test
+msan: sanitizer-tooling-test
+	MSAN_OPTIONS=halt_on_error=1:exit_code=88 $(MAKE) $(SANITIZER_TEST_ARGS) BUILD='$(BUILD)/msan' CC='$(MSAN_CC)' CFLAGS='$(CFLAGS) $(MSAN_CFLAGS)' LDFLAGS='$(LDFLAGS) $(MSAN_LDFLAGS)' msan-control test
+
+$(BUILD)/msan_control: tests/msan_control.c $(BUILD)/libwump.a
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) -o $@
+
+msan-control: $(BUILD)/msan_control
+	bash tests/sanitizers.sh '$(BUILD)' msan
+
+sanitizer-tooling-test:
+	bash tests/sanitizer-tooling.sh
+	bash tests/build-flags.sh
+
+.PHONY: sanitizers gcc-sanitizers clang-sanitizers
+sanitizers:
+	$(MAKE) -k -j1 gcc-sanitizers clang-sanitizers
+
+gcc-sanitizers:
+	$(MAKE) -k -j1 CC=gcc BUILD='$(BUILD)/gcc' UBSAN_CHECKS=undefined,bounds-strict,float-divide-by-zero ubsan asan lsan tsan
+
+clang-sanitizers:
+	$(MAKE) -k -j1 CC='$(CLANG)' MSAN_CC='$(CLANG)' BUILD='$(BUILD)/clang' UBSAN_CONTROL=ubsan-clang UBSAN_CHECKS=undefined,local-bounds,float-divide-by-zero,implicit-conversion,nullability ubsan asan lsan tsan msan cfi
 
 lsan:
-	ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 $(MAKE) BUILD='$(BUILD)/asan' CFLAGS='$(CFLAGS) -O1 -fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls' LDFLAGS='$(LDFLAGS) -fsanitize=address' lsan-control test
+	ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1:detect_invalid_pointer_pairs=2 $(MAKE) $(SANITIZER_TEST_ARGS) BUILD='$(BUILD)/asan' CFLAGS='$(CFLAGS) -O1 -fsanitize=address,pointer-compare,pointer-subtract -fno-omit-frame-pointer -fno-optimize-sibling-calls' LDFLAGS='$(LDFLAGS) -fsanitize=address,pointer-compare,pointer-subtract' lsan-control test
 
 $(BUILD)/sanitizer_control: tests/sanitizer_control.c $(BUILD)/libwump.a
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) -o $@
 
 asan-control: $(BUILD)/sanitizer_control
-	ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=1 timeout 60s $(BUILD)/sanitizer_control
+	ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=1:detect_invalid_pointer_pairs=2 timeout 60s $(BUILD)/sanitizer_control
 	bash tests/sanitizers.sh '$(BUILD)' asan
 
 lsan-control: $(BUILD)/sanitizer_control
 	bash tests/sanitizers.sh '$(BUILD)' lsan
 
 tsan:
-	$(MAKE) BUILD=build/tsan CFLAGS='$(CFLAGS) -fsanitize=thread' LDFLAGS='$(LDFLAGS) -fsanitize=thread' test tsan-control
+	$(MAKE) $(SANITIZER_TEST_ARGS) BUILD='$(BUILD)/tsan' CFLAGS='$(CFLAGS) -fsanitize=thread' LDFLAGS='$(LDFLAGS) -fsanitize=thread' test tsan-control
+
+.PHONY: valgrind-tools memcheck-tools helgrind drd massif callgrind cachegrind dhat bbv lackey
+valgrind-tools memcheck-tools helgrind drd massif callgrind cachegrind dhat bbv lackey:
+	$(MAKE) BUILD='$(BUILD)/valgrind' CPPFLAGS='$(CPPFLAGS) -DWUMP_VALGRIND' '$(BUILD)/valgrind/bench'
+	bash tests/valgrind-tools.sh '$(abspath $(BUILD))/valgrind' '$(patsubst valgrind-tools,all,$(patsubst memcheck-tools,memcheck,$@))' '$(VALGRIND_ITERATIONS)' '$(VALGRIND_SLOTS)'
+
+.PHONY: valgrind perl-valgrind perl-valgrind-run perl-valgrind-tools perl-mojo-valgrind
+valgrind:
+	$(MAKE) -k -j1 memcheck perl-valgrind perl-mojo-valgrind valgrind-tools perl-valgrind-tools
+
+perl-valgrind-tools:
+	$(MAKE) BUILD='$(BUILD)/perl-valgrind' CPPFLAGS='$(CPPFLAGS) -DWUMP_VALGRIND' PERL_TARBALL='$(abspath $(PERL_TARBALL))' perl-build
+	bash tests/valgrind-tools.sh '$(abspath $(BUILD))/perl-valgrind' all '$(VALGRIND_ITERATIONS)' '$(VALGRIND_SLOTS)' '$(abspath $(BUILD))/perl-valgrind/perl/perl-5.42.2/perl' '-I$(abspath $(BUILD))/perl-valgrind/perl/perl-5.42.2/lib' -Iperl/lib bench/mojo-jobs.pl 2 2 4
+
+perl-mojo-valgrind:
+	$(MAKE) BUILD='$(BUILD)/perl-valgrind' PERL_TARBALL='$(abspath $(PERL_TARBALL))' perl-mojo-memcheck
+
+perl-valgrind:
+	$(MAKE) BUILD='$(BUILD)/perl-valgrind' CPPFLAGS='$(CPPFLAGS) -DWUMP_VALGRIND' PERL_TARBALL='$(abspath $(PERL_TARBALL))' perl-test
+	$(MAKE) BUILD='$(BUILD)/perl-valgrind' perl-valgrind-run
+
+perl-valgrind-run:
+	@for suite in $(PERL_SUITES); do \
+		printf 'Memcheck Perl suite: %s\n' "$$suite"; \
+		PERL_DESTRUCT_LEVEL=2 timeout 300s valgrind --trace-children=yes --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --track-origins=yes --log-file='$(BUILD)/perl/'"$$suite"'-full-memcheck.%p.log' $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) "tests/perl/$$suite.t"; result=$$?; \
+		if [ "$$result" -ne 0 ]; then exit "$$result"; fi; \
+	done
+	@for fixture in refcount-c refcount-c++ task-context allocator key-legacy key-legacy-cpp readers read-cache read-cache-cpp borrowed borrowed-cpp reclamation retire-failure read-claims owned opcode-writes opcode-writes-cpp opcode-operands opcode-operands-cpp opcode-loads opcode-loads-cpp opcode-references opcode-references-cpp opcode-materialization opcode-materialization-cpp deferred-owner deferred-target; do \
+		printf 'Memcheck native fixture: %s\n' "$$fixture"; \
+		PERL_DESTRUCT_LEVEL=2 timeout 300s valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --track-origins=yes --log-file='$(BUILD)/perl/'"$$fixture"'-native-full-memcheck.%p.log' '$(BUILD)/'"$$fixture"; result=$$?; \
+		if [ "$$result" -ne 0 ]; then exit "$$result"; fi; \
+	done
+	PERL_DESTRUCT_LEVEL=2 timeout 120s valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --track-origins=yes --log-file='$(BUILD)/perl/entry-embed-full-memcheck.%p.log' $(BUILD)/interpreter-entry -I$(abspath $(BUILD))/perl/perl-5.42.2/lib
 
 memcheck:
-	$(MAKE) BUILD=build/valgrind CPPFLAGS='$(CPPFLAGS) -DWUMP_VALGRIND' build/valgrind/test_runtime build/valgrind/test_select build/valgrind/test_io build/valgrind/test_syscall build/valgrind/test_context build/valgrind/test_syscall_failures build/valgrind/test_failures build/valgrind/test_io_failures
-	timeout 300s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --log-file=build/valgrind/runtime.%p.log build/valgrind/test_runtime
-	timeout 300s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --log-file=build/valgrind/select.%p.log build/valgrind/test_select
-	timeout 300s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --log-file=build/valgrind/syscall.%p.log build/valgrind/test_syscall
-	timeout 180s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --log-file=build/valgrind/context.%p.log build/valgrind/test_context
-	timeout 180s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --log-file=build/valgrind/syscall-failures.%p.log build/valgrind/test_syscall_failures
-	timeout 300s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --log-file=build/valgrind/io.%p.log build/valgrind/test_io
-	timeout 120s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --log-file=build/valgrind/failures.%p.log build/valgrind/test_failures
-	timeout 180s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --log-file=build/valgrind/io-failures.%p.log build/valgrind/test_io_failures
+	$(MAKE) BUILD='$(BUILD)/valgrind' CPPFLAGS='$(CPPFLAGS) -DWUMP_VALGRIND' $(addprefix $(BUILD)/valgrind/test_,runtime select io syscall context syscall_failures failures io_failures)
+	@for suite in runtime select syscall context syscall_failures io failures io_failures; do \
+		printf 'Memcheck runtime suite: %s\n' "$$suite"; \
+		timeout 300s valgrind --error-exitcode=99 --leak-check=full --show-leak-kinds=definite,indirect --errors-for-leak-kinds=definite,indirect --track-origins=yes --log-file='$(BUILD)/valgrind/'"$$suite"'.%p.log' '$(BUILD)/valgrind/test_'"$$suite"; result=$$?; \
+		if [ "$$result" -ne 0 ]; then exit "$$result"; fi; \
+	done
 
 $(BUILD)/tsan_race: tests/tsan_race.c $(BUILD)/libwump.a
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(BUILD)/libwump.a $(LDFLAGS) -o $@
@@ -475,5 +597,8 @@ bench-compare: bench $(BUILD)/go-bench
 
 clean:
 	rm -rf $(BUILD)
+
+$(BUILD)/test_runtime $(BUILD)/test_select $(BUILD)/test_io $(BUILD)/test_syscall: tests/test_budget.h
+$(OBJECTS) $(addprefix $(BUILD)/,$(RUNTIME_PROGRAMS)): $(BUILD)/.compile-flags
 
 -include $(OBJECTS:.o=.d)

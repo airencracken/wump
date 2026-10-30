@@ -8,7 +8,7 @@ use Text::ParseWords 'shellwords';
 my ($source, $build) = map { abs_path($_) // die "$_: $!\n" } @ARGV;
 for my $language ('c', 'c++') {
 	my $target = "$build/opcode-references" . ($language eq 'c++' ? '-cpp' : '');
-	my @command = ($language eq 'c++' ? 'c++' : shellwords($Config{cc}), shellwords($Config{ccflags}),
+	my @command = ($language eq 'c++' ? shellwords($ENV{CXX} // 'c++') : shellwords($Config{cc}), shellwords($Config{ccflags}),
 		'-O2', '-g', '-pthread', "-I$source", '-x', $language, 'tests/perl/opcode-references.c', '-x', 'none',
 		"$source/libperl.a", '-Wl,--wrap=Perl_wump_load_rv',
 		shellwords($Config{ldflags}), shellwords($Config{perllibs}), '-o', $target);

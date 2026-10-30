@@ -86,6 +86,21 @@ static void leak_error(void *arg) {
 	__asm__ volatile("" : : "r"(p) : "memory");
 }
 
+static void pointer_error(void *arg) {
+	unsigned char *left = malloc(8), *right = malloc(8);
+	CHECK(left != NULL && right != NULL);
+	wump_yield();
+	if (strcmp(arg, "compare") == 0) {
+		volatile int ordered = left < right;
+		(void)ordered;
+	} else {
+		volatile ptrdiff_t distance = left - right;
+		(void)distance;
+	}
+	free(left);
+	free(right);
+}
+
 int main(int argc, char **argv) {
 	volatile unsigned char bytes[64] = {1};
 	native_fake = __asan_get_current_fake_stack();
@@ -102,6 +117,7 @@ int main(int argc, char **argv) {
 	else if (strcmp(argv[1], "stack") == 0) fn = stack_error;
 	else if (strcmp(argv[1], "return") == 0) fn = return_error;
 	else if (strcmp(argv[1], "leak") == 0) fn = leak_error;
-	CHECK(fn != NULL && wump_run(fn, NULL, 1) == 0);
+	else if (strcmp(argv[1], "compare") == 0 || strcmp(argv[1], "subtract") == 0) fn = pointer_error;
+	CHECK(fn != NULL && wump_run(fn, argv[1], 1) == 0);
 	return 0;
 }

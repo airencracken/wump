@@ -49,7 +49,10 @@ make test
 make stress
 make ubsan
 make tsan
+make msan    # Clang, with origins and uninitialized-read controls
+make sanitizers # GCC and Clang ASan/LSan/UBSan/TSan; Clang MSan and CFI
 make memcheck # optional: requires Valgrind and its development headers
+make valgrind # full runtime/Perl Memcheck, Mojo checks, and every profiling tool
 make BUILD=build/clang CC=clang test
 ```
 
@@ -200,6 +203,26 @@ publishes returned CVs, then releases its guard before Perl method execution.
 Native reference generation synchronizes head-flag reads with first
 publication; temporary cleanup preserves interpreter-wide immortal flags.
 `make perl-mro-upstream-test` adds upstream MRO, goto and Unicode goto coverage.
+
+`UNIVERSAL::can` snapshots plain scalar/reference receivers and plain scalar
+method names in parallel mode. Method-name conversion and warning hooks run
+before the metadata guard; lookup and returned-CV publication share dispatch's
+cache synchronization. The guard ends before a returned method executes.
+Tied inputs, reference-valued method names and bare globs remain unsupported
+in parallel mode; glob references and ordinary blessed references are accepted.
+
+Bare precompiled `qr` patterns from the native regex engine now run in parallel
+without invoking the compiler. Match caches and captures remain private to each
+act; `/o` keeps its first pattern. Tests cover subject magic that yields, grows
+the Perl stack, throws, or reenters the same match operation. Pattern strings,
+overloaded patterns, custom engines and embedded regex code remain gated.
+Native named-capture FETCH, EXISTS and SCALAR queries are admitted with private
+input snapshots; mutation and iterator entries remain gated.
+
+`Socket::getnameinfo` accepts plain packed IPv4/IPv6 addresses with explicitly
+numeric host/service flags. Resolver-backed requests and other Socket entries
+remain gated. `utf8::is_utf8` reads the flag under metadata synchronization and
+rejects magical inputs; it does not admit the other `utf8` helpers.
 
 The functional Unix path join entries use private argument heads and join
 constants. Reference arguments retain their original referents while overloads
@@ -1067,6 +1090,42 @@ Both leak targets check a clean process before running leak-sensitive suites.
 Local TCP and socket half-close tests also require their system calls to be
 permitted by the environment; a denied call remains a test failure.
 
+`make sanitizers` runs separate GCC and Clang builds and continues independent
+checks after a failure while preserving the failing overall status. Individual
+targets are `gcc-sanitizers`, `clang-sanitizers`, `gcc-ubsan`, `clang-ubsan`,
+`asan`, `lsan`, `tsan`, `msan` and `cfi`. `BUILD` keeps their output isolated.
+`CLANG`, `CLANG_CXX`, `CLANG_AR` and `MSAN_CC` select the LLVM tools.
+Changing the compiler, compile flags or link flags rebuilds cached runtime
+objects; an unchanged configuration reuses them.
+
+Instrumented C runs allow 120 seconds per forked test case and 300 seconds
+per suite. Pointer-pair instrumentation exceeded the original case/suite
+budgets in a measured CPU-bound run. These explicit watchdog budgets retain
+every assertion; ordinary tests retain their existing time limits.
+
+| Check | Runtime tooling |
+| --- | --- |
+| Address and leak errors | GCC/Clang ASan, stack-use-after-return, unrelated pointer comparisons/subtractions, and leak controls |
+| Undefined behavior | GCC/Clang UBSan; GCC strict bounds; Clang local bounds, implicit conversions and nullability; explicit floating division checks |
+| Data races | GCC/Clang TSan with fiber and channel-lock ownership support and a deliberate race control |
+| Uninitialized reads | Clang MSan with level-2 origins; heap, coroutine stack/native handoff and channel-transfer controls |
+| Indirect call types | Clang CFI with LTO, hidden visibility, LLD and a deliberately incompatible callback control |
+
+UBSan controls require overflow, bounds and floating division reports;
+the expanded Clang target also checks implicit conversion detection. CFI and
+MSan first require a clean coroutine process. An unsupported compiler, missing
+runtime, crash, timeout or missing expected diagnostic fails its target.
+The shell tooling tests also exercise rejected reports, paths with spaces,
+argument preservation and continued execution after individual tool failures.
+
+This matrix covers the current C/x86-64 runtime. Hardware tagging and shadow
+call-stack modes require additional platform/ABI work; SafeStack requires
+separate support for coroutine unsafe stacks and migration. C++ vptr checks
+do not apply to the C runtime. DataFlowSanitizer, TypeSanitizer and
+RealtimeSanitizer need separate integration and workload contracts; they are
+not claimed by these targets. Defined unsigned arithmetic in the scheduler's
+randomization is not treated as an undefined-behavior failure.
+
 `make perl-asan` builds a separate private interpreter and runtime under
 `build/perl-asan/`, instruments compiled XS fixtures, and runs the project
 suites with full Perl teardown. `make perl-lsan` repeats those suites with
@@ -1074,12 +1133,55 @@ leak detection enabled. A normal build directory cannot be silently reused
 as an ASan build or vice versa. Both targets accept `PERL_TARBALL` for the
 pinned archive already on disk. TSan remains a separate build.
 
+`make perl-sanitizers` runs the complete project Perl checks in separate ASan,
+LSan, TSan, UBSan and MSan builds. They can also be selected as `perl-tsan`,
+`perl-ubsan` or `perl-msan` alongside the existing ASan/LSan targets. MSan
+selects Clang for the core and Clang++ for native C++ fixtures; fixture drivers
+honor `CXX`. `make perl-refcount-clang` checks the C/C++ counter helpers and
+compare/exchange behavior against the normal interpreter. C counters use C11
+atomics, avoiding GCC-only acceptance of compiler builtins on `_Atomic` fields.
+
+The full TSan run currently finds an upstream `threads.pm` race on
+`PL_veto_switch_non_tTHX_context` in the cloned-interpreter regression in
+`tests/perl/keys.t`. The test remains enabled and fails the target; passing
+Wump parallel-execution suites do not clear that separate compatibility gate.
+
+Whole-Perl MSan requires compatible instrumentation of its dependencies, as
+described in the [MSan documentation](https://clang.llvm.org/docs/MemorySanitizer.html).
+On the current host, its build stops in `S_querylocale_2008_i`, with an origin
+inside glibc `__newlocale`, before the Perl suites can run. This report is not
+suppressed. A suitable instrumented dependency/toolchain setup is still needed
+to validate whole-Perl MSan; the C runtime MSan suite passes independently.
+
 `make memcheck` builds a separate variant with
 [Valgrind stack registrations](https://valgrind.org/docs/manual/manual-core-adv.html)
 and checks the behavior and failure suites for invalid accesses and
 definite/indirect leaks. Logs go to `build/valgrind/`. Only the intentional
 guard-page write disables Memcheck error reporting, in the child that must
 still terminate with SIGSEGV; ordinary tests retain full error reporting.
+
+`make valgrind` adds every `PERL_SUITES` test, the C/C++ native fixtures,
+embedded interpreter checks, optional Mojo memory checks, and profiling of
+both the C runtime benchmark and the Perl Unicode job pipeline. It uses a
+separate `build/perl-valgrind` interpreter. Focused targets are `perl-valgrind`,
+`perl-mojo-valgrind`, `valgrind-tools` and `perl-valgrind-tools`.
+`valgrind-tools` runs Memcheck, Helgrind, DRD, Massif (including stacks),
+Callgrind, Cachegrind (including branches), DHAT, experimental BBV and Lackey.
+Each tool also has its own target: `memcheck-tools`, `helgrind`, `drd`, `massif`,
+`callgrind`, `cachegrind`, `dhat`, `bbv`, and `lackey`.
+
+`VALGRIND_ITERATIONS` (default 100), `VALGRIND_SLOTS` (default 4) and
+`VALGRIND_TIMEOUT` (default 300 seconds per profiling tool) control workload
+size. Reports, workload CSV/stdout, tool stderr and `status.tsv` live under
+`build/valgrind/reports/run.*` or `build/perl-valgrind/reports/run.*`.
+Use `callgrind_annotate`, `cg_annotate`, `ms_print` or the DHAT viewer for
+the corresponding files. A tool failure never prevents subsequent profiling
+tools from running, and the combined command still fails.
+
+The installed Valgrind 3.27.1 aborts internally in Helgrind during pthread join
+(also reproducible without Wump) and in DRD at process exit after the benchmark.
+Those runs remain failures, with reports preserved. The other profiling tools
+complete; these results do not establish Helgrind/DRD race safety.
 
 Run a focused case with `./build/test_runtime --case 'channel free'`.
 Selection cases support the same filter, for example

@@ -17,14 +17,17 @@ static GV *wump_local_origin(pTHX_ GV *gv) {
 }
 
 static wump_local *wump_local_find(pTHX_ GV *gv, char kind, bool inherit) {
-	if (PL_wump_task == NULL) return NULL;
+	struct wump_perl_task *task = PL_wump_task;
+	/* No binding can match an empty list. Avoid inspecting shared package
+	 * scalars (and taking their metadata lock) on this common lookup path. */
+	if (!task || !task->locals) return NULL;
 	gv = wump_local_origin(aTHX_ gv);
 	GP *gp = GvGP(gv);
 	/* These canonical GVs identify private task slots. Their root values
 	 * can be changing on the main act (notably the implicit for iterator). */
 	bool special = gv == aTHX->Idefgv || gv == aTHX->Ierrgv || gv == aTHX->Ireplgv;
 	char magic = kind == 's' && gp && !special ? Perl_wump_magic_kind(aTHX_ gp->gp_sv) : 0;
-	for (wump_local *slot = PL_wump_task->locals; slot; slot = slot->next) {
+	for (wump_local *slot = task->locals; slot; slot = slot->next) {
 		if (inherit && slot->pocket) continue;
 		if (kind == 's' && magic && slot->magic == magic) return slot;
 		if (slot->kind == kind && GvGP(slot->anchor) == GvGP(gv)) return slot;

@@ -7,7 +7,7 @@ if [ "$#" -ne 1 ]; then
 fi
 wump_sanitizer=${PERL_SANITIZER:-}
 case "$wump_sanitizer" in
-	''|address|thread) ;;
+	''|address|thread|memory|undefined) ;;
 	*) printf 'Unsupported PERL_SANITIZER: %s\n' "$wump_sanitizer" >&2; exit 1 ;;
 esac
 wump_script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -36,6 +36,13 @@ if [ ! -f config.sh ]; then
 		wump_configure+=("-Accflags=-fsanitize=$wump_sanitizer -fno-omit-frame-pointer -fno-optimize-sibling-calls"
 			"-Aldflags=-fsanitize=$wump_sanitizer" "-Alddlflags=-shared -fsanitize=$wump_sanitizer" '-Doptimize=-O1')
 	fi
+	if [ "$wump_sanitizer" = memory ]; then
+		wump_configure+=("-Dcc=${PERL_MSAN_CC:-clang}" "-Dld=${PERL_MSAN_CC:-clang}"
+			'-Accflags=-fsanitize-memory-track-origins=2 -fPIE' '-Aldflags=-pie')
+	fi
+	if [ "$wump_sanitizer" = undefined ]; then
+		wump_configure+=('-Accflags=-fno-sanitize-recover=all')
+	fi
 	if ! sh Configure "${wump_configure[@]}"; then
 		printf '%s\n' 'Perl configuration failed; see config.log in the source tree.' >&2
 		exit 1
@@ -48,7 +55,7 @@ for wump_option in usemultiplicity useithreads; do
 	fi
 done
 for wump_flag in ccflags ldflags lddlflags; do
-	for wump_configured_sanitizer in address thread; do
+	for wump_configured_sanitizer in address thread memory undefined; do
 		if grep -q "^$wump_flag='.*-fsanitize=$wump_configured_sanitizer" config.sh &&
 			[ "$wump_sanitizer" != "$wump_configured_sanitizer" ]; then
 			printf 'Existing Perl configuration uses %s; select the matching PERL_SANITIZER or a separate build directory.\n' "$wump_configured_sanitizer" >&2
@@ -60,8 +67,22 @@ for wump_flag in ccflags ldflags lddlflags; do
 		exit 1
 	fi
 done
+if [ "$wump_sanitizer" = memory ]; then
+	if ! grep -q "^ccflags='.*-fsanitize-memory-track-origins=2" config.sh; then
+		printf '%s\n' 'Existing MSan configuration lacks origin tracking; use a separate build directory.' >&2
+		exit 1
+	fi
+	if ! grep -q "^ldflags='.*-pie" config.sh; then
+		printf '%s\n' 'Existing MSan configuration lacks PIE linking; use a separate build directory.' >&2
+		exit 1
+	fi
+fi
 if [ -n "$wump_sanitizer" ] && ! grep -q "^lddlflags='.*-shared" config.sh; then
 	printf '%s\n' 'Existing sanitizer configuration lacks shared-library link flags; use a separate build directory.' >&2
+	exit 1
+fi
+if [ "$wump_sanitizer" = undefined ] && ! grep -q "^ccflags='.*-fno-sanitize-recover=all" config.sh; then
+	printf '%s\n' 'Existing UBSan configuration allows recovery; use a separate build directory.' >&2
 	exit 1
 fi
 if ! perl "$wump_script_dir/apply.pl" "$wump_source_dir"; then exit 1; fi

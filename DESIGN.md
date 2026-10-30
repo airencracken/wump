@@ -883,11 +883,46 @@ single-actor inheritance/method updates, guard recovery and publication of
 returned methods. General concurrent namespace and inheritance mutation still
 requires a broader audit.
 
-Four-slot dashboard startup now passes path joining and next-method dispatch,
-then stops at UNIVERSAL::can. Capability lookup, remaining dependency XS,
-runtime module loading and compilation policy still precede live four-slot
+UNIVERSAL::can now snapshots plain receiver and method heads, converts method
+names before locking, synchronizes capability caches, and publishes returned
+CVs without rewriting their TEMP flags. One/two/four-slot tests compare native
+lookup results and cover cold/positive/negative caches, inheritance/method
+invalidation, Unicode/NUL/numeric inputs, glob references, invalid arguments,
+yielding/throwing warning hooks with stack growth, guard recovery, and native
+admission when calling a returned XS method. The focused upstream dispatch
+run passes 81 scripts and 1,421 checks; project Perl and one-slot Mojo suites
+also pass, including all 48 live HTTP/WebSocket checks.
+
+The dashboard now completes option parsing, application/plugin setup, reactor
+selection and listener bootstrap in CHECK before execution slots start.
+Compile-only validation does not bind a listener. Bare native qr patterns use
+Perl's existing clone path without entering the compiler; temporary ownership
+survives subject magic, exceptions, stack growth and reentrant matches. `/o`
+retains its first pattern. The source patcher replaces earlier generated gates
+as well as handling fresh trees. String patterns, overloads, custom engines and
+embedded regex code remain rejected. Named-capture FETCH/EXISTS/SCALAR queries
+snapshot inputs and use act-local match state; mutations remain read-only and
+iterator entries remain gated.
+
+Numeric Socket::getnameinfo snapshots byte addresses and integer flags, checks
+IPv4/IPv6 sockaddr sizes, and rejects requests that could invoke name/service
+resolution. utf8::is_utf8 snapshots its flag without invoking magic. Four-slot
+dashboard startup now reaches the unaudited Encode::utf8::encode entry;
+listener destruction also reaches an unsupported dynamic regex. Encoding,
+cleanup and the remaining dependency audits still precede live four-slot
 HTTP acceptance. The one-slot HTTP/WebSocket baseline remains the network
 acceptance target until those gates are cleared.
+
+The expanded socket stress test exposed a first-publication race: builtin
+alias classification read a package scalar's head while another act upgraded
+it to attach publication magic. Classification now shares the publication
+mutex, and reads signal-key caches without coercion or callbacks. Lookup skips
+classification entirely when the act has no localized bindings. A focused
+stress case combines cold package scalars with an active builtin localization;
+TSan remains required for this path as well as the native socket operation.
+It also exposed a named-capture tie-classification read racing with overload
+cache updates to the stash's head flags. Tie classification now shares that
+metadata lock and releases it before creating the act-local capture hash.
 
 0. **Runtime in C**: tasks, stacks, scheduler, channels, `sel`, timers,
    netpoller, sysmon. Benchmarked against Go.
