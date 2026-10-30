@@ -57,6 +57,12 @@ for my $slots (1, 4) {
 			die "listener was not bound\n" unless $server->ports->[0] > 0;
 			$server->stop;
 		}
+		sub reject_late_prepare {
+			eval { Wump::Mojo::Daemon->new->prepare };
+			die "late preparation admitted: $@" unless $@ =~ /prepare listeners before program execution/;
+		}
+		reject_late_prepare();
+		END { reject_late_prepare() }
 		print "listener ownership prepared\n";
 	};
 	local $ENV{WUMPPROCS} = $slots;

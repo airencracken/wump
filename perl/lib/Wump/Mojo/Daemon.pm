@@ -3,7 +3,9 @@ use v5.42;
 use Mojo::Base 'Mojo::Server::Daemon', -signatures;
 
 sub prepare ($self) {
-	die "Wump: prepare listeners before program execution\n" if ${^GLOBAL_PHASE} eq 'RUN';
+	my $phase = ${^GLOBAL_PHASE};
+	die "Wump: prepare listeners before program execution\n"
+		unless $phase eq 'START' || $phase eq 'CHECK' || $phase eq 'INIT';
 	# Helper namespaces are generated lazily by Mojo. Build the complete
 	# proxy before execution freezes the compiler and shared namespaces.
 	$self->app->renderer->get_helper('');
