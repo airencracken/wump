@@ -1,0 +1,64 @@
+{
+   "after_private_sha256" : "319a13bad67ca97569792b1689e7b4c39f8f036d153b2256b5b3a83a693d9af1",
+   "after_source_dirty" : false,
+   "after_source_revision" : "36cdab4a4e3e0acaeaaaeb8467fba602acafbbfc",
+   "before_private_sha256" : "983d3e832ab90d70de3f951ecea790d05240fe7deb36d3425b126ea92eddab1d",
+   "before_source_dirty" : false,
+   "before_source_revision" : "caa3ab7b692b144229cdad20d5cc3badf63ee9c8",
+   "benchmark" : {
+      "concurrent_validation" : false,
+      "fixture" : "integer-reduction-v1",
+      "fresh_control_comparison" : "passed all eight checks",
+      "gate_budget_percent" : 10,
+      "iterations" : 500000,
+      "jobs" : 8,
+      "previous_checkpoint_comparison" : "passed all eight checks",
+      "runs" : 5,
+      "verified_jobs" : 400
+   },
+   "cpu_model" : "AMD Ryzen 7 PRO 4750U with Radeon Graphics",
+   "date_utc" : "2026-10-30",
+   "profile_before" : {
+      "Perl_wump_memory_check_percent" : 92.25,
+      "event" : "cycles:u",
+      "frequency_hz" : 99,
+      "lost" : 0,
+      "note" : "profile of the interrupted full upstream run under concurrent validation; diagnosis, not quiet benchmark timing",
+      "samples" : 496,
+      "seconds" : 5
+   },
+   "stock_sha256" : "c7688d340a6002b222777a1c93c6892db939629a69266ed8b4e2834e7a0951da",
+   "upstream_case" : {
+      "after_runs" : 3,
+      "before" : "30-second timeout after 11242 checks; not a completed timing or speedup measurement",
+      "before_runs" : 1,
+      "checks_per_completed_run" : 172283,
+      "fixture" : "upstream-xs-handy00-v5.42.2",
+      "invocation" : "PERL_CORE=1 PRIVATE_PERL -I../../lib -I../.. -MTestInit=U2T t/handy00.t, in each binary source ext/XS-APItest directory; PERL5LIB and PERL5OPT unset; parent streams TAP to log and counts checks",
+      "remaining" : "new build remains about 2.12x stock on this case",
+      "stock_runs" : 3
+   },
+   "validation" : {
+      "asan_project" : "passed, detect_leaks=0",
+      "mojo" : "optional target passed including 54 CLI checks, services and 48 live HTTP/WebSocket checks each on one/four slots",
+      "parser" : "Bison 3.8.2 regeneration byte-identical; idempotence, legacy upgrade and unknown grammar/XS rejection passed",
+      "performance_gate_fixtures" : "58 checks passed",
+      "project" : "passed",
+      "remaining" : [
+         "active stock-relative overhead, scaling and broader ordinary-Perl workload coverage",
+         "full TSan retains prior threads.pm PL_veto_switch_non_tTHX_context race",
+         "full MSan retains prior uninstrumented locale dependency blocker",
+         "Helgrind/DRD retain prior Valgrind tool assertions",
+         "Clang, UBSan and Memcheck passed at the previous checkpoint; not repeated for this batch",
+         "general Perl I/O handoff, callback/reentry and XS/compiler policy, deployment and longer network soaks"
+      ],
+      "tsan_focused" : "ordinary, publication, parallel, hidden roots and native C/C++ read/operand suites passed with negative controls; no new suppressions",
+      "upstream_before" : "interrupted: six failing scripts and pathological handy macro runtime; after fixing, full original harness passed without added exclusions",
+      "upstream_full" : {
+         "files" : 2919,
+         "status" : "passed standard complete noninteractive test_harness_notty; normal platform, optional and interactive skips remain visible",
+         "tests" : 1351382,
+         "wall_seconds" : 451
+      }
+   }
+}

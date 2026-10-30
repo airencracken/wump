@@ -776,7 +776,7 @@ additionally needs the Perl I/O handoff,
 `sel`, and explicit signal/fork behavior. Assess readiness against these gates;
 the amount of completed infrastructure is not a reliable time estimate.
 
-### Implementation assessment (2026-10-29)
+### Implementation assessment (updated 2026-10-30)
 
 The milestones below describe the intended development sequence. Work now
 overlaps them: there is real parallel Perl execution, while some earlier
@@ -790,9 +790,9 @@ the performance milestone is complete.
 | Cheap tasks and runtime primitives | C tasks, guarded stacks, work stealing, channels, selection, timers, epoll and explicit syscall handoff are implemented and tested. | The within-2x-of-Go target is not met by the recorded spawn baseline. Sysmon, million-live-task validation and stack mapping costs remain open; stacks currently use mprotect guards. |
 | Perl semantics and language surface | Main-act entry, closure spawning, scalar/reference channels, wait groups, scoped locks, regex state, `local` and `pocket` have focused coverage. | Perl `sel`, core feature/call-form syntax, per-act environment/process integration and remaining magic/weak/object paths need work. |
 | Shared-memory safety | Conservative atomic counters, publication, read claims, private conversion snapshots and pinned storage retirement support audited paths. | General concurrent-read safety, ownership specialization, cheaper reclamation, remaining aggregate/cache/XS audits and a user-facing `perl -race` are unfinished. |
-| Useful network services | The one-slot dashboard passes live HTTP/WebSocket tests; its Unicode job backend verifies results on 1/2/4 slots. Application/listener bootstrap, precompiled regexes and numeric socket metadata have advanced parallel startup. | Four-slot HTTP remains blocked by Encode::utf8::encode and dynamic listener cleanup. Automatic Perl I/O/syscall handoff, general XS compatibility and runtime compilation policy remain separate design gaps. |
-| Performance | Repeated Unicode backend measurements show 1.26x speedup on two slots and 1.24x on four. The matched scalar loop now takes 0.92x stock time without Wump, after removing inactive context overhead. | One-slot Wump still takes 25.02x stock time on that loop; additional slots are slower. Near-linear scaling and the Go runtime target remain unmet. One ordinary loop does not establish general stock-Perl parity. |
-| Compatibility and validation | Normal Perl/native and Mojo suites pass. The GCC/Clang runtime sanitizer matrix, full project Perl UBSan, six focused TSan suites, Memcheck and 82 upstream regex/UTF-8/capability scripts pass at the integration checkpoint. | Full upstream make test remains unrun. Full Perl TSan reports a threads.pm clone race; full Perl MSan stops in uninstrumented locale dependencies. Helgrind/DRD abort internally on this host. General CPAN compatibility and longer network soaks remain unvalidated. |
+| Useful network services | The dashboard passes 48 live HTTP/WebSocket checks each on one/four slots; its Unicode job backend verifies results on 1/2/4 slots. Audited encoding and prepared listener cleanup complete the bounded four-slot path. | Automatic Perl I/O/syscall handoff, general XS compatibility, runtime compilation policy and longer network soaks remain separate design gaps. |
+| Performance | Repeated Unicode backend measurements show 1.26x speedup on two slots and 1.24x on four. The latest matched integer loop takes 0.92x stock time without Wump and passes the new 10% regression gate against historical and fresh controls. | Active Wump takes 12.6–16.9x stock time on that loop. The large upstream XS macro case takes about 2.12x stock with Wump disabled. Near-linear scaling, broad ordinary-Perl parity and the Go runtime target remain unmet. |
+| Compatibility and validation | The complete standard noninteractive upstream harness passes 2,919 files / 1,351,382 checks. Fresh project, ASan, focused TSan, Mojo and parser regeneration checks pass. Earlier Clang, UBSan and Memcheck evidence remains recorded below. | Full Perl TSan reports a threads.pm clone race; full Perl MSan stops in uninstrumented locale dependencies. Helgrind/DRD abort internally on this host. General CPAN compatibility and longer network soaks remain unvalidated. |
 | Deployment and portability | A private Perl fork and standalone C runtime build on Linux x86-64. | Static application bundling, the `wump` tool, dependency locking/cache and arm64 are pending. |
 
 There are three material differences from the proposed architecture. `aTHX`
@@ -818,13 +818,13 @@ The next acceptance priorities are:
    semantics while optimizing. Retain raw samples, compiler configuration and
    source identity; separate startup from work timing. Recheck runtime
    primitives individually, especially spawn and echo.
-2. Finish the bounded four-slot network acceptance path: HTTP and WebSocket
-   progress during CPU work, correct results, admission/cancellation bounds,
-   responsive health checks and clean shutdown. Audit encoding and listener
-   cleanup while retaining the compiler/XS gates.
+2. Extend the passing bounded four-slot HTTP/WebSocket path with longer soaks
+   and more dependency stacks, retaining admission/cancellation bounds,
+   responsive health checks, clean shutdown and the compiler/XS gates.
 3. Address general Perl I/O handoff and XS/compiler callback/reentry policy.
    Passing one dependency stack cannot establish general CPAN compatibility.
-   Run the full upstream suite before declaring a compatibility milestone.
+   Keep the passing full standard noninteractive upstream suite as a regression
+   gate; it does not establish general concurrent CPAN compatibility.
 4. Track static deployment as independent work; it need not wait for every
    parallel-language audit. Million-live-task and broader core-count scaling
    checks also remain explicit acceptance work.
@@ -1295,3 +1295,86 @@ MD5's file test expects the original MD5.xs checksum, so that test runs against
 the pristine verified source fixture while using the patched digest library.
 Expected hashes and upstream test assertions were not changed. Full upstream
 and fresh ASan coverage were not run for this checkpoint.
+
+## Compatibility and performance gates (2026-10-30)
+
+The complete standard noninteractive upstream Perl harness now passes: 2,919
+files and 1,351,382 checks in 451 seconds. `make perl-upstream-full-test` runs
+`test_harness_notty`, with four jobs and a configurable 1,800-second cap.
+Normal platform, optional and interactive skips stay visible; this does not
+claim the separate lengthy Unicode, big-memory or terminal-dependent extras.
+No failing test was excluded to obtain this pass.
+
+The first full run found six failing scripts and pathological CPU use in the
+XS macro tests. A five-second profile of a stuck macro case attributed 92.25%
+of 496 samples to `Perl_wump_memory_check`. That run was interrupted; it was
+not a passing baseline. Before any act has activated Wump, implicit namespace
+GV stores now retain native Perl behavior. Previously they unnecessarily
+published replacement constants/CVs, changed native scalar representation and
+incurred publication barriers during ordinary execution. Explicitly published
+container owners still propagate new edges before activation. Regressions
+cover constant reflection and explicit pre-activation publication; the constant
+case fails against the previous binary and passes after the fix.
+
+The remaining upstream failures exposed patch provenance and fixture gaps.
+The parser patcher now validates the exact pinned grammar transformation before
+updating generated-file source hashes. Actual Bison 3.8.2 regeneration produces
+byte-identical parser files. The vendored XS changes have fixed audited SHA-1
+fingerprints and upstream customization metadata, and eleven native diagnostics
+are documented in perldiag. Unknown grammar and XS edits are rejected rather
+than assigned fresh valid hashes. MD5's existing file test hashes the modified
+MD5.xs input fixture: its fixed expected digest now describes that exact audited
+source, independently checked with host md5sum and Digest::MD5. Test bodies and
+assertions remain intact. This supersedes the prior checkpoint's pristine MD5
+fixture workaround.
+
+`make perl-perf-test` captures verified timings and compares them with a saved
+checkpoint. Its default 10% limit applies separately to median work time and
+whole-process time, each normalized by the contemporaneous stock median, for
+ordinary execution and one/two/four-slot Wump. It requires complete raw samples,
+clean revisions, matching workloads, CPU models and compiler configurations;
+58 fixture checks cover rejection paths and regression boundaries. Invalid or
+partial evidence cannot produce a pass. This gate prevents checkpoint
+regressions; it does not establish the design's performance target.
+
+Quiet captures compare clean `caa3ab7` and `36cdab4`, with the same GCC 14.2.1,
+Perl 5.42.2 `-O2` configuration and Ryzen 7 PRO 4750U stock control. Both use five
+interleaved samples, eight jobs and 500,000 iterations per job. No validation or
+builds ran concurrently; all 400 job results matched the independent reference.
+
+| Mode | Before median work | After median work | After / stock | Change in stock-relative work |
+| --- | --- | --- | --- | --- |
+| Stock control | 0.129527 s | 0.131583 s | 1.00x | — |
+| Ordinary fork | 0.120849 s | 0.121407 s | 0.92x | -1.11% |
+| Wump, one slot | 1.670715 s | 1.674508 s | 12.73x | -1.34% |
+| Wump, two slots | 1.621207 s | 1.658267 s | 12.60x | +0.69% |
+| Wump, four slots | 2.306413 s | 2.228191 s | 16.93x | -4.90% |
+
+All eight work/process comparisons pass against both the historical active
+checkpoint and this fresh control. These small changes are not evidence of
+scaling improvements. Active overhead and near-linear scaling remain unmet.
+[Before samples](bench/perl-compatibility-before.jsonl),
+[after samples](bench/perl-compatibility-after.jsonl) and the
+[machine/validation record](bench/compatibility-machine.json) preserve identities,
+compiler configurations and binary hashes.
+
+The ordinary XS macro case also has
+[raw measurements](bench/perl-compatibility-case.jsonl). Stock and the new fork
+each verify all 172,283 checks on three runs; median process times are 16.785
+and 35.544 seconds respectively, leaving a 2.12x ordinary-execution gap. The
+old fork times out at 30 seconds after 11,242 checks; that incomplete run cannot
+supply an elapsed-time speedup. Each binary runs the case in its own matching
+source tree with native core include paths. The standard integer fixture alone
+would have missed this compatibility-related performance problem.
+
+The project and full project ASan suites pass. Focused TSan publication,
+parallel, hidden-root, ordinary and native C/C++ read/operand checks pass with
+negative controls and no new suppressions. The optional Mojo target passes,
+including the 54 CLI checks, service checks and 48 live HTTP/WebSocket checks
+each on one/four slots. Parser regeneration, patcher idempotence/legacy upgrade
+and provenance rejection checks pass. Earlier Clang, UBSan and Memcheck results
+remain the evidence for those configurations; they were not repeated here.
+Full TSan's clone race, full MSan's locale dependencies and the Helgrind/DRD
+tool assertions remain open. The next integration priorities are general Perl
+I/O handoff, safe XS/compiler callback and reentry policy, broader application
+acceptance and deployment tooling, alongside continued overhead reduction.

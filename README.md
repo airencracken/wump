@@ -1247,6 +1247,13 @@ overhead or scaling goals. One integer fixture does not cover general Perl
 performance, so compatibility investigations also retain representative
 upstream-case timings and the Unicode application benchmark.
 
+The [compatibility checkpoint](DESIGN.md#compatibility-and-performance-gates-2026-10-30)
+records the complete standard noninteractive upstream pass, publication fix,
+and fresh performance comparisons. Both the historical and fresh-control
+regression checks pass. Active Wump still takes 12.6–16.9x stock time on the
+integer fixture; the large upstream XS macro case remains about 2.12x stock
+with Wump disabled. Broader ordinary-Perl parity remains an acceptance goal.
+
 The [original matched-stock run](bench/perl-stock-baseline.jsonl) exposed large
 overheads on the implicit-loop-variable integer workload. A fresh
 [before](bench/perl-ordinary-before.jsonl)/[after](bench/perl-ordinary-after.jsonl)
