@@ -188,6 +188,16 @@ state-isolation prerequisite. The parallel acceptance test additionally runs
 groups on one, two and four slots. Native diagnostics verify that the acts use
 the same interpreter and execute on multiple slots.
 
+The active runloop inlines common native opcode bodies with the task pointer
+owned by that C invocation. The pointer remains valid when that same act yields
+or migrates; allocator access still selects the current executor dynamically.
+Custom opcode addresses retain their original dispatch, and the existing
+checkpoint, signal and runtime-compilation checks remain in force. Bounded
+cached-IV add/modulo operations update private IV/PVIV/PVNV targets under the
+metadata exclusion without entering the general conversion machinery. Shared,
+magical, COW, offset-PV and unsupported numeric cases retain their guarded
+native paths.
+
 Spawned acts' default, error, and regex-result globs are private storage cells.
 They keep their special names without namespace backreferences or unintended
 prototype CVs. Localization anchors likewise retain only their target GP;

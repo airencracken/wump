@@ -38,6 +38,22 @@ for my $file (keys %$after) {
 	make_path(dirname("$legacy/$relative"));
 	copy($file, "$legacy/$relative") or die "copy $file: $!\n";
 }
+for my $spec (['pp_hot.c', 'add'], ['pp.c', 'modulo']) {
+	my ($file, $name) = @$spec;
+	open my $input, '<', "$legacy/$file" or die "$file: $!\n";
+	my $text = do { local $/; <$input> };
+	close $input or die "$file: $!\n";
+	# Cached source trees used to reenter the general native body after
+	# numeric admission. Reapplication must upgrade that existing gate too.
+	my $old = "    if (Perl_wump_numeric_enter(aTHX_ target)) {\n"
+		. "        OP *next = Perl_wump_write_impl_$name(aTHX);\n"
+		. "        Perl_wump_numeric_leave(aTHX);\n        return next;\n    }\n";
+	$text =~ s{    if \(Perl_wump_numeric_enter\(aTHX_ target\)\) \{\n.*?^    \}\n}{$old}ms
+		or die "missing numeric entry $name\n";
+	open my $output, '>', "$legacy/$file" or die "$file: $!\n";
+	print {$output} $text or die "$file: $!\n";
+	close $output or die "$file: $!\n";
+}
 for my $file ('perl.c', 'sv.c') {
 	open my $input, '<', "$legacy/$file" or die "$file: $!\n";
 	local $/;

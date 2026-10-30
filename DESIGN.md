@@ -276,6 +276,14 @@ and after the debug allocator poisons the interpreter. A native regression
 fills the clone allocation with nonzero bytes and checks that its first context
 switch already sees an inactive interpreter.
 
+Common opcode bodies also have generated active-context variants. Their C
+invocation owns a particular act, so the dispatcher can retain that task's
+pointer and root/main selection across callbacks and migration. These variants
+inline the same patched native bodies and preserve custom ppaddr hooks,
+checkpoints, signal checks and the compiler admission gate. Header inline
+helpers and unaudited opcode bodies retain dynamic selection. No native TLS
+address or per-executor allocator pointer is cached by this optimization.
+
 Before activation, common opcodes also have ordinary-context variants generated
 from the same patched native bodies. Their state lvalues address the root
 interpreter directly. The ordinary runloop uses these variants only when the

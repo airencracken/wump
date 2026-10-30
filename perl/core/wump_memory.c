@@ -228,11 +228,14 @@ bool Perl_wump_numeric_enter(pTHX_ SV *target) {
 	Perl_wump_memory_lock(aTHX);
 	wump_shared *node = wump_memory_untracked(aTHX->Iwump_memory, target)
 		? NULL : wump_memory_find(aTHX->Iwump_memory, target);
-	/* A private, bodyless IV needs no allocation, magic or COW handling.
+	/* These private layouts already have IV storage and need no allocation,
+	 * magic or COW handling. Cloned pads commonly retain a PVNV body even
+	 * when their current value is an integer. Reject offset PVs as well.
 	 * Published targets retain the general mutation and unwind protocol. */
+	svtype kind = SvTYPE(target);
 	if ((node && (node->state || atomic_load_explicit(&node->access, memory_order_acquire)))
-		|| SvTYPE(target) != SVt_IV || SvOBJECT(target)
-		|| (SvFLAGS(target) & (SVf_THINKFIRST | SVf_IVisUV))) goto fallback;
+		|| (kind != SVt_IV && kind != SVt_PVIV && kind != SVt_PVNV) || SvOBJECT(target)
+		|| (SvFLAGS(target) & (SVf_THINKFIRST | SVf_IVisUV | SVf_OOK))) goto fallback;
 	SV *left = PL_stack_sp[-1], *right = PL_stack_sp[0];
 	if (!left || !right || !wump_numeric_source(aTHX_ left)
 		|| !wump_numeric_source(aTHX_ right)) goto fallback;
@@ -241,7 +244,8 @@ bool Perl_wump_numeric_enter(pTHX_ SV *target) {
 	if (PL_op->op_type == OP_ADD) {
 		if (lhs > IV_MAX / 2 || rhs > IV_MAX / 2) goto fallback;
 	} else if (!rhs) goto fallback;
-	/* These exact native branches only read cached IVs and store an IV.
+	/* These exact native branches only read cached IVs and store an IV,
+	 * invalidating the old private numeric/string caches just as sv_setiv.
 	 * They cannot allocate, throw, run get/set magic or decrement stack
 	 * references (RC_STACK is excluded). No callback or safepoint occurs
 	 * before leave. Holding the recursive metadata mutex closes publication

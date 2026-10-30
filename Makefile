@@ -28,7 +28,7 @@ PERL_PERF_BASELINE = bench/perl-active-after.jsonl
 PERL_PERF_CURRENT = $(BUILD)/perl-baseline-current.jsonl
 PERL_PERF_MAX_REGRESSION = 10
 SANITIZER_TEST_ARGS = CPPFLAGS='$(CPPFLAGS) -DWUMP_TEST_CASE_TIMEOUT=120' TEST_TIMEOUT=300 TEST_LONG_TIMEOUT=300 TEST_FAILURE_TIMEOUT=300
-PERL_SUITES = entry ordinary waitgroup preempt tasks parallel xs-parallel encode-parallel bytes-parallel native-integration regex-parallel regex local elements pocket pocket-deparse separators hooks locks shared keys reads read-claims scalar-writes operands stack-loads lvalue-loads reference-loads scalar-references materialization iteration memory publication hidden-roots
+PERL_SUITES = entry ordinary active waitgroup preempt tasks parallel xs-parallel encode-parallel bytes-parallel native-integration regex-parallel regex local elements pocket pocket-deparse separators hooks locks shared keys reads read-claims scalar-writes operands stack-loads lvalue-loads reference-loads scalar-references materialization iteration memory publication hidden-roots
 
 RUNTIME = stack sched chan io error
 OBJECTS = $(addprefix $(BUILD)/,$(addsuffix .o,$(RUNTIME))) $(BUILD)/ctx_x86_64.o
@@ -103,6 +103,7 @@ perl-test: perl-build perl-source-test
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/root-fixture.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/entry.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/ordinary.t
+	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/active.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/waitgroup.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/preempt.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/tasks.t

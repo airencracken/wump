@@ -37,27 +37,7 @@ void Perl_wump_checkpoint(pTHX) {
 }
 
 int Perl_wump_runops(pTHX) {
-	unsigned ticks = 256;
-	OP *op = PL_op;
-	bool parallel = wump_nprocs() > 1;
-	PERL_DTRACE_PROBE_OP(op);
-	while (op) {
-		PL_op = op;
-		if (parallel && (op->op_type == OP_ENTEREVAL || op->op_type == OP_REQUIRE
-			|| op->op_type == OP_DOFILE))
-			croak("Wump: runtime compilation is not supported during parallel execution");
-		op = op->op_ppaddr(aTHX);
-		PL_op = op;
-		if (!op) break;
-		if (--ticks == 0) {
-			ticks = 256;
-			Perl_wump_checkpoint(aTHX);
-		}
-		PERL_DTRACE_PROBE_OP(op);
-	}
-	PERL_ASYNC_CHECK();
-	TAINT_NOT;
-	return 0;
+	return Perl_wump_active_runops(aTHX_ PL_wump_task);
 }
 
 #include "wump_memory.c"

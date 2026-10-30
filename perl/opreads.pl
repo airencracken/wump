@@ -43,9 +43,18 @@ sub apply_opreads {
 		my $end = index($text, "\n}\n", $start);
 		$start >= 0 && $end >= 0 or die "missing numeric entry $name\n";
 		my $entry = substr($text, $start, $end + 3 - $start);
-		next if index($entry, 'Perl_wump_numeric_enter') >= 0;
+		# Upgrade the earlier guarded native-body call as well as fresh trees.
+		$entry =~ s{    if \(Perl_wump_numeric_enter\(aTHX_ target\)\) \{\n.*?^    \}\n}{}ms;
+		my $operator = $name eq 'add' ? '+' : '%';
 		my $fast = "    if (Perl_wump_numeric_enter(aTHX_ target)) {\n"
-			. "        OP *next = Perl_wump_write_impl_$name(aTHX);\n"
+			. "        /* Admission proves nonnegative cached IVs and private IV storage.\n"
+			. "         * This is the native sv_setiv store and non-RC stack\n"
+			. "         * replacement, with no callback, allocation or cache conversion. */\n"
+			. "        IV result = SvIVX(PL_stack_sp[-1]) $operator SvIVX(PL_stack_sp[0]);\n"
+			. "        (void)SvIOK_only(target);\n"
+			. "        SvIV_set(target, result);\n"
+			. "        rpp_replace_2_1_NN(target);\n"
+			. "        OP *next = NORMAL;\n"
 			. "        Perl_wump_numeric_leave(aTHX);\n        return next;\n    }\n";
 		$entry =~ s/^(    struct wump_operands \*guard =)/$fast$1/m
 			or die "missing operand guard in numeric entry $name\n";

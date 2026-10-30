@@ -10,7 +10,7 @@ extern OP *Perl_wump_write_impl_preinc(pTHX);
 
 static UV constant_hook_calls;
 static OP *hooked_constant(pTHX) {
-	constant_hook_calls++;
+	__atomic_add_fetch(&constant_hook_calls, 1, __ATOMIC_RELAXED);
 	return PL_ppaddr[OP_CONST](aTHX);
 }
 static bool hook_constant(OP *op) {
@@ -28,12 +28,12 @@ static bool hook_constant(OP *op) {
 static XS(xs_constant_hook) {
 	dXSARGS;
 	PERL_UNUSED_VAR(cv);
-	if (PL_wump_task || items > 1) croak("Usage: RootFixture::constant_hook([CV]) outside an act");
+	if (items > 1 || (items && PL_wump_task)) croak("Usage: RootFixture::constant_hook([CV outside an act])");
 	if (items) {
 		if (!SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVCV) croak("CV reference required");
 		if (!hook_constant(CvROOT((CV *)SvRV(ST(0))))) croak("native constant opcode required");
 	}
-	ST(0) = sv_2mortal(newSVuv(constant_hook_calls));
+	ST(0) = sv_2mortal(newSVuv(__atomic_load_n(&constant_hook_calls, __ATOMIC_RELAXED)));
 	XSRETURN(1);
 }
 
@@ -601,7 +601,7 @@ XS_EXTERNAL(boot_RootFixture) {
 	newXS("RootFixture::debug_runops", xs_debug_runops, __FILE__);
 	newXS("RootFixture::key_too_large", xs_key_too_large, __FILE__);
 	newXS("RootFixture::activate_and_clear", xs_activate_and_clear, __FILE__);
-	newXS("RootFixture::constant_hook", xs_constant_hook, __FILE__);
+	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::constant_hook", xs_constant_hook, __FILE__));
 	newXS("RootFixture::key_missing", xs_key_missing, __FILE__);
 	newXS("RootFixture::scalar_publish", xs_scalar_publish, __FILE__);
 	newXS("RootFixture::vivify", xs_vivify, __FILE__);

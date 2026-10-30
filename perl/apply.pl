@@ -67,6 +67,7 @@ void Perl_wump_cv_prepare(pTHX_ CV *cv);
 void Perl_wump_boot(pTHX);
 int Perl_wump_main(pTHX);
 int Perl_wump_runops(pTHX);
+int Perl_wump_active_runops(pTHX_ struct wump_perl_task *task);
 void Perl_wump_checkpoint(pTHX);
 void Perl_wump_xs_allow(pTHX_ CV *cv);
 void Perl_wump_xs_check(pTHX_ CV *cv);
@@ -596,6 +597,8 @@ for my $pair (
 }
 require "$FindBin::Bin/ordinary.pl";
 apply_ordinary($source);
+require "$FindBin::Bin/active.pl";
+apply_active($source, \@vars);
 require "$FindBin::Bin/porting.pl";
 apply_porting($source);
 print "Applied Wump task-state integration to $source\n";

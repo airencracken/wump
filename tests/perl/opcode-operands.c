@@ -24,6 +24,8 @@ extern OP *Perl_pp_scmp(pTHX);
 extern OP *Perl_pp_i_add(pTHX);
 extern OP *Perl_pp_i_ncmp(pTHX);
 extern OP *Perl_wump_read_impl_add(pTHX);
+extern OP *Perl_wump_write_impl_add(pTHX);
+extern OP *Perl_wump_write_impl_modulo(pTHX);
 END_EXTERN_C
 
 enum { workers = 8, rounds = 512 };
@@ -42,6 +44,9 @@ typedef struct request {
 	bool unguarded;
 	IV result;
 	bool publish_after_classification;
+	bool stacked, native_control;
+	U32 result_flags;
+	SV *result_head;
 } request;
 #ifdef __cplusplus
 static thread_local request *current_request;
@@ -116,8 +121,11 @@ XS_INTERNAL(execute_opcode) {
 	Zero(&op, 1, OP);
 	op.op_type = req->op->type;
 	op.op_flags = OPf_WANT_SCALAR;
+	if (req->stacked) op.op_flags |= OPf_STACKED;
 	op.op_targ = 1;
 	op.op_ppaddr = req->unguarded ? Perl_wump_read_impl_add : req->op->function;
+	if (req->native_control)
+		op.op_ppaddr = req->op->type == OP_ADD ? Perl_wump_write_impl_add : Perl_wump_write_impl_modulo;
 	OP *previous = PL_op;
 	PL_op = &op;
 	SSize_t stack_mark = SP - PL_stack_base;
@@ -128,6 +136,8 @@ XS_INTERNAL(execute_opcode) {
 	if (req->publish_after_classification) publish_after_read = req->source;
 	CHECK(op.op_ppaddr(aTHX) == NULL);
 	req->result = SvIV(*PL_stack_sp);
+	req->result_head = *PL_stack_sp;
+	req->result_flags = SvFLAGS(*PL_stack_sp);
 	PL_stack_sp = PL_stack_base + stack_mark;
 	PL_op = previous;
 	XSRETURN_EMPTY;
@@ -161,6 +171,108 @@ static void publish_fast_leaf(pTHX_ SV *value) {
 	SvUPGRADE(value, SVt_PVMG);
 	Perl_wump_memory_mark(aTHX_ value, 2);
 	CHECK(!SvMAGICAL(value));
+}
+
+static void numeric_reset(pTHX_ SV *value, IV number, svtype kind) {
+	if (kind == SVt_IV) { sv_setiv(value, number); return; }
+	sv_upgrade(value, kind);
+	sv_setpvs(value, "stale cache");
+	SvUTF8_on(value);
+	SvIV_set(value, number);
+	SvIOK_on(value);
+	if (kind == SVt_PVNV) { SvNV_set(value, (NV)number); SvNOK_on(value); }
+}
+
+static void numeric_boundaries(pTHX_ CV *entry, SV **pad) {
+	const IV values[] = {0, 1, 2, 96, 97, IV_MAX / 2};
+	const svtype kinds[] = {SVt_IV, SVt_PVIV, SVt_PVNV};
+	SV *saved_target = pad[1];
+	unsigned checks = 0;
+	for (unsigned kind_id = 0; kind_id < sizeof(kinds) / sizeof(kinds[0]); kind_id++) {
+		for (unsigned operation_id = 0; operation_id < 2; operation_id++) {
+			for (unsigned lhs = 0; lhs < sizeof(values) / sizeof(values[0]); lhs++) {
+				for (unsigned rhs = 0; rhs < sizeof(values) / sizeof(values[0]); rhs++) {
+					if (operation_id && !values[rhs]) continue;
+					/* Exercise ordinary targets, compound assignment, and aliases
+					 * to either/both inputs. Compare the exact native result head
+					 * and flags as well as the number, with identical initial SVs. */
+					for (unsigned alias = 0; alias < 4; alias++) {
+						if (alias == 3 && lhs != rhs) continue;
+						SV *left = newSViv(values[lhs]), *right = newSViv(values[rhs]);
+						SV *target = newSViv(0);
+						numeric_reset(aTHX_ left, values[lhs], kinds[kind_id]);
+						numeric_reset(aTHX_ right, values[rhs], kinds[kind_id]);
+						numeric_reset(aTHX_ target, 0, kinds[kind_id]);
+						pad[1] = alias == 0 ? target : alias == 2 ? right : left;
+						request req = {0};
+						req.source = left;
+						req.other = alias == 3 ? left : right;
+						req.op = &operations[operation_id ? 4 : 0];
+						req.stacked = alias == 1;
+						req.native_control = TRUE;
+						CHECK(invoke(aTHX_ entry, &req));
+						IV expected = req.result;
+						U32 expected_flags = req.result_flags;
+						CHECK(req.result_head == pad[1]);
+						numeric_reset(aTHX_ left, values[lhs], kinds[kind_id]);
+						numeric_reset(aTHX_ right, values[rhs], kinds[kind_id]);
+						numeric_reset(aTHX_ target, 0, kinds[kind_id]);
+						req.native_control = FALSE;
+						operand_prepares = 0;
+						CHECK(invoke(aTHX_ entry, &req));
+	#if defined(PERL_PRESERVE_IVUV) && !defined(PERL_RC_STACK)
+						CHECK(!operand_prepares && "private IV/PVIV/PVNV arithmetic requires no general capture");
+	#endif
+						CHECK(req.result == expected && req.result_flags == expected_flags);
+						CHECK(req.result_head == pad[1] && !PL_wump_task->critical);
+						SvREFCNT_dec(target);
+						SvREFCNT_dec(right);
+						SvREFCNT_dec(left);
+						checks++;
+					}
+				}
+			}
+		}
+	}
+	pad[1] = saved_target;
+	CHECK(checks == 627);
+}
+
+static void numeric_exclusions(pTHX_ CV *entry, SV **pad) {
+	SV *saved_target = pad[1];
+	for (unsigned mode = 0; mode < 3; mode++) {
+		SV *target = newSV_type(SVt_PVIV), *peer = NULL;
+		sv_setpvs(target, "unchanged native string buffer retained by another scalar for the COW case");
+		if (mode == 0) {
+			/* Automatic copy heuristics can choose a deep copy. Shared hash
+			 * keys provide native COW storage deterministically instead. */
+			SvREFCNT_dec(target);
+			target = newSVpvs_share("unchanged native string buffer retained by another scalar for the COW case");
+			SvUPGRADE(target, SVt_PVIV);
+			peer = newSVpvs_share("unchanged native string buffer retained by another scalar for the COW case");
+			CHECK(SvIsCOW(target));
+			CHECK(SvPVX_const(target) == SvPVX_const(peer));
+		} else if (mode == 1) {
+			sv_chop(target, SvPVX(target) + 1);
+			CHECK(SvOOK(target));
+		} else {
+			sv_setuv(target, UV_MAX);
+			CHECK(SvIsUV(target));
+		}
+		pad[1] = target;
+		request req = {newSViv(42), newSViv(2), &operations[0], FALSE, 0};
+		operand_prepares = 0;
+		CHECK(invoke(aTHX_ entry, &req) && req.result == 44 && req.result_head == target);
+		CHECK(operand_prepares && "COW, offset PV and UV targets must retain the general path");
+		CHECK(!PL_wump_task->critical);
+		if (peer) CHECK(strEQ(SvPV_nolen(peer),
+			"unchanged native string buffer retained by another scalar for the COW case"));
+		SvREFCNT_dec(req.source);
+		SvREFCNT_dec(req.other);
+		SvREFCNT_dec(peer);
+		SvREFCNT_dec(target);
+	}
+	pad[1] = saved_target;
 }
 
 static void drop_stacks(pTHX) {
@@ -296,6 +408,8 @@ int main(int argc, char **argv, char **env) {
 	CHECK(invoke(aTHX_ f.entry, &numeric) && numeric.result == 44);
 	CHECK(operand_prepares);
 	Perl_wump_memory_mark(aTHX_ pad[1], 0);
+	numeric_boundaries(aTHX_ f.entry, pad);
+	numeric_exclusions(aTHX_ f.entry, pad);
 	SvREFCNT_dec(numeric.other);
 	SvREFCNT_dec(pad[1]);
 	PL_curpad = original_pad;
@@ -331,6 +445,8 @@ int main(int argc, char **argv, char **env) {
 	puts("ok - scalar opcode entries reject active writers before raw cache reads");
 	puts("ok - aliased inputs capture one value when publication completes between operand classifications");
 	puts("ok - cached integer entries bypass general capture only with private numeric targets");
+	puts("ok - 627 bounded numeric cases preserve native values, flags and result aliases in C/C++");
+	puts("ok - COW, offset PV and UV targets retain native fallback behavior");
 	puts("ok - six executors run 3072 actual arithmetic/comparison opcodes against 1024 concurrent representation changes");
 	return 0;
 }
