@@ -23,7 +23,7 @@ TEST_TIMEOUT = 60
 TEST_LONG_TIMEOUT = 90
 TEST_FAILURE_TIMEOUT = 30
 SANITIZER_TEST_ARGS = CPPFLAGS='$(CPPFLAGS) -DWUMP_TEST_CASE_TIMEOUT=120' TEST_TIMEOUT=300 TEST_LONG_TIMEOUT=300 TEST_FAILURE_TIMEOUT=300
-PERL_SUITES = entry ordinary waitgroup preempt tasks parallel xs-parallel regex-parallel regex local elements pocket pocket-deparse separators hooks locks shared keys reads read-claims scalar-writes operands stack-loads lvalue-loads reference-loads scalar-references materialization iteration memory publication hidden-roots
+PERL_SUITES = entry ordinary waitgroup preempt tasks parallel xs-parallel encode-parallel bytes-parallel native-integration regex-parallel regex local elements pocket pocket-deparse separators hooks locks shared keys reads read-claims scalar-writes operands stack-loads lvalue-loads reference-loads scalar-references materialization iteration memory publication hidden-roots
 
 RUNTIME = stack sched chan io error
 OBJECTS = $(addprefix $(BUILD)/,$(addsuffix .o,$(RUNTIME))) $(BUILD)/ctx_x86_64.o
@@ -58,6 +58,7 @@ perl-mojo-test: perl-build
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -Iexamples/mojo/lib tests/perl/mojo-jobs.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -Iexamples/mojo/lib tests/perl/mojo.t
 	timeout 120s perl tests/perl/mojo-live.t '$(abspath $(BUILD))/perl/perl-5.42.2/perl'
+	timeout 120s perl tests/perl/mojo-live.t '$(abspath $(BUILD))/perl/perl-5.42.2/perl' 1000 4
 
 perl-mojo-example: perl-build
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib examples/mojo/dashboard.pl
@@ -90,6 +91,9 @@ perl-test: perl-build perl-source-test
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/tasks.t
 	timeout 180s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/parallel.t
 	timeout 180s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/xs-parallel.t
+	timeout 180s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/encode-parallel.t
+	timeout 180s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/bytes-parallel.t
+	timeout 180s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/native-integration.t
 	timeout 180s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/regex-parallel.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/regex.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/local.t

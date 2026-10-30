@@ -10,7 +10,9 @@ for my $language ('c', 'c++') {
 	my $target = "$build/opcode-operands" . ($language eq 'c++' ? '-cpp' : '');
 	my @command = ($language eq 'c++' ? shellwords($ENV{CXX} // 'c++') : shellwords($Config{cc}), shellwords($Config{ccflags}),
 		'-O2', '-g', '-pthread', "-I$source", '-x', $language, 'tests/perl/opcode-operands.c', '-x', 'none',
-		"$source/libperl.a", '-Wl,--wrap=Perl_wump_read_end',
+		"$source/libperl.a", '-Wl,--wrap=Perl_wump_read_end', '-Wl,--wrap=Perl_wump_operands_begin',
+		'-Wl,--wrap=Perl_wump_numeric_enter', '-Wl,--wrap=Perl_wump_numeric_leave',
+		'-Wl,--wrap=malloc', '-Wl,--wrap=calloc', '-Wl,--wrap=realloc',
 		shellwords($Config{ldflags}), shellwords($Config{perllibs}), '-o', $target);
 	system @command;
 	$? == 0 or die "opcode operands $language failed to compile: $?\n";

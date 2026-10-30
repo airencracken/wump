@@ -10,6 +10,14 @@ sub apply_xs {
 	apply_named_capture($source);
 	require "$FindBin::Bin/socket.pl";
 	apply_socket($source);
+	require "$FindBin::Bin/encode.pl";
+	apply_encode($source);
+	require "$FindBin::Bin/bytes.pl";
+	apply_bytes($source);
+	require "$FindBin::Bin/minmax.pl";
+	apply_minmax($source);
+	require "$FindBin::Bin/poll.pl";
+	apply_poll($source);
 	# The HAS_GETCWD path uses a local buffer and the caller's private XS
 	# target. Other Cwd helpers use different native/context paths. Never
 	# admit the fallback implementation which walks by changing process cwd.

@@ -40,4 +40,35 @@ for my $slots (1, 4) {
 			'option parsing does not enter the parallel compiler gate');
 	}
 }
+for my $slots (1, 4) {
+	my ($errors) = tempfile(UNLINK => 1);
+	my ($input, $output);
+	my $code = q{
+		BEGIN { $ENV{MOJO_NO_TLS} = $ENV{MOJO_NO_NNR} = $ENV{MOJO_NO_SOCKS} = 1 }
+		use Wump; use Wump::Mojo::Daemon;
+		CHECK {
+			$ENV{MOJO_REUSE} = 'unrelated:1:900,unrelated:2:901';
+			my $server = Wump::Mojo::Daemon->new(listen => ['http://127.0.0.1:0'], silent => 1);
+			$server->prepare;
+			die "listener preparation lost exports\n" unless $ENV{MOJO_REUSE} eq 'unrelated:1:900,unrelated:2:901';
+			for my $id (@{$server->acceptors}) {
+				die "listener retained its fork export\n" if $server->ioloop->acceptor($id)->{reuse};
+			}
+			die "listener was not bound\n" unless $server->ports->[0] > 0;
+			$server->stop;
+		}
+		print "listener ownership prepared\n";
+	};
+	local $ENV{WUMPPROCS} = $slots;
+	my $pid = open3($input, $output, '>&' . fileno($errors), $private,
+		"-I$directory/lib", '-Iperl/lib', '-e', $code);
+	close $input or die "Close child input: $!\n";
+	my $stdout = do { local $/; <$output> };
+	waitpid($pid, 0) == $pid or die "Wait for listener preparation: $!\n";
+	is($?, 0, "listener preparation succeeds with $slots slots");
+	is($stdout, "listener ownership prepared\n", 'preparation preserves unrelated exports and removes owned markers');
+	seek $errors, 0, 0 or die "Rewind preparation log: $!\n";
+	my $stderr = do { local $/; <$errors> };
+	is($stderr, '', 'listener teardown emits no compiler or cleanup errors');
+}
 done_testing;

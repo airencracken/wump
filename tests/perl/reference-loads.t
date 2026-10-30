@@ -8,6 +8,33 @@ use RootFixture;
 use lib 'tests/perl/lib';
 use WumpTest ();
 
+for my $slots (2, 4) {
+	WumpTest::check_program("BEGIN { \$ENV{WUMPPROCS} = $slots }\n" . q{
+		use Wump; use RootFixture;
+		{ package PlainSharedObject;
+			sub value { $_[0]->{value} }
+			sub missing { $_[0]->{missing} || 0 }
+		}
+		my $object = bless {value => 42}, 'PlainSharedObject';
+		my $out = chan(4);
+		for (1..8) {
+			act {
+				RootFixture::executor_rendezvous();
+				for (1..128) {
+					die "object value changed\n" unless $object->value == 42;
+					die "missing object field changed\n" unless $object->missing == 0;
+					yield;
+				}
+				$out->send(1);
+			};
+		}
+		die "missing object readers\n" if grep { $out->recv != 1 } 1..8;
+		die "object read autovivified a field\n" if exists $object->{missing};
+		print "concurrent object reads retain aliases without writer claims\n";
+	}, 0, qr/\Aconcurrent object reads retain aliases without writer claims\n\z/,
+		"existing object references support concurrent read-only methods on $slots slots");
+}
+
 # Watch the referent, not the source RV head. Reassigning that same head can
 # destroy the previously extracted container while its index/key is evaluated.
 for my $case (

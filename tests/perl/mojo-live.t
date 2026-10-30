@@ -19,9 +19,11 @@ use Mojo::JSON qw(decode_json encode_json);
 use lib "$FindBin::Bin/../../examples/mojo/lib";
 use WumpDemo::Analysis qw(reference summary);
 
-my $private = abs_path(shift // die "Usage: perl $0 PRIVATE_PERL [HEALTH_P95_MS]\n");
+my $private = abs_path(shift // die "Usage: perl $0 PRIVATE_PERL [HEALTH_P95_MS [SLOTS]]\n");
 my $budget = shift // 1000;
+my $slots = shift // 1;
 die "Invalid latency budget\n" unless $budget =~ /\A[1-9][0-9]*\z/;
+die "Invalid slot count\n" unless $slots =~ /\A(?:1|2|4)\z/ && !@ARGV;
 my $root = abs_path("$FindBin::Bin/../..");
 my ($pid, $output, $errors, $error_path);
 my $ua = Mojo::UserAgent->new->ioloop(Mojo::IOLoop->singleton)
@@ -33,6 +35,11 @@ END {
 		my $until = time + 2;
 		while (time < $until) { last if waitpid($pid, WNOHANG) == $pid; sleep 0.01 }
 		if (kill 0, $pid) { kill 'KILL', $pid; waitpid($pid, 0) }
+		if ($errors) {
+			seek $errors, 0, 0;
+			my $log = do { local $/; <$errors> };
+			diag("Server stderr:\n$log") if length $log;
+		}
 	}
 }
 sub server_event () {
@@ -49,6 +56,7 @@ sub server_event () {
 sub start_server ($port = 0) {
 	($errors, $error_path) = tempfile('wump-mojo-live-XXXXXX', TMPDIR => 1, UNLINK => 1);
 	my $input;
+	local $ENV{WUMPPROCS} = $slots;
 	# PRIVATE_PERL is the executable in a configured source tree.
 	(my $directory = $private) =~ s{/perl\z}{};
 	$pid = open3($input, $output, '>&' . fileno($errors), $private, "-I$directory/lib",
@@ -58,8 +66,8 @@ sub start_server ($port = 0) {
 	my $event = server_event();
 	is($event->{event}, 'ready', 'server bound a real TCP listener');
 	is($event->{pid}, $pid, 'server reports one process');
-	is($event->{runtime}, 'single-slot', 'server reports actual execution mode');
-	is($event->{execution_slots}, 1, 'server reports actual execution slots independently of coroutine workers');
+	is($event->{runtime}, $slots > 1 ? 'parallel' : 'single-slot', 'server reports actual execution mode');
+	is($event->{execution_slots}, $slots, 'server reports actual execution slots independently of coroutine workers');
 	return "http://127.0.0.1:$event->{port}";
 }
 sub stop_server () {
@@ -86,7 +94,7 @@ sub stop_server () {
 }
 sub json_get ($url) {
 	my $tx = $ua->get($url);
-	die "GET $url failed: " . ($tx->error->{message} // 'unknown') . "\n" unless $tx->res->is_success;
+	die "GET $url failed: " . ($tx->error->{message} // 'unknown') . "\n" . $tx->res->body . "\n" unless $tx->res->is_success;
 	return $tx->res->json;
 }
 sub rss_kib () {
@@ -140,7 +148,7 @@ for my $id (@submitted) {
 my @ordered = sort {$a <=> $b} @latencies;
 my $p95 = $ordered[int(0.95 * @ordered + 0.999999) - 1] // 0;
 cmp_ok($p95, '<', $budget, "health p95 stays below ${budget}ms under CPU load");
-diag(encode_json({execution_slots => 1, health_samples => scalar @latencies,
+diag(encode_json({execution_slots => 0 + $slots, health_samples => scalar @latencies,
 	health_p95_ms => 0 + sprintf('%.2f', $p95), websocket_frames => $frames}));
 
 $socket->finish;

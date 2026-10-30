@@ -147,6 +147,20 @@ C
 		memory_guard($source, 'mg.c', $name, 'int', 'sv');
 	}
 	memory_guard($source, 'pp_hot.c', 'vivify_ref', 'SV *', 'sv');
+	# An already-defined non-get-magical value is returned unchanged by the
+	# native vivifier. Do not acquire a writer merely to read an object RV,
+	# or retain its referent across subsequent key/index callbacks.
+	my $vivify = "/* Wump mutation wrapper: vivify_ref */\nSV *\nPerl_vivify_ref(pTHX_ SV *sv, U32 to_what)\n{\n";
+	edit('pp_hot.c', $vivify, $vivify . <<'C');
+    if (PL_wump_task) {
+        struct wump_shared *claim;
+        if (Perl_wump_read_try_begin(aTHX_ sv, &claim)) {
+            bool ready = SvOK(sv) && !SvGMAGICAL(sv);
+            Perl_wump_read_end(aTHX_ claim);
+            if (ready) return sv;
+        }
+    }
+C
 	# Route ordinary PV macros through a protected capture. Mutable access
 	# remains a writer API. Explicit byte/UTF-8 conversions retain snapshots.
 	my $header = read_file("$source/sv.h");

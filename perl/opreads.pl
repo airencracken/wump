@@ -36,5 +36,21 @@ sub apply_opreads {
 		substr($text, $start, $end - $start, $body);
 		write_file("$source/$file", $text);
 	}
+	for my $spec (['pp_hot.c', 'add'], ['pp.c', 'modulo']) {
+		my ($file, $name) = @$spec;
+		my $text = read_file("$source/$file");
+		my $start = index($text, "PP(pp_$name)\n{");
+		my $end = index($text, "\n}\n", $start);
+		$start >= 0 && $end >= 0 or die "missing numeric entry $name\n";
+		my $entry = substr($text, $start, $end + 3 - $start);
+		next if index($entry, 'Perl_wump_numeric_enter') >= 0;
+		my $fast = "    if (Perl_wump_numeric_enter(aTHX_ target)) {\n"
+			. "        OP *next = Perl_wump_write_impl_$name(aTHX);\n"
+			. "        Perl_wump_numeric_leave(aTHX);\n        return next;\n    }\n";
+		$entry =~ s/^(    struct wump_operands \*guard =)/$fast$1/m
+			or die "missing operand guard in numeric entry $name\n";
+		substr($text, $start, $end + 3 - $start, $entry);
+		write_file("$source/$file", $text);
+	}
 }
 1;

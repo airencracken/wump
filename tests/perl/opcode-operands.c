@@ -46,12 +46,54 @@ typedef struct request {
 #ifdef __cplusplus
 static thread_local request *current_request;
 static thread_local SV *publish_after_read;
+static thread_local unsigned operand_prepares;
+static thread_local bool numeric_active;
+static thread_local unsigned numeric_allocations;
 #else
 static _Thread_local request *current_request;
 static _Thread_local SV *publish_after_read;
+static _Thread_local unsigned operand_prepares;
+static _Thread_local bool numeric_active;
+static _Thread_local unsigned numeric_allocations;
 #endif
 
 START_EXTERN_C
+extern void *__real_malloc(size_t);
+extern void *__real_calloc(size_t, size_t);
+extern void *__real_realloc(void *, size_t);
+void *__wrap_malloc(size_t size) {
+	if (numeric_active) numeric_allocations++;
+	return __real_malloc(size);
+}
+void *__wrap_calloc(size_t count, size_t size) {
+	if (numeric_active) numeric_allocations++;
+	return __real_calloc(count, size);
+}
+void *__wrap_realloc(void *memory, size_t size) {
+	if (numeric_active) numeric_allocations++;
+	return __real_realloc(memory, size);
+}
+extern bool __real_Perl_wump_numeric_enter(pTHX_ SV *target);
+extern void __real_Perl_wump_numeric_leave(pTHX);
+bool __wrap_Perl_wump_numeric_enter(pTHX_ SV *target) {
+	bool entered = __real_Perl_wump_numeric_enter(aTHX_ target);
+	if (entered) {
+		CHECK(!numeric_active);
+		numeric_active = TRUE;
+		numeric_allocations = 0;
+	}
+	return entered;
+}
+void __wrap_Perl_wump_numeric_leave(pTHX) {
+	CHECK(numeric_active && !numeric_allocations);
+	numeric_active = FALSE;
+	__real_Perl_wump_numeric_leave(aTHX);
+}
+extern struct wump_operands *__real_Perl_wump_operands_begin(pTHX_ SV *target);
+struct wump_operands *__wrap_Perl_wump_operands_begin(pTHX_ SV *target) {
+	operand_prepares++;
+	return __real_Perl_wump_operands_begin(aTHX_ target);
+}
 extern void __real_Perl_wump_read_end(pTHX_ struct wump_shared *claim);
 void __wrap_Perl_wump_read_end(pTHX_ struct wump_shared *claim) {
 	__real_Perl_wump_read_end(aTHX_ claim);
@@ -232,6 +274,29 @@ int main(int argc, char **argv, char **env) {
 	Perl_wump_memory_mark(aTHX_ f.value, 0);
 	request publication = {f.value, f.value, &operations[1], FALSE, 0, TRUE};
 	CHECK(invoke(aTHX_ f.entry, &publication) && publication.result == 0 && !publish_after_read);
+	/* Cached integer operations on a private IV target need no allocating
+	 * general operand capture. Keep the shared source and native entries. */
+	sv_setiv(pad[1], 0);
+	request numeric = {f.value, newSViv(2), &operations[0], FALSE, 0};
+	for (unsigned i = 0; i < 2; i++) {
+		numeric.op = &operations[i ? 4 : 0];
+		operand_prepares = 0;
+		CHECK(invoke(aTHX_ f.entry, &numeric) && numeric.result == numeric.op->expected);
+#if defined(PERL_PRESERVE_IVUV) && !defined(PERL_RC_STACK)
+		CHECK(!operand_prepares && "cached integer op must bypass general operand capture");
+#else
+		CHECK(operand_prepares && "alternate stacks retain general operand capture");
+#endif
+		CHECK(!PL_wump_task->critical);
+	}
+	/* A published target must retain its full mutation admission path. */
+	Perl_wump_memory_mark(aTHX_ pad[1], 2);
+	operand_prepares = 0;
+	numeric.op = &operations[0];
+	CHECK(invoke(aTHX_ f.entry, &numeric) && numeric.result == 44);
+	CHECK(operand_prepares);
+	Perl_wump_memory_mark(aTHX_ pad[1], 0);
+	SvREFCNT_dec(numeric.other);
 	SvREFCNT_dec(pad[1]);
 	PL_curpad = original_pad;
 	FREETMPS;
@@ -265,6 +330,7 @@ int main(int argc, char **argv, char **env) {
 	PERL_SYS_TERM();
 	puts("ok - scalar opcode entries reject active writers before raw cache reads");
 	puts("ok - aliased inputs capture one value when publication completes between operand classifications");
+	puts("ok - cached integer entries bypass general capture only with private numeric targets");
 	puts("ok - six executors run 3072 actual arithmetic/comparison opcodes against 1024 concurrent representation changes");
 	return 0;
 }

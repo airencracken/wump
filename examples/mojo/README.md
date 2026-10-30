@@ -5,22 +5,19 @@ WebSocket progress. Workers analyze Unicode log text using bounded channels;
 their CPU loops contain no explicit yields. The dashboard and `/health` stay
 available while work runs through Wump's preemption points.
 
-The HTTP dashboard remains a **one-slot acceptance baseline**. Its Unicode
-job backend can now run on one, two or four execution slots in the same
-interpreter and has a separate CPU benchmark below. Running the complete HTTP
-stack with multiple slots still needs further XS and runtime compilation work.
-Option parsing and application, reactor and listener bootstrap now finish in
-`CHECK`, before execution slots start. Compile-only checks validate options
-without binding a listener. The
-pinned native cwd readers, functional Unix path joins, plain-scalar path
-canonicalizers, next-method and capability lookup have focused parallel audits and tests.
-Path joins support yielding overloads with private snapshots and constants.
-Bare native precompiled regexes, named-capture queries, numeric socket metadata
-and UTF-8 flag queries now have focused parallel coverage. Four-slot startup
-currently reaches `Encode::utf8::encode`, which remains gated. Listener cleanup
-also uses a dynamic regex that remains unsupported with multiple slots.
-Encoding, cleanup and remaining dependency audits still precede live HTTP
-acceptance on four slots.
+The dashboard now passes the same 48 external HTTP/WebSocket checks on one
+and four execution slots in one interpreter. The Unicode backend also has
+one/two/four-slot coverage. Option parsing, helper namespaces, route patterns,
+UTF-8 alias resolution and listener setup finish in `CHECK` before execution
+starts. `Wump::Mojo::Daemon` retires only its own fork-server descriptor export,
+so shutdown needs no process environment mutation or dynamic regex.
+
+Focused native audits now cover UTF-8 Encode methods with CHECK 0/1, functional
+MD5/SHA and base64, min/max with original return aliases, number and ancestry
+queries, byte downgrade, zero-time poll and native Unix nonblocking mode.
+Magical or unsupported inputs fail explicitly in parallel mode; other native
+entries remain gated. These audits support the demo reactor, not arbitrary
+shared socket access or general blocking-call handoff.
 
 ## Run
 
@@ -122,11 +119,11 @@ poll to return without waiting, then sleeps the act for 2ms. This explicitly
 bridges the two schedulers. It adds polling overhead and is not native epoll
 integration or general blocking-call handoff. Blocking Perl/XS calls still
 occupy the execution slot. The launcher selects this reactor and disables
-optional JSON XS, native DNS, SOCKS, and TLS integrations for the baseline.
+optional JSON XS, native DNS, SOCKS, TLS, and response compression integrations for the baseline.
 
 The demo uses static HTML/JS and JSON routes. EP templates, development reload,
-prefork servers, subprocess CPU offload, arbitrary XS, and multiple Perl
-execution slots are outside this acceptance test. Dependencies and Unicode
+prefork servers, subprocess CPU offload, arbitrary XS, and response compression
+are outside this acceptance test. Dependencies and Unicode
 tables load before worker acts start. Process signal handlers only set a flag;
 the reactor observes it and performs shutdown in its owning act.
 
@@ -137,7 +134,7 @@ make perl-mojo-test
 # Focused core and Mojo memory checks (requires Valgrind):
 make perl-mojo-memcheck
 # Repeat the external TCP load test with a custom health p95 budget (ms):
-perl tests/perl/mojo-live.t "$PWD/build/perl/perl-5.42.2/perl" 500
+perl tests/perl/mojo-live.t "$PWD/build/perl/perl-5.42.2/perl" 500 4
 ```
 
 The optional target requires Mojolicious and a stock Perl 5.42+ client. The

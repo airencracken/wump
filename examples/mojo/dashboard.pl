@@ -10,7 +10,7 @@ BEGIN {
 }
 use Wump;
 use WumpDemo::App;
-use Mojo::Server::Daemon;
+use Wump::Mojo::Daemon;
 use Mojo::JSON 'encode_json';
 use Getopt::Long 'GetOptions';
 
@@ -27,14 +27,16 @@ CHECK {
 	# slots start. The job service allocates its channels lazily on submit.
 	$jobs = WumpDemo::Jobs->new(workers => $workers, max_active => $max_active, max_history => $max_history);
 	$app = WumpDemo::App->new(jobs => $jobs);
+	# The optional compression XS stack has not been audited for parallel use.
+	$app->renderer->compress(0);
 	$app->static->warmup;
 	$app->renderer->warmup;
 	$loop = Mojo::IOLoop->singleton;
 	$loop->reactor;
-	$server = Mojo::Server::Daemon->new(app => $app, ioloop => $loop, listen => [$listen], silent => 1);
+	$server = Wump::Mojo::Daemon->new(app => $app, ioloop => $loop, listen => [$listen], silent => 1);
 	# Socket setup also uses IO::Socket's dynamic regexes. Finish bootstrap
 	# before the compiler is frozen; -c remains free of listening sockets.
-	$server->start unless $^C;
+	$server->prepare unless $^C;
 }
 my $stop = 0;
 $SIG{INT} = sub { $stop = 1 };

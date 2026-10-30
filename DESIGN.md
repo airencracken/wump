@@ -1198,3 +1198,46 @@ metadata lock and releases it before creating the act-local capture hash.
   cost.
 - DESTROY runs on whichever task drops the last reference. Fine?
 - `PERL_RC_STACK` (§5.4).
+
+## Active arithmetic and live Mojo checkpoint (2026-10-30)
+
+Cached nonnegative signed-IV add/modulo operations with an unpublished,
+bodyless IV target now execute the original native branch under the metadata
+mutex, without heap snapshots or save-stack guards. The eligibility check
+excludes overflow, zero divisors, magic, UVs, taint, unsafe signals and RC_STACK.
+The proven branch cannot allocate, throw or invoke callbacks; a native fixture
+wraps malloc/calloc/realloc and asserts zero allocations while exclusion is
+held. Published targets and all other representations retain general guards.
+This is a bounded optimization, and the global metadata mutex still limits
+parallel scaling.
+
+Already-initialized, non-get-magical references now take vivify_ref's native
+no-op branch under a read claim. They gain neither a false writer nor a hidden
+strong referent pin. Foreign writers still take the original mutation-conflict
+path. Shared object readers and the existing weak/destructor/alias regressions
+cover this distinction.
+
+The Mojo dashboard passes the external 48-check HTTP/WebSocket test on four
+execution slots. Daemon preparation completes helper proxy generation, route
+regex compilation, UTF-8 alias resolution and listener setup before execution.
+It removes only the listener's own MOJO_REUSE export, allowing native listener
+cleanup without process ENV writes or runtime regex compilation. The demo
+explicitly disables response compression alongside optional JSON XS, DNS,
+SOCKS and TLS. No installed Mojo source is modified.
+
+New audited native entries use private scalar snapshots for UTF-8 Encode
+methods (CHECK 0/1), functional MD5/SHA/base64, min/max and numeric queries.
+CHECK 1 commits consumed input through the original source alias under a
+mutation claim; failed conversion unwinds that claim. min/max return the
+original selected argument head, including native tie selection. Ancestry
+queries synchronize the method caches. Byte downgrade claims the original
+scalar and supports native regex-position/UTF-8 cache magic. Poll accepts only
+zero timeout and validates native-int descriptor/event pairs before preserving
+in/out aliases. Handle mode supports native Unix layer queries and enabling
+nonblocking mode, for the reactor's owned handles. General concurrent PerlIO
+lifecycle and arbitrary layered handles remain outside this audit.
+
+This advances the integration goal: real requests, bounded CPU jobs and progress
+frames share one interpreter across execution slots. It does not establish the
+performance goal, native I/O handoff, general XS compatibility, runtime
+compilation support, or long-term production soak acceptance.

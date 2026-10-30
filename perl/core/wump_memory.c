@@ -199,6 +199,69 @@ int Perl_wump_memory_shared(pTHX_ const SV *value) {
 	return result;
 }
 
+#if defined(PERL_PRESERVE_IVUV) && !defined(PERL_RC_STACK)
+static bool wump_numeric_source(pTHX_ SV *value) {
+	wump_shared *node = wump_memory_untracked(aTHX->Iwump_memory, value)
+		? NULL : wump_memory_find(aTHX->Iwump_memory, value);
+	/* Writers keep their logical claim while outside the mutex. Check it
+	 * before looking at the flags or the body they might be changing. */
+	if (node && ((atomic_load_explicit(&node->access, memory_order_acquire) & WUMP_WRITER)
+		|| node->state == 1)) return FALSE;
+	if (!SvIOK(value) || SvIsUV(value) || SvROK(value) || SvOBJECT(value)
+		|| SvVALID(value) || SvGMAGICAL(value) || SvTYPE(value) > SVt_PVMG
+		|| SvTYPE(value) == SVt_INVLIST) return FALSE;
+	if (SvTYPE(value) == SVt_PVMG) {
+		for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic)
+			if (!Perl_wump_publish_magic(mg)) return FALSE;
+	}
+	return TRUE;
+}
+#endif
+
+bool Perl_wump_numeric_enter(pTHX_ SV *target) {
+#if defined(PERL_PRESERVE_IVUV) && !defined(PERL_RC_STACK)
+	struct wump_perl_task *task = PL_wump_task;
+	if (!task || !target || !aTHX->Iwump_memory || !PL_curstackinfo
+		|| PL_phase == PERL_PHASE_DESTRUCT || TAINT_get
+		|| (PL_signals & PERL_SIGNALS_UNSAFE_FLAG)) return FALSE;
+	if (PL_op->op_type != OP_ADD && PL_op->op_type != OP_MODULO) return FALSE;
+	Perl_wump_memory_lock(aTHX);
+	wump_shared *node = wump_memory_untracked(aTHX->Iwump_memory, target)
+		? NULL : wump_memory_find(aTHX->Iwump_memory, target);
+	/* A private, bodyless IV needs no allocation, magic or COW handling.
+	 * Published targets retain the general mutation and unwind protocol. */
+	if ((node && (node->state || atomic_load_explicit(&node->access, memory_order_acquire)))
+		|| SvTYPE(target) != SVt_IV || SvOBJECT(target)
+		|| (SvFLAGS(target) & (SVf_THINKFIRST | SVf_IVisUV))) goto fallback;
+	SV *left = PL_stack_sp[-1], *right = PL_stack_sp[0];
+	if (!left || !right || !wump_numeric_source(aTHX_ left)
+		|| !wump_numeric_source(aTHX_ right)) goto fallback;
+	IV lhs = SvIVX(left), rhs = SvIVX(right);
+	if (lhs < 0 || rhs < 0) goto fallback;
+	if (PL_op->op_type == OP_ADD) {
+		if (lhs > IV_MAX / 2 || rhs > IV_MAX / 2) goto fallback;
+	} else if (!rhs) goto fallback;
+	/* These exact native branches only read cached IVs and store an IV.
+	 * They cannot allocate, throw, run get/set magic or decrement stack
+	 * references (RC_STACK is excluded). No callback or safepoint occurs
+	 * before leave. Holding the recursive metadata mutex closes publication
+	 * races without snapshots, heap guards or save-stack records. */
+	task->critical++;
+	return TRUE;
+fallback:
+	Perl_wump_memory_unlock(aTHX);
+#else
+	PERL_UNUSED_ARG(target);
+#endif
+	return FALSE;
+}
+
+void Perl_wump_numeric_leave(pTHX) {
+	assert(PL_wump_task && PL_wump_task->critical);
+	PL_wump_task->critical--;
+	Perl_wump_memory_unlock(aTHX);
+}
+
 void Perl_wump_memory_check(pTHX_ const SV *value) {
 	if (!aTHX->Iwump_memory) return;
 	if (wump_memory_untracked(aTHX->Iwump_memory, value)) return;
@@ -616,6 +679,36 @@ void Perl_wump_capture_end(pTHX_ struct wump_borrow *capture) {
 	SvREFCNT_dec(owner);
 	/* The now-inactive mortal token collects later. Do not run destructors
 	 * or add save entries while a core caller assembles a localization record. */
+}
+
+SV *Perl_wump_xs_scalar(pTHX_ SV *value, const char *operation) {
+	struct wump_borrow *capture = Perl_wump_capture_begin(aTHX_ value);
+	bool plain = SvTYPE(value) <= SVt_PVMG && SvTYPE(value) != SVt_INVLIST
+		&& !SvROK(value) && !SvOBJECT(value) && !SvVALID(value);
+	if (plain && SvTYPE(value) == SVt_PVMG) {
+		for (MAGIC *magic = SvMAGIC(value); magic; magic = magic->mg_moremagic)
+			if (!Perl_wump_publish_magic(magic)) { plain = FALSE; break; }
+	}
+	if (!plain) {
+		Perl_wump_capture_end(aTHX_ capture);
+		croak("Wump: %s requires a plain scalar", operation);
+	}
+	/* Copy bytes and caches without COW writes to the source. Native byte
+	 * conversion can now downgrade, coerce or throw on this private head. */
+	SV *copy = sv_2mortal(newSV_type(SVt_PVNV));
+	U32 flags = SvFLAGS(value);
+	if (SvPOKp(value))
+		sv_setpvn(copy, SvPVX_const(value) ? SvPVX_const(value) : "", SvCUR(value));
+	if (SvIOKp(value)) {
+		if (SvIsUV(value)) SvUV_set(copy, SvUVX(value));
+		else SvIV_set(copy, SvIVX(value));
+	}
+	if (SvNOKp(value)) SvNV_set(copy, SvNVX(value));
+	const U32 cache = SVf_IOK | SVp_IOK | SVf_NOK | SVp_NOK
+		| SVf_POK | SVp_POK | SVf_IVisUV | SVf_UTF8;
+	SvFLAGS(copy) = (SvFLAGS(copy) & ~cache) | (flags & cache);
+	Perl_wump_capture_end(aTHX_ capture);
+	return copy;
 }
 
 static bool wump_borrow_plain(pTHX_ const SV *value) {
