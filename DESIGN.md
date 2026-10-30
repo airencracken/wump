@@ -1251,3 +1251,47 @@ This advances the integration goal: real requests, bounded CPU jobs and progress
 frames share one interpreter across execution slots. It does not establish the
 performance goal, native I/O handoff, general XS compatibility, runtime
 compilation support, or long-term production soak acceptance.
+
+Fresh matched-stock captures compare clean `fea5e04` with clean `7f856ef`, using
+five interleaved samples per mode, eight jobs and 500,000 iterations per job.
+Both use the same GCC 14.2.1 / Perl 5.42.2 `-O2` configuration and stock control
+on the Ryzen 7 PRO 4750U. Validation and instrumented builds were stopped during
+both timing captures. All 400 job results matched the independent reference.
+
+| Execution mode | Before median work time | After median work time | After / stock time |
+| --- | --- | --- | --- |
+| Stock Perl control | 0.126604 s | 0.126845 s | 1.00x |
+| Ordinary fork, Wump disabled | 0.115943 s | 0.119226 s | 0.94x |
+| Wump, one slot | 3.186944 s | 1.622000 s | 12.79x |
+| Wump, two slots | 5.279942 s | 1.690933 s | 13.33x |
+| Wump, four slots | 6.806358 s | 2.392670 s | 18.86x |
+
+The active one/two/four-slot runs are respectively 1.96x, 3.12x and 2.84x faster
+than the previous core. Two and four slots still take longer than one; both
+stock-relative active overhead and near-linear scaling remain unmet goals.
+Ordinary execution remains comparable to its stock control on this one loop.
+These measurements do not establish HTTP throughput or general Perl parity.
+[Before samples](bench/perl-active-before.jsonl),
+[after samples](bench/perl-active-after.jsonl), and the
+[machine/validation record](bench/active-machine.json) retain clean revisions,
+build configuration, binary hashes and checks.
+
+Validation passes the complete GCC, Clang/C++ and UBSan project suites, focused
+TSan and Memcheck cases, and the optional Mojo target. Selected upstream tests
+passed 172 scripts / 548,693 checks; an earlier run hit its 240-second cap under
+concurrent builds, and the unchanged test selection passed with a 600-second
+cap in 194 seconds. Final repeat/numeric tests add four scripts / 80 checks.
+The new callback and shared-head stress tests failed under TSan before their
+fixes and pass afterward without new suppressions. The existing clone-related
+TSan race, full-MSan locale dependency blocker and Helgrind/DRD tool assertions
+remain open; this checkpoint does not claim those full-tool gates are green.
+
+The modified libraries also pass their upstream behavior tests: Encode (7,764
+checks plus all five piconv CLI checks), MD5 (283), SHA (130), MIME::Base64 (495),
+Scalar-List-Utils (2,166) and IO (16,686). Direct module invocations initially
+used incorrect core layouts. piconv was rerun with its required blib layout;
+MIME::Base64 uses its standalone module harness and IO its PERL_CORE harness.
+MD5's file test expects the original MD5.xs checksum, so that test runs against
+the pristine verified source fixture while using the patched digest library.
+Expected hashes and upstream test assertions were not changed. Full upstream
+and fresh ASan coverage were not run for this checkpoint.

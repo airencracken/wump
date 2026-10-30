@@ -1,0 +1,48 @@
+{
+   "after_private_sha256" : "661ce12e2b28d31fe874111f9f8840870b4a8fb7ec908f9f654f421986df4b48",
+   "after_source_dirty" : false,
+   "after_source_revision" : "7f856ef60b0bc90542757d1f3c14452bfd0cf04e",
+   "before_private_sha256" : "78c68e4ffe68976101870d62d6fda41e5ea6d4066f919caf966a8ff4c9763074",
+   "before_source_dirty" : false,
+   "before_source_revision" : "fea5e045e0e9f8b0b166b9154a7babc34051380a",
+   "benchmark" : {
+      "concurrent_validation" : false,
+      "fixture" : "integer-reduction-v1",
+      "iterations" : 500000,
+      "jobs" : 8,
+      "runs" : 5,
+      "verified_jobs" : 400
+   },
+   "cpu_model" : "AMD Ryzen 7 PRO 4750U with Radeon Graphics",
+   "date_utc" : "2026-10-30",
+   "stock_sha256" : "c7688d340a6002b222777a1c93c6892db939629a69266ed8b4e2834e7a0951da",
+   "validation" : {
+      "clang_project_suite" : "passed, including C++ fixtures",
+      "gcc_project_suite" : "passed",
+      "memcheck_focused" : "Encode, byte functions, native integration, reference loads and numeric fixture passed with full teardown; repeat and holder fixes rechecked; zero reported errors or definite/indirect leaks",
+      "mojo" : "full optional target passed, including 54 CLI checks, service tests and 48 live HTTP/WebSocket checks each on one/four slots; final four-slot live test passed again",
+      "remaining" : [
+         "full TSan target retains prior threads.pm PL_veto_switch_non_tTHX_context race",
+         "full MSan retains prior uninstrumented locale dependency blocker",
+         "full upstream suite and new ASan run not performed for this change",
+         "Helgrind/DRD retain prior Valgrind tool assertions"
+      ],
+      "tsan_focused" : "Encode, byte functions, native integration, reference loads and C/C++ arithmetic fixtures passed; deliberate-race control detected its race; no added suppressions",
+      "tsan_regressions" : [
+         "callback list repetition failed before TEMP fix",
+         "shared min/max retainers failed before private-holder fix"
+      ],
+      "ubsan_project_suite" : "passed",
+      "upstream_modules" : "Encode, MD5, SHA, MIME::Base64, Scalar-List-Utils and IO behavior tests passed; module harness layouts corrected as described in DESIGN.md",
+      "upstream_repeat_final" : {
+         "scripts" : 4,
+         "status" : "passed after repeat fix",
+         "tests" : 80
+      },
+      "upstream_selected" : {
+         "scripts" : 172,
+         "status" : "passed; 194 seconds with a 600-second cap after an earlier 240-second timeout under concurrent builds",
+         "tests" : 548693
+      }
+   }
+}

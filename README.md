@@ -114,7 +114,8 @@ independently of later environment changes or the number of spawned workers.
 The optional [Mojolicious job dashboard](examples/mojo/README.md) exercises
 HTTP, WebSocket progress, bounded work queues, cancellation, and shutdown while
 Wump coroutines perform CPU work. Run `make perl-mojo-example` after installing
-its optional dependency, or `make perl-mojo-test` for service and TCP load tests.
+its optional dependency, or `make perl-mojo-test` for service and TCP load tests
+on one and four execution slots. Set `WUMPPROCS=4` for the parallel demo.
 The build does not install or replace system Perl.
 
 ```sh
@@ -1213,7 +1214,12 @@ overheads on the implicit-loop-variable integer workload. A fresh
 [before](bench/perl-ordinary-before.jsonl)/[after](bench/perl-ordinary-after.jsonl)
 comparison reduces ordinary fork time from 8.17x stock to 0.92x stock, by
 bypassing inactive context selection and inlining native opcode bodies.
-One-slot Wump still takes 25.02x stock time, with slower two/four-slot runs.
+The next [active-runtime comparison](bench/perl-active-after.jsonl) cuts one-slot
+work time from 3.187s to 1.622s, reducing slowdown from 25.17x to 12.79x stock.
+Two/four slots improve by 3.12x/2.84x but remain slower than one slot.
+The [active integration checkpoint](DESIGN.md#active-arithmetic-and-live-mojo-checkpoint-2026-10-30)
+records the new native audits, race fixes, four-slot HTTP acceptance and
+remaining performance gates.
 The [design assessment](DESIGN.md#ordinary-execution-checkpoint-2026-10-30)
 records the configuration, validation, profiles and remaining goals. This one
 ordinary loop does not establish general stock-Perl parity; active-Wump

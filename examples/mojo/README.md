@@ -29,10 +29,11 @@ cpanminus available:
 ```sh
 cpanm --local-lib-contained "$PWD/build/mojo-deps" Mojolicious@9.37
 export PERL5LIB="$PWD/build/mojo-deps/lib/perl5${PERL5LIB:+:$PERL5LIB}"
-make perl-mojo-example
+WUMPPROCS=4 make perl-mojo-example
 ```
 
-Open <http://127.0.0.1:3000>. The launcher accepts `--listen`, `--workers`,
+Open <http://127.0.0.1:3000>. `WUMPPROCS` selects execution slots independently
+of the coroutine worker count; the default is one slot. The launcher accepts `--listen`, `--workers`,
 `--max-active`, and `--max-history`:
 
 ```sh
