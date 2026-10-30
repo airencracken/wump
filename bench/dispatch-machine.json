@@ -1,0 +1,97 @@
+{
+   "after_private_sha256" : "3d8580358f68fa0275146e1067f44d307af7043ae4dd604db826def35d9ee12c",
+   "after_source_dirty" : false,
+   "after_source_revision" : "96d8af0e274e8c77bc7262e7fb6d718ab40ee37c",
+   "application" : {
+      "fixture" : "unicode-log-v1",
+      "jobs" : 8,
+      "medians" : {
+         "1" : {
+            "after_seconds" : 0.482909009,
+            "before_seconds" : 0.505715172,
+            "change_percent" : -4.50968534517292
+         },
+         "2" : {
+            "after_seconds" : 0.468186457,
+            "before_seconds" : 0.481676932,
+            "change_percent" : -2.80073096795094
+         },
+         "4" : {
+            "after_seconds" : 0.565007873,
+            "before_seconds" : 0.608538499,
+            "change_percent" : -7.15330682800399
+         }
+      },
+      "note" : "Same service workload before/after; no stock-Perl application control or HTTP-throughput claim",
+      "passes" : 20,
+      "runs" : 5,
+      "verified_jobs" : 240,
+      "workers" : 4
+   },
+   "before_private_sha256" : "88330a0a1ba07743782d5847808437654ab44d2df74e637c931135d41722ff18",
+   "before_source_dirty" : false,
+   "before_source_revision" : "80273554d6feba639c10f00c4e0bcf2577d57a6f",
+   "benchmark" : {
+      "concurrent_task_validation_or_builds" : false,
+      "default_baseline_after_acceptance" : "bench/perl-dispatch-after.jsonl",
+      "default_gate_negative_control" : "previous active costs rejected on all six active work/process checks; ordinary control remains within budget",
+      "fixture" : "integer-reduction-v1",
+      "fresh_gate" : "all eight checks passed",
+      "gate_budget_percent" : 10,
+      "historical_gate" : "all eight checks passed",
+      "iterations" : 500000,
+      "jobs" : 8,
+      "runs" : 5,
+      "verified_jobs" : 400
+   },
+   "cpu_model" : "AMD Ryzen 7 PRO 4750U with Radeon Graphics",
+   "date_utc" : "2026-10-30",
+   "profiles" : {
+      "event" : "cycles:u",
+      "fixture" : "integer-reduction-v1",
+      "four_slots" : {
+         "active_runops_percent" : 7.98,
+         "lost" : 0,
+         "note" : "Many kernel samples remain unresolved; do not assign them to a specific syscall",
+         "pthread_mutex_lock_percent" : 15.98,
+         "samples" : 4407
+      },
+      "frequency_hz" : 199,
+      "iterations" : 3000000,
+      "jobs" : 8,
+      "note" : "Profiles taken after timing captures, never concurrently; profile times are not benchmark samples",
+      "one_slot" : {
+         "active_runops_percent" : 38.22,
+         "gv_sv_percent" : 9.87,
+         "lost" : 0,
+         "numeric_enter_percent" : 18.34,
+         "pthread_mutex_lock_percent" : 3.03,
+         "samples" : 846,
+         "task_context_percent" : 8.05
+      }
+   },
+   "stock_sha256" : "c7688d340a6002b222777a1c93c6892db939629a69266ed8b4e2834e7a0951da",
+   "validation" : {
+      "asan" : "full project suite passed with detect_leaks=0 and stack-use-after-return detection; latest C/C++ numeric fixtures passed separately after correcting the COW test setup",
+      "clang_ubsan" : "new generated active dispatch unit compiled with Clang and undefined,float-divide-by-zero instrumentation, linked over the normal core; active and preemption tests passed; targeted unit coverage, not a full UBSan Perl build",
+      "fixture_correction" : "automatic newSVsv copy did not produce COW; deterministic shared-HEK COW setup replaced it; corrected fixtures passed under normal, ASan and TSan builds",
+      "mojo" : "optional target passed including 54 CLI checks, services and 48 live HTTP/WebSocket checks each on one/four slots",
+      "numeric" : "627 native-value/flag/result-alias comparisons per C/C++ fixture; COW, offset-PV, UV and published target exclusions; no allocations inside numeric exclusion; concurrent writer stress passed",
+      "patcher" : "idempotence, legacy numeric-entry upgrade and existing provenance/compatibility checks passed",
+      "project" : "full project suite passed",
+      "regression" : "PVIV/PVNV no-general-capture assertion failed against the intermediate IV-only binary and passed after expansion",
+      "remaining" : [
+         "active stock-relative overhead and poor multi-slot scaling",
+         "broader ordinary-Perl workload parity",
+         "prior full TSan clone race, full MSan locale dependency blocker and Helgrind/DRD tool assertions remain open",
+         "full UBSan/Clang project and Memcheck not repeated for this batch"
+      ],
+      "tsan" : "ordinary, active dispatch, preemption, parallel, hidden roots, publication and operands suites plus native C/C++ operand stress passed; negative control detected the unguarded read; no new suppressions",
+      "upstream_full" : {
+         "files" : 2919,
+         "status" : "complete standard noninteractive harness passed on final implementation, with no added test exclusions",
+         "tests" : 1351345,
+         "wall_seconds" : 340
+      }
+   }
+}

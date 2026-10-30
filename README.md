@@ -1259,10 +1259,17 @@ upstream-case timings and the Unicode application benchmark.
 
 The [compatibility checkpoint](DESIGN.md#compatibility-and-performance-gates-2026-10-30)
 records the complete standard noninteractive upstream pass, publication fix,
-and fresh performance comparisons. Both the historical and fresh-control
-regression checks pass. Active Wump still takes 12.6–16.9x stock time on the
-integer fixture; the large upstream XS macro case remains about 2.12x stock
-with Wump disabled. Broader ordinary-Perl parity remains an acceptance goal.
+and fresh performance comparisons. Its large upstream XS macro case measured
+about 2.12x stock with Wump disabled. Broader ordinary-Perl parity remains an
+acceptance goal.
+
+The latest [active dispatch checkpoint](DESIGN.md#active-dispatch-and-private-numeric-checkpoint-2026-10-30)
+reduces one-slot integer work time from 1.625s to 0.691s. Active one/two/four-slot
+work takes 5.45x/8.36x/8.78x stock time, with all historical and fresh-control
+regression checks passing. The default gate now uses this improved capture,
+so the previous active-runtime cost is no longer an acceptable baseline.
+The Unicode job-service comparison also improves modestly; shared metadata
+serialization still limits scaling.
 
 The [original matched-stock run](bench/perl-stock-baseline.jsonl) exposed large
 overheads on the implicit-loop-variable integer workload. A fresh
