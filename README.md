@@ -136,6 +136,8 @@ make perl-parallel-bench        # verified string workers on 1/2/4 slots
 make perl-mojo-cpu-test         # dashboard CPU backend on 1/2/4 slots
 make perl-mojo-cpu-bench        # repeated verified Unicode job batches
 make perl-upstream-test         # upstream regex, aggregate and interpreter regressions
+make perl-upstream-full-test    # complete upstream noninteractive core/library/extension suite
+make perl-parser-test           # verify generated parser with Bison 3.8.2
 make perl-memcheck              # task suite with registered C stacks and full Perl teardown
 make perl-asan                  # separate instrumented Perl, runtime, and XS fixtures
 make perl-lsan                  # same instrumented suites with leak checks and full teardown
@@ -1018,6 +1020,15 @@ validation remain future work.
 
 ## Verification
 
+`make perl-upstream-full-test` runs upstream's complete noninteractive core,
+bundled-library and extension harness against the private fork. It clears
+inherited library options and packaging skips, uses four test processes and a
+30-minute overall timeout by default. `PERL_FULL_TEST_JOBS` and
+`PERL_FULL_TEST_TIMEOUT` configure those limits. Upstream's platform, optional
+dependency and interactive-test skips remain visible in the log. This ordinary
+Perl compatibility check complements the project's explicit Wump/parallel
+suites; it does not exercise every library with Wump enabled.
+
 `make test` runs isolated, timeout-bounded cases covering argument errors,
 stack guards, ABI registers, floating-point state, errno, real four-worker
 parallelism, queue overflow, stack reuse, FIFO ordering, randomized buffer
@@ -1208,6 +1219,33 @@ Wump run additionally includes act/channel scheduling. Raw JSON samples include
 work/process timing, CPU time, build configuration, CPU model and source state.
 Five interleaved runs rotate execution order; summaries report medians and
 ratios without imposing a performance threshold.
+
+Compatibility work also has a separate performance regression check:
+
+```sh
+# Run after correctness checks finish, with the machine otherwise quiet:
+make perl-perf-test STOCK_PERL="$PWD/build/stock/perl/perl-5.42.2/perl"
+# Or compare two existing complete captures:
+make perl-perf-check PERL_PERF_BASELINE=before.jsonl PERL_PERF_CURRENT=after.jsonl
+make perl-perf-check-test
+```
+
+The check defaults to a maximum 10% increase in stock-normalized median work
+or whole-process time for ordinary Perl and Wump on one/two/four slots.
+It recomputes medians from verified raw samples and requires complete captures
+with at least three runs, clean source revisions, matching workloads, CPU
+models and uninstrumented compiler configurations. Whole-process time includes
+loading and result verification as well as work. Failed captures remain in
+`$(BUILD)/perl-baseline-current.jsonl.tmp`; successful captures are preserved
+before comparison, including when the regression budget fails.
+
+`PERL_PERF_BASELINE` defaults to the recorded active checkpoint. Use a baseline
+captured on your own machine when its CPU model or configuration differs.
+`PERL_PERF_MAX_REGRESSION` selects an explicit percentage budget. This prevents
+backsliding from a checkpoint; it does not satisfy the outstanding active-Wump
+overhead or scaling goals. One integer fixture does not cover general Perl
+performance, so compatibility investigations also retain representative
+upstream-case timings and the Unicode application benchmark.
 
 The [original matched-stock run](bench/perl-stock-baseline.jsonl) exposed large
 overheads on the implicit-loop-variable integer workload. A fresh

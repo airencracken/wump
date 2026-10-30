@@ -22,6 +22,11 @@ VALGRIND_SLOTS = 4
 TEST_TIMEOUT = 60
 TEST_LONG_TIMEOUT = 90
 TEST_FAILURE_TIMEOUT = 30
+PERL_FULL_TEST_JOBS = 4
+PERL_FULL_TEST_TIMEOUT = 1800
+PERL_PERF_BASELINE = bench/perl-active-after.jsonl
+PERL_PERF_CURRENT = $(BUILD)/perl-baseline-current.jsonl
+PERL_PERF_MAX_REGRESSION = 10
 SANITIZER_TEST_ARGS = CPPFLAGS='$(CPPFLAGS) -DWUMP_TEST_CASE_TIMEOUT=120' TEST_TIMEOUT=300 TEST_LONG_TIMEOUT=300 TEST_FAILURE_TIMEOUT=300
 PERL_SUITES = entry ordinary waitgroup preempt tasks parallel xs-parallel encode-parallel bytes-parallel native-integration regex-parallel regex local elements pocket pocket-deparse separators hooks locks shared keys reads read-claims scalar-writes operands stack-loads lvalue-loads reference-loads scalar-references materialization iteration memory publication hidden-roots
 
@@ -45,12 +50,23 @@ perl-mojo-cpu-bench: perl-build
 	perl bench/mojo-cpu.pl '$(abspath $(BUILD))/perl/perl-5.42.2/perl'
 
 STOCK_PERL = $(BUILD)/stock/perl/perl-5.42.2/perl
-.PHONY: perl-baseline-bench perl-baseline-test
+.PHONY: perl-baseline-bench perl-baseline-test perl-perf-test perl-perf-check perl-perf-check-test
 perl-baseline-bench: perl-build
 	timeout 300s perl bench/perl-baseline.pl '$(abspath $(BUILD))/perl/perl-5.42.2/perl' '$(abspath $(STOCK_PERL))'
 
 perl-baseline-test: perl-build
 	timeout 90s perl tests/perl/baseline-bench.t '$(abspath $(BUILD))/perl/perl-5.42.2/perl' '$(abspath $(STOCK_PERL))'
+
+perl-perf-check:
+	perl bench/perl-baseline-check.pl '$(PERL_PERF_BASELINE)' '$(PERL_PERF_CURRENT)' --max-regression '$(PERL_PERF_MAX_REGRESSION)'
+
+perl-perf-check-test:
+	perl tests/perl/baseline-check.t
+
+perl-perf-test: perl-build perl-perf-check-test
+	timeout 300s perl bench/perl-baseline.pl '$(abspath $(BUILD))/perl/perl-5.42.2/perl' '$(abspath $(STOCK_PERL))' >'$(PERL_PERF_CURRENT).tmp'
+	mv -- '$(PERL_PERF_CURRENT).tmp' '$(PERL_PERF_CURRENT)'
+	$(MAKE) perl-perf-check
 
 perl-mojo-test: perl-build
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -MMojolicious -e 'die "Install the tested Mojolicious 9.37 from examples/mojo/cpanfile\n" unless $$Mojolicious::VERSION eq "9.37"'
@@ -83,6 +99,7 @@ perl-source-test:
 	bash tests/perl/source.sh
 
 perl-test: perl-build perl-source-test
+	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/baseline-check.t
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/root-fixture.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/entry.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/ordinary.t
@@ -394,6 +411,14 @@ perl-memcheck: perl-source $(BUILD)/libwump.a
 perl-upstream-test: perl-build
 	$(MAKE) -C $(BUILD)/perl/perl-5.42.2 test_prep
 	cd $(BUILD)/perl/perl-5.42.2/t && timeout 240s ./perl TEST -v comp/*.t re/*.t class/*.t op/anonconst.t op/const-optree.t op/args.t op/closure.t op/die.t op/eval.t op/lex.t op/local.t op/ref.t op/sort.t op/array.t op/avhv.t op/hash*.t op/each*.t op/delete.t op/localref.t op/lvref.t op/multideref.t op/push.t op/reverse.t op/splice.t op/tiearray.t op/tiehash.t op/chop.t op/readline.t op/readline_nb.t op/print.t op/sig*.t op/warn.t op/bool.t op/numconvert.t op/numify.t op/numify_chkflags.t op/svflags.t op/append.t op/concat2.t op/utf8cache.t op/utf8decode.t op/utf8magic.t op/arith2.t op/int.t op/overload_integer.t io/argv.t io/print.t io/say.t ../lib/B/Deparse.t ../lib/B/Deparse-core.t ../lib/B/Deparse-subclass.t
+
+.PHONY: perl-upstream-full-test
+perl-upstream-full-test: perl-build
+	env -u PERL5LIB -u PERL5OPT -u PERL_BUILD_PACKAGING TEST_JOBS='$(PERL_FULL_TEST_JOBS)' timeout '$(PERL_FULL_TEST_TIMEOUT)s' $(MAKE) -C '$(BUILD)/perl/perl-5.42.2' test_harness_notty
+
+.PHONY: perl-parser-test
+perl-parser-test: perl-build
+	perl tests/perl/parser-regeneration.pl '$(BUILD)/perl/perl-5.42.2'
 
 .PHONY: perl-mro-upstream-test
 perl-mro-upstream-test: perl-build

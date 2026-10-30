@@ -1,0 +1,64 @@
+=item Wump: parallel UTF-8 flag query requires a nonmagical value
+
+(F) A UTF-8 flag query received a value with get magic during parallel
+execution. Reading that value could invoke callbacks or change shared state.
+Use an ordinary scalar value, or perform the operation before execution starts.
+
+=item Wump: parallel byte downgrade requires a plain scalar
+
+(F) Byte downgrade received a reference, an object, or unsupported magic
+during parallel execution. Plain scalars retain their original alias and are
+protected while conversion updates their bytes and encoding flags.
+
+=item Wump: parallel capability lookup requires a plain scalar or reference
+
+(F) C<UNIVERSAL::can> or C<UNIVERSAL::isa> received an unsupported argument
+during parallel execution. Receivers may be ordinary scalar values or
+references; method and class names must be plain scalars. Tied arguments and
+reference-valued names are outside the parallel native-call audit.
+
+=item Wump: parallel named captures require plain names and native API flags
+
+(F) A named-capture query received a magical or reference-valued name, or
+unsupported native API flags during parallel execution. Use plain capture
+names and the read-only capture operations.
+
+=item Wump: parallel named captures require the native regex engine
+
+(F) A parallel named-capture query targeted a custom regular-expression
+engine. Only the native engine's audited capture storage is supported.
+
+=item Wump: pocket reference alias localization is not supported yet
+
+(F) C<pocket> was applied to reference-alias localization. This form cannot
+currently be represented by Wump's task-local binding overlays.
+
+=item Wump: pocket requires a running task
+
+(F) A C<pocket> binding was evaluated before interpreter-owned task execution
+started, such as in a C<BEGIN> block. Create the binding during task execution.
+
+=item Wump: reference alias localization in a task is not supported yet
+
+(F) Reference-alias localization was attempted inside a Wump task. Ordinary
+scalar, array, hash and supported element localization use task-local overlays;
+reference-alias localization does not yet support those overlays.
+
+=item Wump: runtime compilation is not supported during parallel execution
+
+(F) Runtime string evaluation, module/file loading, or dynamic regex
+compilation attempted to enter the compiler with multiple execution slots.
+Load dependencies and compile patterns before execution starts. Single-slot
+execution retains the ordinary compiler path.
+
+=item Wump: typeglob localization in a task is not supported yet
+
+(F) Typeglob localization was attempted inside a Wump task. Task-local
+localization currently supports ordinary value bindings rather than complete
+symbol-table glob replacement.
+
+=item Wump: unsupported pocket target
+
+(F) C<pocket> was applied to an expression that cannot be localized by Wump's
+binding overlays. Use a supported scalar, array, hash, element or slice target.
+

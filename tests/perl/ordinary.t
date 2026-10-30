@@ -6,6 +6,35 @@ use lib 'tests/perl/lib';
 use WumpTest ();
 
 WumpTest::check_program(q{
+	use B ();
+	sub replaced_constant :prototype() { }
+	use constant replaced_constant => \&replaced_constant;
+	my $value = B::svref_2object(\&replaced_constant)->XSUBANY;
+	die "ordinary constant reference acquired publication magic\n" unless ref($value) eq 'B::IV';
+	die "ordinary constant reference lost its subroutine\n" unless ref(replaced_constant()) eq 'CODE';
+	print "ordinary constant references retain their native scalar representation\n";
+}, 0, qr/\Aordinary constant references retain their native scalar representation\n\z/,
+	'ordinary constant folding does not publish through inactive global slots');
+
+WumpTest::check_program(q{
+	use RootFixture; use Wump ();
+	my $shared;
+	RootFixture::scalar_publish(\$shared);
+	my $later = {nested => []};
+	$shared = $later;
+	die "explicit publication lost its new reference graph\n"
+		unless Wump::is_shared($later) && Wump::is_shared($later->{nested});
+	my @array;
+	RootFixture::scalar_publish(\@array);
+	push @array, {child => []};
+	die "explicit array publication lost new graph edges\n"
+		unless Wump::is_shared($array[0]) && Wump::is_shared($array[0]{child});
+	die "publication started task execution\n" if RootFixture::execution_context()->[1];
+	print "explicitly published owners propagate new edges before task activation\n";
+}, 0, qr/\Aexplicitly published owners propagate new edges before task activation\n\z/,
+	'explicit publication barriers remain active without an execution context');
+
+WumpTest::check_program(q{
 	use RootFixture;
 	sub sum ($limit) { my $total = 0; $total += $_ % 97 for 1..$limit; return $total }
 	sub hooked () { my $value = 42; return $value }

@@ -232,6 +232,12 @@ void Perl_wump_publish(pTHX_ SV *value) {
 }
 
 void Perl_wump_publish_store(pTHX_ SV *owner, SV *value) {
+	/* Namespace globs are implicitly shared once acts can run. Before the
+	 * first activation, treating ordinary symbol replacement as an escape
+	 * upgrades constant values merely to attach publication magic. Native
+	 * constant folding and B inspection must keep their original layout.
+	 * Explicitly published scalar/container owners still propagate stores. */
+	if (!S_wump_context_seen(aTHX) && owner && isGV_with_GP(owner)) return;
 	if (owner && SvTYPE(owner) == SVt_PVHV && HvNAME_HEK((HV *)owner)) return;
 	if (!Perl_wump_publish_active(aTHX) && Perl_wump_is_shared(aTHX_ owner))
 		Perl_wump_publish(aTHX_ value);

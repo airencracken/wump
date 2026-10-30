@@ -6,6 +6,7 @@ use File::Copy 'copy';
 use File::Basename 'dirname';
 use File::Path 'make_path';
 use File::Temp 'tempdir';
+use IPC::Open3 'open3';
 
 @ARGV == 1 or die "usage: $0 SOURCE\n";
 my $source = $ARGV[0];
@@ -13,7 +14,8 @@ sub snapshot {
 	my ($source) = @_;
 	my %files;
 	find({no_chdir => 1, wanted => sub {
-		return unless -f $_ && /\.(?:c|h|xs|pm|y|act)\z/;
+		return unless -f $_ && (/\.(?:c|h|xs|pm|y|act|tab)\z/
+			|| m{/(?:Porting/Maintainers\.pl|t/porting/customized\.dat|pod/perldiag\.pod|cpan/Digest-MD5/t/files\.t)\z});
 		open my $fh, '<', $_ or die "$_: $!\n";
 		binmode $fh;
 		local $/;
@@ -220,3 +222,37 @@ for my $file (keys %$after) {
 		or die "legacy lifecycle upgrade changed $relative\n";
 }
 print "ok - upgrading earlier lifecycle, reference loads, deferred ownership and parallel metadata/XS guards preserves the complete generated tree\n";
+for my $case (
+	['perly.y', qr/unexpected pinned grammar/, 'unknown grammar changes cannot be marked as regenerated'],
+	['cpan/MIME-Base64/Base64.xs', qr/unexpected customized source/, 'unknown native changes cannot acquire audited checksums'],
+) {
+	my ($file, $expected, $message) = @$case;
+	my $original = read_file_for_test("$legacy/$file");
+	open my $edited, '>>', "$legacy/$file" or die $!;
+	print {$edited} "\n/* Unrecognized input must not acquire valid generated provenance. */\n" or die $!;
+	close $edited or die $!;
+	open my $errors, '>', "$legacy/patch-rejection.log" or die $!;
+	my ($input, $output);
+	my $pid = open3($input, $output, '>&' . fileno($errors), 'perl', 'perl/apply.pl', $legacy);
+	close $input or die $!;
+	my $stdout = do { local $/; <$output> };
+	close $output or die $!;
+	waitpid($pid, 0) == $pid or die $!;
+	my $status = $?;
+	close $errors or die $!;
+	open my $restore, '>', "$legacy/$file" or die $!;
+	print {$restore} $original or die $!;
+	close $restore or die $!;
+	my $report = read_file_for_test("$legacy/patch-rejection.log");
+	$status != 0 && $report =~ $expected
+		or die "unexpected rejection for $file: $status\n$report";
+	print "ok - $message\n";
+}
+
+sub read_file_for_test {
+	my ($path) = @_;
+	open my $input, '<', $path or die $!;
+	my $text = do { local $/; <$input> };
+	close $input or die $!;
+	return $text;
+}

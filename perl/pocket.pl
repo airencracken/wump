@@ -22,6 +22,26 @@ C
 	edit('perly.y', '{ $$ = localize($operand,0); }', '{ $$ = localize($operand,$KW_LOCAL); }');
 	edit('perly.act', '{ (yyval.opval) = localize((ps[0].val.opval),0); }',
 		'{ (yyval.opval) = localize((ps[0].val.opval),(ps[-1].val.ival)); }');
+	# The grammar structure is unchanged; the paired action patch above is
+	# byte-for-byte identical to Bison 3.8.2 regeneration. Update provenance
+	# only for this pinned transformation, never for an unknown grammar.
+	require Digest::SHA;
+	my $grammar = read_file("$source/perly.y");
+	my $original_grammar = $grammar;
+	my $native_action = '{ $$ = localize($operand,0); }';
+	my $pocket_action = '{ $$ = localize($operand,$KW_LOCAL); }';
+	$original_grammar =~ s/\Q$pocket_action\E/$native_action/
+		or die "missing pocket grammar action\n";
+	my $original_digest = '57ef509d481a8f100fca417b83deb7d66655912f27495b2f6daa0699748ea44f';
+	Digest::SHA::sha256_hex($original_grammar) eq $original_digest
+		or die "unexpected pinned grammar; regenerate and audit the parser\n";
+	my $grammar_digest = Digest::SHA::sha256_hex($grammar);
+	for my $file (qw(perly.act perly.h perly.tab)) {
+		my $text = read_file("$source/$file");
+		my $count = $text =~ s{^( \* )(?:\Q$original_digest\E|\Q$grammar_digest\E)( perly\.y)$}{$1$grammar_digest$2}mg;
+		$count == 1 or die "missing pinned grammar provenance in $file\n";
+		write_file("$source/$file", $text);
+	}
 	edit('op.c', "Perl_localize(pTHX_ OP *o, I32 lex)\n{", <<'C');
 Perl_localize(pTHX_ OP *o, I32 lex)
 {
