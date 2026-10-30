@@ -791,7 +791,7 @@ the performance milestone is complete.
 | Perl semantics and language surface | Main-act entry, closure spawning, scalar/reference channels, wait groups, scoped locks, regex state, `local` and `pocket` have focused coverage. | Perl `sel`, core feature/call-form syntax, per-act environment/process integration and remaining magic/weak/object paths need work. |
 | Shared-memory safety | Conservative atomic counters, publication, read claims, private conversion snapshots and pinned storage retirement support audited paths. | General concurrent-read safety, ownership specialization, cheaper reclamation, remaining aggregate/cache/XS audits and a user-facing `perl -race` are unfinished. |
 | Useful network services | The one-slot dashboard passes live HTTP/WebSocket tests; its Unicode job backend verifies results on 1/2/4 slots. Application/listener bootstrap, precompiled regexes and numeric socket metadata have advanced parallel startup. | Four-slot HTTP remains blocked by Encode::utf8::encode and dynamic listener cleanup. Automatic Perl I/O/syscall handoff, general XS compatibility and runtime compilation policy remain separate design gaps. |
-| Performance | Repeated, result-checked Unicode backend measurements show 1.26x speedup on two slots and 1.24x on four at the recorded checkpoint. A matched-stock harness now separates ordinary fork overhead from Wump scheduling and parallel execution. | Near-linear scaling is not achieved. The Unicode benchmark establishes neither stock-Perl overhead nor the Go runtime target. Single-slot overhead must be assessed separately and across more workloads. |
+| Performance | Repeated Unicode backend measurements show 1.26x speedup on two slots and 1.24x on four. The matched scalar loop now takes 0.92x stock time without Wump, after removing inactive context overhead. | One-slot Wump still takes 25.02x stock time on that loop; additional slots are slower. Near-linear scaling and the Go runtime target remain unmet. One ordinary loop does not establish general stock-Perl parity. |
 | Compatibility and validation | Normal Perl/native and Mojo suites pass. The GCC/Clang runtime sanitizer matrix, full project Perl UBSan, six focused TSan suites, Memcheck and 82 upstream regex/UTF-8/capability scripts pass at the integration checkpoint. | Full upstream make test remains unrun. Full Perl TSan reports a threads.pm clone race; full Perl MSan stops in uninstrumented locale dependencies. Helgrind/DRD abort internally on this host. General CPAN compatibility and longer network soaks remain unvalidated. |
 | Deployment and portability | A private Perl fork and standalone C runtime build on Linux x86-64. | Static application bundling, the `wump` tool, dependency locking/cache and arm64 are pending. |
 
@@ -812,8 +812,9 @@ an explicit non-goal and must not be mistaken for the implementation model.
 
 The next acceptance priorities are:
 
-1. Reduce the ordinary-fork and one-slot Wump overhead exposed by the matched
-   baseline below. Preserve migration-safe state access, publication and reader
+1. Reduce one-slot Wump overhead and metadata contention exposed by the matched
+   baseline below. Check ordinary-fork performance across more workloads.
+   Preserve migration-safe state access, publication and reader
    semantics while optimizing. Retain raw samples, compiler configuration and
    source identity; separate startup from work timing. Recheck runtime
    primitives individually, especially spawn and echo.
@@ -890,6 +891,72 @@ which lock or optimization accounts for the full slowdown.
 at or above 1% and omit unresolved/kernel addresses; percentages retain the
 full capture denominator and do not sum to 100. Profiled runs are separate
 from the benchmark timings.
+
+### Ordinary execution checkpoint (2026-10-30)
+
+Fresh matched-stock runs compare clean `7a16547` with clean `607927f`, using
+five interleaved samples per variant, eight jobs and 500,000 integer iterations
+per job. Both builds retain the same Perl 5.42.2, GCC 14.2.1, `-O2`, compiler
+and linker flags, multiplicity, op-sharing and 64-bit settings. The host is the
+same Ryzen 7 PRO 4750U. Validation jobs were stopped during timing and profiling.
+All 400 job results across the two captures matched the independent reference.
+
+| Execution mode | Before median work time | After median work time | After / stock time |
+| --- | --- | --- | --- |
+| Stock Perl control | 0.126475 s | 0.127591 s | 1.00x |
+| Ordinary fork, Wump disabled | 1.033105 s | 0.117151 s | 0.92x |
+| Wump, one slot | 4.471900 s | 3.192382 s | 25.02x |
+| Wump, two slots | 5.658095 s | 5.202783 s | 40.78x |
+| Wump, four slots | 6.455071 s | 6.303846 s | 49.41x |
+
+Ordinary execution is 8.8x faster than the previous fork on this workload,
+and about 8% less time than its stock control. The inactive path bypasses task
+and allocator selection, uses native opcode bodies with direct root lvalues,
+and inlines common dispatch and numeric stores. It retains native validation,
+coercion, exceptions, custom opcode hooks and atomic reference counts.
+The sticky activation flag and migration-safe TLS loads are described in
+section 5.1. Acts still share one interpreter; no interpreter cloning was added.
+
+This removes the ordinary-fork regression on this particular loop. It does
+not establish parity across Perl applications or satisfy the active-Wump
+performance goal. One-slot Wump is 1.40x faster than before but still takes
+25x stock time. Two and four slots remain slower than one, so near-linear
+scaling is still unmet. The earlier native/Go measurements are unchanged.
+
+[Before samples](bench/perl-ordinary-before.jsonl),
+[after samples](bench/perl-ordinary-after.jsonl), and the
+[machine and validation record](bench/ordinary-machine.json) retain exact
+revisions, clean-tree status, compiler configuration and binary hashes.
+
+Separate, non-sanitized profiles use `cycles:u` at 199 Hz, with no lost samples.
+The ordinary profile uses ten million iterations per job; the one/four-slot
+profiles use one million. Ordinary bodies now inline into the runloop, so its
+99% flat-profile share includes their native arithmetic and iteration work.
+With one slot, mutation admission accounts for about 5%, operand preparation
+4%, registry lookup 4% and pthread mutex locking 4%. Four-slot mutex locking
+accounts for about 16%. These observations support targeting shared-scalar
+captures, temporary allocation and metadata contention next; they do not prove
+which individual lock or operation accounts for the remaining slowdown.
+[Named profile rows](bench/ordinary-profiles.csv) aggregate equal symbol names
+and retain rows at or above 1%, without renormalizing away unresolved samples.
+
+Full project suites pass under GCC, Clang/Clang++ and UBSan. The selected
+upstream suite passes 172 scripts and 548,693 checks; the benchmark harness
+passes 93 checks. The context change passed Memcheck across 31 Perl suites,
+28 native fixtures and interpreter entry. The final inlining change also
+passed the ordinary callback/representation suite and five upstream numeric
+suites (1,512 checks) under Memcheck. Both use full teardown and leak/origin
+checks. Regressions cover selector bypass, first activation during callbacks,
+stack growth, custom opcode hooks, numeric representation changes, destructor
+reentry and exceptions. A clone-allocation regression fails before the flag
+initialization fix and passes afterward, including under Memcheck.
+
+Focused TSan context/allocator, parallel Perl and native fixture checks pass,
+including the deliberate-race controls. The full TSan target still fails on
+the existing `threads.pm` clone race in `PL_veto_switch_non_tTHX_context`;
+the suites after that failure were run separately and pass. The failure remains
+visible and unsuppressed. The full upstream suite and the previously blocked
+full MSan build remain outstanding.
 
 ### State-access checkpoint (2026-10-29)
 

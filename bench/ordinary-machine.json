@@ -1,0 +1,51 @@
+{
+   "after_private_sha256" : "81aa5e1df28f1dc74d6b747c5dac2bbbf23a2eec2f2c3559a817aaa90484f769",
+   "after_source_dirty" : false,
+   "after_source_revision" : "607927f49a8606dda63d1bf201290f8426e594f9",
+   "before_private_sha256" : "10a238c9077116c628175ab355d571557e21403313b0332f24c222d2e94b9b3f",
+   "before_source_dirty" : false,
+   "before_source_revision" : "7a1654753d1ae5dd1de6c086a16dc1cf3a31d161",
+   "benchmark" : {
+      "concurrent_validation" : false,
+      "fixture" : "integer-reduction-v1",
+      "iterations" : 500000,
+      "jobs" : 8,
+      "runs" : 5
+   },
+   "cpu_model" : "AMD Ryzen 7 PRO 4750U with Radeon Graphics",
+   "date_utc" : "2026-10-30",
+   "profiles" : {
+      "concurrent_validation" : false,
+      "event" : "cycles:u",
+      "iterations" : {
+         "plain" : 10000000,
+         "wump-1" : 1000000,
+         "wump-4" : 1000000
+      },
+      "jobs" : 8,
+      "lost_samples" : 0,
+      "sampling_hz" : 199,
+      "symbols" : "Aggregate named user symbols; rows at or above 1%; unresolved/kernel samples omitted without renormalizing"
+   },
+   "stock_sha256" : "c7688d340a6002b222777a1c93c6892db939629a69266ed8b4e2834e7a0951da",
+   "validation" : {
+      "baseline_harness" : "93 checks passed",
+      "clang_project_suite" : "passed; Clang 22.1.8 and Clang++ fixtures",
+      "full_msan" : "prior locale dependency blocker; not rerun for this change",
+      "full_upstream_suite" : "not run",
+      "gcc_project_suite" : "passed",
+      "memcheck_context_checkpoint" : "f5710a4: 31 Perl suites, 28 native fixtures and interpreter entry passed",
+      "memcheck_final_inline_change" : "607927f: ordinary callback/representation suite and five upstream numeric suites (1512 checks) passed",
+      "regressions" : [
+         "inactive context selector bypass fails before and passes after",
+         "nonzero clone allocation fails before initialization fix and passes after, including Memcheck"
+      ],
+      "tsan" : "Context/allocator, seven focused Perl suites, nine native fixture groups and remaining thirteen Perl suites passed; final inlined ordinary regression passed. Full target still reports threads.pm PL_veto_switch_non_tTHX_context race",
+      "ubsan_project_suite" : "passed",
+      "upstream_selected" : {
+         "scripts" : 172,
+         "status" : "passed",
+         "tests" : 548693
+      }
+   }
+}
