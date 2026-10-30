@@ -33,6 +33,32 @@ WumpTest::check_program(q{
 
 WumpTest::check_program(q{
 	use RootFixture;
+	sub modulo ($left, $right) { return $left % $right }
+	my @cases = (
+		[100, 97, 3],
+		[18446744073709551614, 18446744073709551615, 18446744073709551614],
+		[-100, 97, 94], [100, -97, -94], [-100, -97, -3],
+		[1e30, 16, 0], [100, 97, 3],
+	);
+	for my $case (@cases) {
+		die "ordinary numeric representation changed\n" unless modulo(@$case[0, 1]) == $case->[2];
+	}
+	{ package RetiredNumber;
+		use overload '0+' => sub { 100 }, fallback => 1;
+		sub DESTROY { RootFixture::activate_and_clear(); $main::drops++ }
+	}
+	our $drops = 0;
+	my $value = bless {}, 'RetiredNumber';
+	$value += 2;
+	die "numeric replacement lost its destructor\n" unless $drops == 1 && $value == 102;
+	die "numeric destructor leaked an act\n" if RootFixture::execution_context()->[1];
+	die "numeric replacement lost its root\n" unless modulo(100, 97) == 3;
+	print "ordinary numeric setters retain representation and destructor behavior\n";
+}, 0, qr/\Aordinary numeric setters retain representation and destructor behavior\n\z/,
+	'ordinary numeric targets cross IV, UV and NV boundaries and retain destructor reentry');
+
+WumpTest::check_program(q{
+	use RootFixture;
 	{ package ThrowingNumber;
 		use overload '0+' => sub { RootFixture::activate_and_clear(); die "coercion failed\n" }, fallback => 1;
 	}

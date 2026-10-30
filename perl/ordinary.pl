@@ -19,6 +19,26 @@ sub apply_ordinary {
 #include "wump_plain_ops.h"
 
 C
+	# An opcode callback can activate a context before its numeric store.
+	# Retain the public guarded setter after activation; otherwise inline
+	# the same native setter body with direct root-state lvalues.
+	my $numeric = read_file("$source/sv.c");
+	for my $name (qw(sv_setiv sv_setuv sv_setnv)) {
+		my $marker = "#define Perl_$name wump_memory_impl_$name\n";
+		my $at = index($numeric, $marker);
+		my $start = index($numeric, "Perl_$name(", $at);
+		my $end = index($numeric, "\n}\n", $start);
+		$at >= 0 && $start >= 0 && $end >= 0 or die "missing ordinary numeric setter $name\n";
+		my $body = substr($numeric, $start, $end + 3 - $start);
+		$body =~ /\(pTHX_ ([^\n]+)\)\n/ or die "missing numeric setter parameters $name\n";
+		my @arguments = map { /\b(\w+)\s*\z/ ? $1 : die "unknown setter argument\n" } split /,/, $1;
+		$body =~ s/^Perl_\Q$name\E/S_wump_plain_$name/;
+		my $fallback = "    if (S_wump_context_seen(aTHX)) {\n"
+			. "        Perl_$name(aTHX_ " . join(', ', @arguments) . ");\n        return;\n    }\n";
+		$body =~ s/\n\{\n/\n{\n$fallback/ or die "missing setter body $name\n";
+		$plain .= "__attribute__((always_inline)) static inline void\n$body\n"
+			. "#undef $name\n#define $name(sv, value) S_wump_plain_$name(aTHX_ (sv), (value))\n\n";
+	}
 	for my $spec (@specs) {
 		my ($file, $name, $implementation) = @$spec;
 		my $text = read_file("$source/$file");
@@ -30,6 +50,7 @@ C
 		my $body = substr($text, $start, $end + 3 - $start);
 		$body =~ s/\Q$gate\E//g;
 		$body =~ s/\QPP($implementation)\E/PP(wump_plain_$name)/;
+		$body = "__attribute__((always_inline)) inline\n$body";
 		$plain .= "$body\n";
 		$prototypes .= "OP *Perl_wump_plain_$name(pTHX);\n";
 		edit($file, "PP(pp_$name)\n{\n", "PP(pp_$name)\n{\n$gate");

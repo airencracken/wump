@@ -283,6 +283,9 @@ opcode retains its native public entry; custom ppaddr hooks still run. Once a
 callback activates a context, dispatch returns to the guarded standard loop
 before the next opcode. Atomic refcounts and shared-key safety remain enabled
 even on the inactive path, including for foreign native threads.
+Common opcode bodies and the native numeric setter bodies inline on this
+path. A setter rechecks activation before its store and falls back to the
+public guarded API if an earlier opcode callback activated a context.
 
 ### 5.2 Escape tracking
 Go's compiler does escape analysis to decide what lives on the heap. We
