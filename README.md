@@ -1198,6 +1198,38 @@ fixtures do not establish that the TCP/half-close checks passed.
 
 ## Benchmarks
 
+`make perl-baseline-bench` compares matching stock and private Perl 5.42.2
+builds, then Wump with one, two and four slots. It checks compiler flags,
+optimization, architecture and interpreter configuration, rejects sanitizer
+builds and verifies every job against a closed-form integer reference. The
+plain fork run measures overhead even when `use Wump` is absent; the one-slot
+Wump run additionally includes act/channel scheduling. Raw JSON samples include
+work/process timing, CPU time, build configuration, CPU model and source state.
+Five interleaved runs rotate execution order; summaries report medians and
+ratios without imposing a performance threshold.
+
+Build the stock control from the same verified source archive without applying
+the Wump patches. These Configure options match the default private build:
+
+```sh
+bash perl/source.sh build/stock "$PWD/build/perl/perl-5.42.2.tar.xz"
+(
+	cd build/stock/perl/perl-5.42.2 || exit 1
+	sh Configure -des -Dusemultiplicity -Duseithreads -Duse64bitall \
+		-Dprefix="$PWD/../install" -Dman1dir=none -Dman3dir=none || exit 1
+	make -j4
+)
+make perl-baseline-test
+make perl-baseline-bench
+```
+
+`STOCK_PERL` selects another matching stock executable. For larger or repeated
+samples, invoke `perl bench/perl-baseline.pl PRIVATE_PERL STOCK_PERL --runs 5
+--iterations 500000 --jobs 8`. This integer workload measures interpreter and
+runtime overhead; it does not establish general application performance or
+the Unicode dashboard's scaling. See the [design assessment](DESIGN.md#implementation-assessment-2026-10-29)
+for the remaining acceptance goals.
+
 ```sh
 make bench
 make bench-compare

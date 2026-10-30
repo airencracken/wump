@@ -44,6 +44,14 @@ perl-mojo-cpu-test: perl-build
 perl-mojo-cpu-bench: perl-build
 	perl bench/mojo-cpu.pl '$(abspath $(BUILD))/perl/perl-5.42.2/perl'
 
+STOCK_PERL = $(BUILD)/stock/perl/perl-5.42.2/perl
+.PHONY: perl-baseline-bench perl-baseline-test
+perl-baseline-bench: perl-build
+	timeout 300s perl bench/perl-baseline.pl '$(abspath $(BUILD))/perl/perl-5.42.2/perl' '$(abspath $(STOCK_PERL))'
+
+perl-baseline-test: perl-build
+	timeout 90s perl tests/perl/baseline-bench.t '$(abspath $(BUILD))/perl/perl-5.42.2/perl' '$(abspath $(STOCK_PERL))'
+
 perl-mojo-test: perl-build
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -MMojolicious -e 'die "Install the tested Mojolicious 9.37 from examples/mojo/cpanfile\n" unless $$Mojolicious::VERSION eq "9.37"'
 	timeout 90s perl tests/perl/mojo-cli.t '$(abspath $(BUILD))/perl/perl-5.42.2/perl'

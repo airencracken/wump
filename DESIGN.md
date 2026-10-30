@@ -761,18 +761,52 @@ the amount of completed infrastructure is not a reliable time estimate.
 
 The milestones below describe the intended development sequence. Work now
 overlaps them: there is real parallel Perl execution, while some earlier
-language and I/O integration remains open.
+language and I/O integration remains open. The current status is an
+experimental parallel preview; neither the broad compatibility milestone nor
+the performance milestone is complete.
 
 | Design goal | Current evidence | Remaining work |
 | --- | --- | --- |
 | One interpreter, M:N execution | Supported Perl closures run on several slots with private act state and per-slot allocation caches; tests verify interpreter identity and migration. | Generalize the supported paths through the remaining audits. `aTHX` still denotes the shared interpreter, with TLS selecting act storage. |
-| Cheap tasks and runtime primitives | C tasks, guarded stacks, work stealing, channels, selection, timers, epoll and explicit syscall handoff are implemented and tested. | Sysmon, million-live-task validation, stack mapping costs and the within-2x-of-Go performance target remain open. |
+| Cheap tasks and runtime primitives | C tasks, guarded stacks, work stealing, channels, selection, timers, epoll and explicit syscall handoff are implemented and tested. | The within-2x-of-Go target is not met by the recorded spawn baseline. Sysmon, million-live-task validation and stack mapping costs remain open; stacks currently use mprotect guards. |
 | Perl semantics and language surface | Main-act entry, closure spawning, scalar/reference channels, wait groups, scoped locks, regex state, `local` and `pocket` have focused coverage. | Perl `sel`, core feature/call-form syntax, per-act environment/process integration and remaining magic/weak/object paths need work. |
 | Shared-memory safety | Conservative atomic counters, publication, read claims, private conversion snapshots and pinned storage retirement support audited paths. | General concurrent-read safety, ownership specialization, cheaper reclamation, remaining aggregate/cache/XS audits and a user-facing `perl -race` are unfinished. |
-| Useful network services | The one-slot dashboard passes live HTTP/WebSocket tests; its actual Unicode job backend runs and verifies results on 1/2/4 slots. | Multi-slot live HTTP acceptance, Perl I/O/syscall integration, runtime compilation policy and remaining dependency XS audits are separate gates. |
-| Performance | Repeated, result-checked CPU backend measurements and native runtime baselines exist. State-access and owned-value metadata optimizations now give multi-slot gains on the Unicode backend. | Near-linear Perl scaling is not achieved. This benchmark does not compare single-thread overhead with stock Perl, and does not establish the Go runtime target. |
-| Compatibility and validation | Selected upstream compiler, regex, class, opcode, I/O and deparser tests complement native/Perl regressions, TSan, ASan/leak checks and Valgrind. | The selected upstream target is not the entire upstream test distribution; general CPAN compatibility and longer network soak tests remain unvalidated. |
+| Useful network services | The one-slot dashboard passes live HTTP/WebSocket tests; its Unicode job backend verifies results on 1/2/4 slots. Application/listener bootstrap, precompiled regexes and numeric socket metadata have advanced parallel startup. | Four-slot HTTP remains blocked by Encode::utf8::encode and dynamic listener cleanup. Automatic Perl I/O/syscall handoff, general XS compatibility and runtime compilation policy remain separate design gaps. |
+| Performance | Repeated, result-checked Unicode backend measurements show 1.26x speedup on two slots and 1.24x on four at the recorded checkpoint. A matched-stock harness now separates ordinary fork overhead from Wump scheduling and parallel execution. | Near-linear scaling is not achieved. The Unicode benchmark establishes neither stock-Perl overhead nor the Go runtime target. Single-slot overhead must be assessed separately and across more workloads. |
+| Compatibility and validation | Normal Perl/native and Mojo suites pass. The GCC/Clang runtime sanitizer matrix, full project Perl UBSan, six focused TSan suites, Memcheck and 82 upstream regex/UTF-8/capability scripts pass at the integration checkpoint. | Full upstream make test remains unrun. Full Perl TSan reports a threads.pm clone race; full Perl MSan stops in uninstrumented locale dependencies. Helgrind/DRD abort internally on this host. General CPAN compatibility and longer network soaks remain unvalidated. |
 | Deployment and portability | A private Perl fork and standalone C runtime build on Linux x86-64. | Static application bundling, the `wump` tool, dependency locking/cache and arm64 are pending. |
+
+There are three material differences from the proposed architecture. `aTHX`
+still points at the interpreter, with TLS selecting task state; unaudited XS is
+rejected rather than protected by the planned compatibility lock; and runtime
+string compilation is rejected rather than protected by a compile lock.
+These preserve the preview's audited boundary but do not fulfill "Perl stays
+Perl" for general programs. Moving setup into CHECK advances this dashboard;
+it is not a general runtime-loading solution. Internal metadata locks protect
+runtime invariants; programs still synchronize shared updates explicitly.
+Development TSan builds do not implement the promised user-facing `perl -race`.
+
+USE_ITHREADS supplies build-time op-sharing infrastructure. Acts never clone
+the interpreter or load threads.pm to schedule work. The cloning regression
+failure remains visible in the full TSan target, but ithreads compatibility is
+an explicit non-goal and must not be mistaken for the implementation model.
+
+The next acceptance priorities are:
+
+1. Establish the stock-Perl overhead baseline and retain raw samples, compiler
+   configuration and source identity. Use matched workloads for throughput;
+   separate startup from work timing. Compare runtime primitives with Go
+   individually rather than averaging away slow spawn or channel cases.
+2. Finish the bounded four-slot network acceptance path: HTTP and WebSocket
+   progress during CPU work, correct results, admission/cancellation bounds,
+   responsive health checks and clean shutdown. Audit encoding and listener
+   cleanup while retaining the compiler/XS gates.
+3. Address general Perl I/O handoff and XS/compiler callback/reentry policy.
+   Passing one dependency stack cannot establish general CPAN compatibility.
+   Run the full upstream suite before declaring a compatibility milestone.
+4. Track static deployment as independent work; it need not wait for every
+   parallel-language audit. Million-live-task and broader core-count scaling
+   checks also remain explicit acceptance work.
 
 The immediate performance checkpoint uses five runs per slot count, eight
 jobs, twenty analysis passes and four worker acts, with the same 128-line
