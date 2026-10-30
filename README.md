@@ -193,6 +193,23 @@ private temporary reference holders so scope cleanup does not rewrite shared
 cache flags. General namespace mutation,
 weak-reference updates and other caches still require a concurrency audit.
 
+Tail calls (`goto &sub`) prepare the target's act-local pads and apply the
+same XS safety check as ordinary calls before unwinding the donor frame.
+The audited `mro::_nextcan` entry serializes next-method cache lookup and
+publishes returned CVs, then releases its guard before Perl method execution.
+Native reference generation synchronizes head-flag reads with first
+publication; temporary cleanup preserves interpreter-wide immortal flags.
+`make perl-mro-upstream-test` adds upstream MRO, goto and Unicode goto coverage.
+
+The functional Unix path join entries use private argument heads and join
+constants. Reference arguments retain their original referents while overloads
+run outside capture guards; native coercion order and repeated calls are
+preserved. Reference snapshots stay mutation-claimed until the native call
+returns, so escaped aliases cannot race with conversion-cache writes. These
+claims permit scheduling and release on exceptions. Tied inputs and other
+unsupported magic remain rejected in parallel
+mode. Method variants and the remaining dependency XS still need audits.
+
 `use Wump` enables interpreter-owned scheduling: ordinary top-level Perl runs
 as the main act. The interpreter starts and stops the scheduler automatically,
 using the configured slot count. `act { ... }` spawns work directly and returns

@@ -17,6 +17,232 @@ WumpTest::check_program(q{
 for my $slots (1, 2, 4) {
 	local $ENV{WUMPPROCS} = $slots;
 	WumpTest::check_program(q{
+		use Wump; use Time::HiRes (); use RootFixture;
+		sub target ($id) { my $saved = $id; Wump::yield(); die "tail pad changed\n" unless $saved == $id; return $saved }
+		sub tail { goto &target }
+		sub clock_tail { goto &Time::HiRes::time }
+		sub unsafe_tail { goto &Time::HiRes::usleep }
+		my $out = chan(4);
+		for my $id (1..8) {
+			act {
+				RootFixture::executor_rendezvous();
+				for (1..64) {
+					die "tail arguments changed\n" unless tail($id) == $id;
+					die "audited tail clock failed\n" unless clock_tail() > 0;
+				}
+				$out->send(1);
+			};
+		}
+		die "missing tail callers\n" if grep { $out->recv != 1 } 1..8;
+		if (Wump::execution_slots() > 1) {
+			eval { unsafe_tail(0) };
+			die "tail bypassed XS safety: $@" unless $@ =~ /XS function has not declared parallel safety: Time::HiRes::usleep/;
+		}
+		print "tail calls retain private pads and native safety checks\n";
+	}, 0, qr/\Atail calls retain private pads and native safety checks\n\z/,
+		"tail calls preserve argument state and native admission on $slots slots");
+}
+
+for my $slots (1, 2, 4) {
+	local $ENV{WUMPPROCS} = $slots;
+	WumpTest::check_program(q{
+		use Wump; use mro (); use RootFixture;
+		{ package NextRoot; sub walk { Wump::yield(); return 'root' }
+			sub inspect { return 'root capability' } sub replacement { return 'replacement' } }
+		{ package NextLeft; our @ISA = ('NextRoot');
+			sub walk { return 'left/' . shift->next::method() } }
+		{ package NextRight; our @ISA = ('NextRoot');
+			sub walk { return 'right/' . shift->next::method() } }
+		{ package NextChild; our @ISA = ('NextLeft', 'NextRight');
+			sub walk { return 'child/' . shift->next::method() }
+			sub absent { return shift->maybe::next::method() }
+			sub missing { return shift->next::method() }
+			sub inspect { return shift->next::can() }
+			sub absent_can { return shift->next::can() }
+		}
+		my $out = chan(4);
+		for (1..8) {
+			act {
+				RootFixture::executor_rendezvous();
+				my $object = bless {}, 'NextChild';
+				for (1..32) {
+					die "next method chain changed\n" unless $object->walk eq 'child/left/right/root';
+					die "negative next cache changed\n" if defined $object->absent;
+					my $method = $object->inspect;
+					die "next can lost a method\n" unless ref($method) eq 'CODE';
+					die "next can returned an unpublished method\n" if
+						Wump::execution_slots() > 1 && !Wump::is_shared($method);
+					die "next can returned the wrong method\n" unless $method->($object) eq 'root capability';
+					die "next can invented a method\n" if defined $object->absent_can;
+					eval { $object->missing };
+					die "missing method error changed: $@" unless $@ =~ /No next::method 'missing'/;
+					yield;
+				}
+				$out->send(1);
+			};
+		}
+		die "missing method workers\n" if grep { $out->recv != 1 } 1..8;
+		eval { mro::_nextcan('NextChild', 1) };
+		die "non-method context admitted: $@" unless $@ =~ /must be used in method context/;
+		if (Wump::execution_slots() > 1) {
+			eval { mro::_nextcan() };
+			die "missing arguments admitted: $@" unless $@ =~ /Usage:/;
+			{ package NextTie; sub TIESCALAR { bless {}, shift }
+				sub FETCH { die "next lookup called FETCH\n" } }
+			tie my $class, 'NextTie';
+			eval { mro::_nextcan($class, 0) };
+			die "magical next input admitted: $@" unless $@ =~ /requires a plain scalar or reference/;
+			eval { mro::_nextcan('NextChild', $class) };
+			die "magical next flag admitted: $@" unless $@ =~ /requires a plain scalar/;
+			eval { mro::invalidate_all_method_caches() };
+			die "unaudited mro mutator admitted: $@" unless $@ =~ /XS function has not declared parallel safety/;
+		}
+		die "next cache did not recover\n" unless NextChild->walk eq 'child/left/right/root';
+		@NextChild::ISA = ('NextRoot');
+		die "next cache ignored inheritance update\n" unless NextChild->walk eq 'child/root';
+		@NextChild::ISA = ('NextLeft', 'NextRight');
+		die "next cache ignored restored inheritance\n" unless NextChild->walk eq 'child/left/right/root';
+		{ no warnings 'once'; *NextRoot::missing = \&NextRoot::replacement }
+		die "negative next cache ignored method update\n" unless NextChild->missing eq 'replacement';
+		print "next method caches retained context and released guards\n";
+	}, 0, qr/\Anext method caches retained context and released guards\n\z/,
+		"next-method lookup runs on $slots slots with cold, negative and exception paths");
+}
+
+for my $slots (1, 2, 4) {
+	local $ENV{WUMPPROCS} = $slots;
+	WumpTest::check_program(q{
+		use Wump; use File::Spec::Functions (); use RootFixture;
+		no warnings 'uninitialized';
+		sub path_cases {
+			return ([], [''], ['a'], ['a', 'b'], ['a//', './b', 'c/./'],
+				['/', '..', 'a'], ['', 'a'], ['a', '', 'b'], [123, 456],
+				[!!1, !!0], ["\x{100}", './x'], ["a\0b", 'c'], [undef, 'x'], ['x', undef]);
+		}
+		our (@expected, @trace, @expected_trace);
+		{ package TracePath;
+			use overload '""' => sub { push @main::trace, ${$_[0]}; return ${$_[0]} }, fallback => 1;
+		}
+		BEGIN {
+			@expected = map { [File::Spec::Functions::catfile(@$_),
+				File::Spec::Functions::catdir(@$_)] } path_cases();
+			my ($base, $leaf) = ('base', 'leaf');
+			my @parts = (bless(\$base, 'TracePath'), bless(\$leaf, 'TracePath'));
+			@trace = ();
+			File::Spec::Functions::catfile(@parts);
+			$expected_trace[0] = join ',', @trace;
+			@trace = ();
+			File::Spec::Functions::catdir(@parts);
+			$expected_trace[1] = join ',', @trace;
+		}
+		{ package YieldPath;
+			use overload '""' => sub { Wump::yield(); return ${$_[0]} }, fallback => 1;
+		}
+		{ package ThrowPath;
+			use overload '""' => sub { Wump::yield(); die "path overload failed\n" }, fallback => 1;
+		}
+		{ package StackPath;
+			use overload '""' => sub { my @padding = (1) x 20000; Wump::yield(); return 'grown' }, fallback => 1;
+		}
+		{ package EscapePath;
+			our ($exposed, $ack);
+			use overload '""' => sub {
+				$exposed->send(\$_[0]);
+				die "exposed native input was readable during conversion\n" unless $ack->recv == 1;
+				Wump::yield();
+				return "escaped\x{100}";
+			}, fallback => 1;
+		}
+		my ($shared_base, $shared_leaf) = ('shared', "\x{100}");
+		my $text = "object\x{100}";
+		my $object = bless \$text, 'YieldPath';
+		my $out = chan(4);
+		for (1..8) {
+			act {
+				my @paths = path_cases();
+				RootFixture::executor_rendezvous();
+				for (1..32) {
+					die "shared scalar join changed\n" unless
+						File::Spec::Functions::catfile($shared_base, $shared_leaf) eq "shared/\x{100}";
+					die "yielding object join changed\n" unless
+						File::Spec::Functions::catfile('a', $object) eq "a/object\x{100}";
+					die "yielding directory join changed\n" unless
+						File::Spec::Functions::catdir('a', $object) eq "a/object\x{100}";
+					for my $i (0..$#paths) {
+						my @actual = (File::Spec::Functions::catfile(@{$paths[$i]}),
+							File::Spec::Functions::catdir(@{$paths[$i]}));
+						for my $kind (0, 1) {
+							my $expected = $expected[$i][$kind];
+							die "path join changed at $i/$kind\n" if defined($expected)
+								? !defined($actual[$kind]) || $actual[$kind] ne $expected
+								: defined($actual[$kind]);
+						}
+					}
+					yield;
+				}
+				$out->send(1);
+			};
+		}
+		die "missing path joiners\n" if grep { $out->recv != 1 } 1..8;
+		my ($base, $leaf) = ('base', 'leaf');
+		my @parts = (bless(\$base, 'TracePath'), bless(\$leaf, 'TracePath'));
+		@trace = ();
+		File::Spec::Functions::catfile(@parts);
+		die "file coercion order changed\n" unless join(',', @trace) eq $expected_trace[0];
+		@trace = ();
+		File::Spec::Functions::catdir(@parts);
+		die "directory coercion order changed\n" unless join(',', @trace) eq $expected_trace[1];
+		my $stack_text = 'stack';
+		my $stack_path = bless \$stack_text, 'StackPath';
+		die "join lost a grown Perl stack\n" unless
+			File::Spec::Functions::catdir('a', $stack_path, 'b') eq 'a/grown/b';
+		die "blessed scalar value changed\n" unless
+			File::Spec::Functions::catfile($$object, 'b') eq "object\x{100}/b";
+		if (Wump::execution_slots() > 1) {
+			$EscapePath::exposed = chan(1);
+			$EscapePath::ack = chan(1);
+			my $finished = chan(1);
+			my $result = chan(1);
+			act {
+				my $alias = $EscapePath::exposed->recv;
+				eval { my $value = $$alias };
+				$EscapePath::ack->send($@ =~ /read overlaps mutation of a shared value/ ? 1 : 0);
+				$finished->recv;
+				my $value = $$alias;
+				$result->send(ref($value) eq 'EscapePath' ? 1 : 0);
+			};
+			my $escape_text = 'escape';
+			my $escape = bless \$escape_text, 'EscapePath';
+			die "escaping overload result changed\n" unless
+				File::Spec::Functions::catfile('a', $escape) eq "a/escaped\x{100}";
+			$finished->send(1);
+			die "native input claim outlived the call\n" unless $result->recv == 1;
+			{ package JoinTie; sub TIESCALAR { bless {}, shift }
+				sub FETCH { die "native join called FETCH\n" } }
+			tie my $path, 'JoinTie';
+			for my $join (\&File::Spec::Functions::catfile, \&File::Spec::Functions::catdir) {
+				eval { $join->($path, 'b') };
+				die "magical join admitted: $@" unless $@ =~ /requires a plain scalar/;
+				eval { $join->('a', $path) };
+				die "trailing magical join admitted: $@" unless $@ =~ /requires a plain scalar/;
+				my $bad = 'bad';
+				eval { $join->('a', bless(\$bad, 'ThrowPath')) };
+				die "overload exception changed: $@" unless $@ =~ /path overload failed/;
+				my $reference = [];
+				die "reference coercion changed\n" unless $join->('a', $reference) =~ m{\Aa/ARRAY\(0x[0-9a-f]+\)\z};
+				die "join failed after rejection\n" unless $join->('a', 'b') eq 'a/b';
+			}
+			eval { File::Spec::Unix->catfile('a', 'b') };
+			die "unaudited method admitted: $@" unless $@ =~ /XS function has not declared parallel safety/;
+		}
+		print "functional path joins retained scalar semantics\n";
+	}, 0, qr/\Afunctional path joins retained scalar semantics\n\z/,
+		"audited functional path joining runs on $slots slots with shared inputs and failure recovery");
+}
+
+for my $slots (1, 2, 4) {
+	local $ENV{WUMPPROCS} = $slots;
+	WumpTest::check_program(q{
 		use Wump; use File::Spec::Unix (); use RootFixture;
 		my @cases = (["a/./b//", "a/b"], ["/../../a", "/a"], ["./", "."],
 			["", ""], [undef, undef], [123, "123"], ["\x{100}/./b", "\x{100}/b"],

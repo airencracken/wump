@@ -840,12 +840,54 @@ The dashboard parses command-line options in CHECK before scheduler startup.
 Audited native cwd readers and plain-scalar path canonicalizers advance its
 parallel startup, with concurrent, failure/recovery and unsupported-input
 coverage. Live one-slot HTTP/WebSocket acceptance still passes all 48 checks.
-Four-slot startup currently stops at File::Spec::Unix::_fn_catfile, whose
-module-context constants and joining paths need a separate audit. The runtime
+At this checkpoint, four-slot startup stopped at File::Spec::Unix::_fn_catfile,
+whose module-context constants and joining paths needed a separate audit. The runtime
 compiler and unaudited XS gates remain in force. The next network checkpoint
 is the live dashboard test passing on four slots under an explicit dependency
 and compilation policy. Broader magic/weak/object audits and packaging remain
 separate work.
+
+### Native dispatch checkpoint (2026-10-29)
+
+Functional Unix path joining now snapshots input heads and uses private join
+constants. It retains reference arguments while overloads run without capture
+guards, preserves native string-coercion order and repeated calls, and refreshes
+the XS stack pointer after coercion. Regressions compare compile-time native
+results with one/two/four-slot execution, including empty, undefined, numeric,
+boolean, Unicode, embedded-NUL, blessed-scalar and reference inputs, yielding
+and throwing overloads, stack growth, tied-input rejection and recovery.
+An overload can expose its actual argument RV through a reference to $_[0].
+Reference snapshots are therefore published and mutation-claimed before any
+coercion callback, with claims released after the native call or on unwind.
+An adversarial test verifies that an escaped alias rejects a conflicting read
+during conversion and becomes readable after the call returns. No OS mutex is
+held across overload execution or scheduling.
+
+The next-method audit exposed a missing call-entry path: goto &sub unrolls
+cx_pushsub and bypassed ordinary bridge preparation. Tail calls now prepare
+act-local pads and enforce the XS admission gate before unwinding the donor
+frame. Before the fix, concurrent tail calls changed arguments or crashed;
+unaudited native tail calls also executed. The new tests cover those failures
+and audited native tail calls. First-publication head reads are synchronized
+in reference generation and tail dispatch. Native temporary sorting/freeing
+also avoids writing flags on interpreter-wide immortal values.
+
+The audited mro::_nextcan entry validates and snapshots inputs before its
+metadata guard, serializes cold/positive/negative cache lookup, publishes
+returned CVs and C3 cache graphs, and releases the guard on returns and
+exceptions before the selected Perl method can run. Its reference constructor
+does not clear TEMP on shared CVs. Native class-cache invalidation uses the
+same metadata synchronization. Tests cover diamond inheritance, next::method,
+next::can, maybe::next::method, absent methods, invalid context/arguments,
+single-actor inheritance/method updates, guard recovery and publication of
+returned methods. General concurrent namespace and inheritance mutation still
+requires a broader audit.
+
+Four-slot dashboard startup now passes path joining and next-method dispatch,
+then stops at UNIVERSAL::can. Capability lookup, remaining dependency XS,
+runtime module loading and compilation policy still precede live four-slot
+HTTP acceptance. The one-slot HTTP/WebSocket baseline remains the network
+acceptance target until those gates are cleared.
 
 0. **Runtime in C**: tasks, stacks, scheduler, channels, `sel`, timers,
    netpoller, sysmon. Benchmarked against Go.

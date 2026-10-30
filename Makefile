@@ -346,6 +346,11 @@ perl-upstream-test: perl-build
 	$(MAKE) -C $(BUILD)/perl/perl-5.42.2 test_prep
 	cd $(BUILD)/perl/perl-5.42.2/t && timeout 240s ./perl TEST -v comp/*.t re/*.t class/*.t op/anonconst.t op/const-optree.t op/args.t op/closure.t op/die.t op/eval.t op/lex.t op/local.t op/ref.t op/sort.t op/array.t op/avhv.t op/hash*.t op/each*.t op/delete.t op/localref.t op/lvref.t op/multideref.t op/push.t op/reverse.t op/splice.t op/tiearray.t op/tiehash.t op/chop.t op/readline.t op/readline_nb.t op/print.t op/sig*.t op/warn.t op/bool.t op/numconvert.t op/numify.t op/numify_chkflags.t op/svflags.t op/append.t op/concat2.t op/utf8cache.t op/utf8decode.t op/utf8magic.t op/arith2.t op/int.t op/overload_integer.t io/argv.t io/print.t io/say.t ../lib/B/Deparse.t ../lib/B/Deparse-core.t ../lib/B/Deparse-subclass.t
 
+.PHONY: perl-mro-upstream-test
+perl-mro-upstream-test: perl-build
+	$(MAKE) -C $(BUILD)/perl/perl-5.42.2 test_prep
+	cd $(BUILD)/perl/perl-5.42.2/t && timeout 90s ./perl TEST -v mro/*.t op/goto.t op/goto_xs.t uni/goto.t
+
 $(BUILD):
 	mkdir -p $@
 
