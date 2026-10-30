@@ -52,6 +52,13 @@ C
 	}
 	edit('scope.c', '            SvTEMP_off(sv);',
 		'            if (!SvIMMORTAL(sv)) SvTEMP_off(sv);');
+	# List repetition keeps aliases. Constants can be shared before graph
+	# publication; avoid rewriting their already-clear TEMP bit. Published
+	# heads retain their flags just as in reference construction below.
+	edit('pp.c', '                   SvTEMP_off((*SP));', <<'C');
+                   if (!PL_wump_task || ((S_wump_reference_flags(aTHX_ *SP) & SVs_TEMP)
+                       && !Perl_wump_is_shared(aTHX_ *SP))) SvTEMP_off((*SP));
+C
 	# goto &sub unrolls cx_pushsub and bypasses ordinary entersub. Prepare
 	# the target before unwinding the donor frame: preparation can throw.
 	edit('pp_ctl.c', "            /* First do some returnish stuff. */\n", <<'C');

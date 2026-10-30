@@ -12,6 +12,10 @@ for my $slots (1, 2, 4) {
 		use Scalar::Util qw(dualvar looks_like_number);
 		{ package AncestryRoot; sub DESTROY {} }
 		{ package AncestryChild; our @ISA; BEGIN { @ISA = ('AncestryRoot') } }
+		sub same_heads {
+			my $original = shift;
+			for (@_) { die "repeat lost source aliases\n" unless \$_ == $original }
+		}
 		our (@values, @numbers, @expected, @arithmetic, $object, $latin);
 		BEGIN {
 			@values = (dualvar(7, 'seven'), -2, 42, 42, 0.5);
@@ -27,6 +31,7 @@ for my $slots (1, 2, 4) {
 			act {
 				RootFixture::executor_rendezvous();
 				for (1..32) {
+					same_heads(\$values[0], ($values[0]) x 32);
 					for my $case (@arithmetic) {
 						die "addition boundary changed\n" unless $case->[0] + $case->[1] == $case->[2];
 						die "modulo boundary changed\n" unless $case->[0] % $case->[1] == $case->[3];

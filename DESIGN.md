@@ -1217,6 +1217,13 @@ strong referent pin. Foreign writers still take the original mutation-conflict
 path. Shared object readers and the existing weak/destructor/alias regressions
 cover this distinction.
 
+The callback stack-growth stress exposed an unconditional TEMP-flag write in
+list repetition. TSan reported both repeat/repeat and repeat/array-assignment
+races on the shared literal head. Repetition now leaves already-clear and
+published heads untouched while preserving the original argument aliases;
+private temporaries keep native cleanup. The failing callback stress remains
+in the suite, alongside explicit repeated-argument alias checks.
+
 The Mojo dashboard passes the external 48-check HTTP/WebSocket test on four
 execution slots. Daemon preparation completes helper proxy generation, route
 regex compilation, UTF-8 alias resolution and listener setup before execution.
