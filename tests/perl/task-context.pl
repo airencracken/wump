@@ -12,6 +12,7 @@ my $output = "$build/task-context" . ($tsan ? '-tsan' : '');
 my @libraries = shellwords($Config{perllibs});
 my @command = (shellwords($Config{cc}), shellwords($Config{ccflags}),
 	'-O2', '-g', '-pthread', "-I$source",
+	'-DWUMP_CONTEXT_PROBE', '-Wl,--wrap=Perl_wump_task_current', '-Wl,--wrap=Perl_wump_allocator_sv_count',
 	($tsan ? '-fsanitize=thread' : ()), 'tests/perl/task-context.c',
 	"$source/libperl.a", shellwords($Config{ldflags}), @libraries, '-o', $output);
 system @command;

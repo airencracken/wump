@@ -10,9 +10,31 @@ typedef struct fixture {
 	PerlInterpreter *interp, *other;
 	pthread_barrier_t barrier;
 	atomic_int failed;
+	atomic_int cold_failed;
 	OP *root, *other_root;
 } fixture;
 typedef struct thread_arg { fixture *f; int id; } thread_arg;
+
+#ifdef WUMP_CONTEXT_PROBE
+static _Thread_local unsigned task_selects, allocator_selects;
+extern struct wump_perl_task *__real_Perl_wump_task_current(pTHX);
+extern IV *__real_Perl_wump_allocator_sv_count(pTHX);
+struct wump_perl_task *__wrap_Perl_wump_task_current(pTHX) {
+	task_selects++;
+	return __real_Perl_wump_task_current(aTHX);
+}
+IV *__wrap_Perl_wump_allocator_sv_count(pTHX) {
+	allocator_selects++;
+	return __real_Perl_wump_allocator_sv_count(aTHX);
+}
+
+static bool inactive_root(pTHX) {
+	unsigned tasks = task_selects, allocators = allocator_selects;
+	bool correct = PL_wump_task == NULL && &PL_op == &aTHX->Iop
+		&& &PL_stack_sp == &aTHX->Istack_sp && &PL_sv_count == &aTHX->Isv_count;
+	return correct && task_selects == tasks && allocator_selects == allocators;
+}
+#endif
 
 static void activate(pTHX_ struct wump_perl_task *task) {
 #ifdef WUMP_TASK_LEGACY
@@ -72,6 +94,11 @@ static void *exercise(void *arg) {
 			dTHX;
 			if (PL_wump_task != NULL || PL_op != f->other_root || &PL_op != &aTHX->Iop)
 				atomic_store(&f->failed, 1);
+#ifdef WUMP_CONTEXT_PROBE
+			/* Another interpreter's active task must not put this never-used
+			 * interpreter onto the task/allocator selector path. */
+			if (!inactive_root(aTHX)) atomic_store(&f->cold_failed, 1);
+#endif
 		}
 		PERL_SET_CONTEXT(f->interp);
 	}
@@ -88,6 +115,7 @@ int main(int argc, char **argv, char **env) {
 	PERL_SYS_INIT3(&argc, &argv, &env);
 	fixture f = {0};
 	atomic_init(&f.failed, 0);
+	atomic_init(&f.cold_failed, 0);
 	f.interp = perl_alloc();
 	f.other = perl_alloc();
 	if (!f.interp || !f.other) return 1;
@@ -96,6 +124,9 @@ int main(int argc, char **argv, char **env) {
 	PERL_SET_CONTEXT(f.interp);
 	perl_construct(f.interp);
 	dTHXa(f.interp);
+#ifdef WUMP_CONTEXT_PROBE
+	if (!inactive_root(aTHX)) atomic_store(&f.cold_failed, 1);
+#endif
 	f.root = PL_op;
 	f.other_root = f.other->Iop;
 	if (pthread_barrier_init(&f.barrier, NULL, 3)) return 1;
@@ -120,6 +151,10 @@ int main(int argc, char **argv, char **env) {
 	perl_destruct(f.interp);
 	perl_free(f.interp);
 	PERL_SYS_TERM();
+	if (atomic_load(&f.cold_failed)) {
+		fputs("FAIL: inactive interpreter accesses invoked task or allocator selectors\n", stderr);
+		return 1;
+	}
 	if (atomic_load(&f.failed)) {
 		fprintf(stderr, "FAIL: native threads observed another task or changed root interpreter state\n");
 		return 1;

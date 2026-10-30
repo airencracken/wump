@@ -4,20 +4,23 @@
 #include "wump_runtime_internal.h"
 #include <math.h>
 
-static _Thread_local struct wump_perl_task *wump_current_task;
+/* Header accessors use the executable's ELF TLS slot without caching a
+ * native thread address. Keep writes behind the activation API. */
+_Thread_local struct wump_perl_task *Perl_wump_task_tls;
 
 /* A coroutine can resume on another native thread. Fetch TLS afresh on
  * every access, and let a nested interpreter retain its own root state. */
 __attribute__((noinline)) struct wump_perl_task *Perl_wump_task_current(pTHX) {
 	__asm__ volatile("" ::: "memory");
-	struct wump_perl_task *task = wump_current_task;
+	struct wump_perl_task *task = Perl_wump_task_tls;
 	return task && task->interp == aTHX ? task : NULL;
 }
 
 void Perl_wump_task_activate(pTHX_ struct wump_perl_task *task) {
 	assert(task == NULL || task->interp == aTHX);
+	if (task) S_wump_context_mark(aTHX);
 	__asm__ volatile("" ::: "memory");
-	wump_current_task = task;
+	Perl_wump_task_tls = task;
 }
 
 void Perl_wump_checkpoint(pTHX) {

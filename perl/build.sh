@@ -99,7 +99,7 @@ for wump_object in stack sched chan io error ctx_x86_64; do
 	fi
 	wump_runtime_objects="$wump_runtime_objects $wump_runtime_build/$wump_object.o"
 done
-wump_runtime_config=$(printf 'ARCHOBJS =%s\ninclude %s/deps.mk\n' "$wump_runtime_objects" "$wump_script_dir")
+wump_runtime_config=$(printf 'ARCHOBJS =%s wump_plain_ops$(OBJ_EXT)\ninclude %s/deps.mk\n' "$wump_runtime_objects" "$wump_script_dir")
 if [ ! -f wump_runtime.mk ] || [ "$(cat wump_runtime.mk)" != "$wump_runtime_config" ]; then
 	if ! printf '%s\n' "$wump_runtime_config" >wump_runtime.mk; then exit 1; fi
 fi

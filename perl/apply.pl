@@ -217,6 +217,7 @@ void **Perl_wump_allocator_body_arenas(pTHX);
 void *(*Perl_wump_allocator_body_roots(pTHX))[PERL_ARENA_ROOTS_SIZE];
 void Perl_wump_regex_roots(pTHX_ REGEXP *rx,
 	void (*visit)(pTHX_ SV *, void *), void *arg);
+#include "wump_plain_ops.h"
 END_EXTERN_C
 C
 write_file("$source/wump_task_types.h", $header);
@@ -234,23 +235,105 @@ edit('perl.h', "    bool Iwump_keys_ready;",
 	"    bool Iwump_keys_ready;\n    struct wump_read_frame *Iwump_read_frame;");
 edit('perl.h', "    struct wump_read_frame *Iwump_read_frame;",
 	"    struct wump_read_frame *Iwump_read_frame;\n    struct wump_memory *Iwump_memory;");
+edit('perl.h', "    struct wump_memory *Iwump_memory;",
+	"    struct wump_memory *Iwump_memory;\n    U32 Iwump_context_seen;");
+# perl_clone switches locale before zeroing the newly malloc'd interpreter.
+# DEBUGGING then poisons it again before accessing redirected state lvalues.
+edit('sv.c', "    my_perl->Iphase = PERL_PHASE_CONSTRUCT;\n    PERL_SET_THX(my_perl);",
+	"    my_perl->Iphase = PERL_PHASE_CONSTRUCT;\n    my_perl->Iwump_context_seen = 0;\n    PERL_SET_THX(my_perl);");
+edit('sv.c', '    PoisonNew(my_perl, 1, PerlInterpreter);',
+	"    PoisonNew(my_perl, 1, PerlInterpreter);\n    my_perl->Iwump_context_seen = 0;");
 # Keep the former task slot reserved for private-layout compatibility;
 # execution selects its task through TLS, never through that shared slot.
 my $vars = "\n/* Wump execution state: root execution retains the upstream fields. */\n";
-$vars .= "#if defined(MULTIPLICITY)\n#define PL_wump_task Perl_wump_task_current(aTHX)\n";
+$vars .= <<'C';
+#if defined(MULTIPLICITY)
+/* Sticky, initially zero from perl_alloc. This is not a task pointer or a
+ * publication barrier. Activation on the calling thread sets it before TLS;
+ * it is never cleared when another executor might still have a context. */
+PERL_STATIC_INLINE bool
+S_wump_context_seen(pTHX)
+{
+    return __atomic_load_n(&aTHX->Iwump_context_seen, __ATOMIC_RELAXED) != 0;
+}
+PERL_STATIC_INLINE void
+S_wump_context_mark(pTHX)
+{
+    if (!S_wump_context_seen(aTHX))
+        __atomic_store_n(&aTHX->Iwump_context_seen, 1, __ATOMIC_RELAXED);
+}
+PERL_STATIC_INLINE struct wump_perl_task *
+S_wump_task_context(pTHX)
+{
+    if (!S_wump_context_seen(aTHX)) return NULL;
+#if defined(__x86_64__) && defined(__ELF__)
+    struct wump_perl_task *task;
+    UV offset;
+    /* Only the module's TLS offset is invariant. Read through the current
+     * FS base every time; a cached native TLS address cannot survive an
+     * act migrating inside an allocating or callback-capable C frame. */
+    __asm__("movq Perl_wump_task_tls@gottpoff(%%rip), %0" : "=r" (offset));
+    __asm__ volatile("movq %%fs:(%1), %0" : "=r" (task) : "r" (offset) : "memory");
+    return task && task->interp == aTHX ? task : NULL;
+#else
+    return Perl_wump_task_current(aTHX);
+#endif
+}
+PERL_STATIC_INLINE struct wump_perl_allocator *
+S_wump_pool_context(pTHX)
+{
+    if (!S_wump_context_seen(aTHX)) return NULL;
+#if defined(__x86_64__) && defined(__ELF__)
+    struct wump_perl_allocator *pool;
+    UV offset;
+    __asm__("movq Perl_wump_allocator_tls@gottpoff(%%rip), %0" : "=r" (offset));
+    __asm__ volatile("movq %%fs:(%1), %0" : "=r" (pool) : "r" (offset) : "memory");
+    return pool && pool->interp == aTHX ? pool : NULL;
+#else
+    return Perl_wump_allocator_current(aTHX);
+#endif
+}
+#define PL_wump_task S_wump_task_context(aTHX)
+C
 for my $name (@vars) {
-	# Select once per field access. Keep the TLS selector out of line so a
-	# resumed C frame reloads its executor's TLS after migration; the field
-	# helper may inline without repeating that selector for every condition.
+	# Select once per field access. The selector reloads through the current
+	# executor's FS base even when inlined, including after act migration.
 	$vars .= "PERL_STATIC_INLINE $types{$name} *\nS_wump_state_$name(pTHX)\n{\n"
 		. "    struct wump_perl_task *task = PL_wump_task;\n"
 		. "    return task && !task->main ? &task->I$name : &aTHX->I$name;\n}\n"
 		. "#undef PL_$name\n#define PL_$name (*S_wump_state_$name(aTHX))\n";
 }
 for my $name (qw(sv_root sv_arenaroot sv_count body_arenas body_roots nomemok)) {
-	$vars .= "#undef PL_$name\n#define PL_$name (*Perl_wump_allocator_$name(aTHX))\n";
+	my $type = $name eq 'sv_count' ? 'IV' : $name eq 'nomemok' ? 'bool'
+		: $name eq 'body_arenas' ? 'void *' : $name eq 'body_roots' ? undef : 'SV *';
+	if (defined $type) {
+		$vars .= "PERL_STATIC_INLINE $type *\nS_wump_pool_$name(pTHX)\n{\n"
+			. "    struct wump_perl_allocator *pool = S_wump_pool_context(aTHX);\n"
+			. "    return pool ? &pool->I$name : &aTHX->I$name;\n}\n"
+			. "#undef PL_$name\n#define PL_$name (*S_wump_pool_$name(aTHX))\n";
+	} else {
+		$vars .= <<'C';
+PERL_STATIC_INLINE void *(*S_wump_pool_body_roots(pTHX))[PERL_ARENA_ROOTS_SIZE]
+{
+    struct wump_perl_allocator *pool = S_wump_pool_context(aTHX);
+    return pool ? &pool->Ibody_roots : &aTHX->Ibody_roots;
 }
-$vars .= "#ifdef PERL_HASH_RANDOMIZE_KEYS\n#undef PL_hash_rand_bits\n#define PL_hash_rand_bits (*Perl_wump_allocator_hash_rand_bits(aTHX))\n#endif\n";
+#undef PL_body_roots
+#define PL_body_roots (*S_wump_pool_body_roots(aTHX))
+C
+	}
+}
+$vars .= <<'C';
+#ifdef PERL_HASH_RANDOMIZE_KEYS
+PERL_STATIC_INLINE UV *S_wump_pool_hash_rand_bits(pTHX)
+{
+    struct wump_perl_allocator *pool = S_wump_pool_context(aTHX);
+    return pool ? &pool->Ihash_rand_bits : &aTHX->Ihash_rand_bits;
+}
+#undef PL_hash_rand_bits
+#define PL_hash_rand_bits (*S_wump_pool_hash_rand_bits(aTHX))
+#endif
+C
 $vars .= "#endif\n";
 my $magic_cache_macros = <<'C';
 #undef PL_rs
@@ -265,6 +348,14 @@ my $magic_cache_macros = <<'C';
 #define PL_dowarn (*(PL_wump_task ? Perl_wump_warning_cache(aTHX) : &aTHX->Idowarn))
 C
 $vars =~ s/#endif\n\z/$magic_cache_macros#endif\n/;
+my $root_macros = "#ifdef WUMP_ROOT_CONTEXT\n#undef PL_wump_task\n#define PL_wump_task NULL\n";
+my %root_fields;
+for my $name (@vars, qw(sv_root sv_arenaroot sv_count body_arenas body_roots nomemok rs ors_sv diehook warnhook dowarn)) {
+	next if $root_fields{$name}++;
+	$root_macros .= "#undef PL_$name\n#define PL_$name (aTHX->I$name)\n";
+}
+$root_macros .= "#ifdef PERL_HASH_RANDOMIZE_KEYS\n#undef PL_hash_rand_bits\n#define PL_hash_rand_bits (aTHX->Ihash_rand_bits)\n#endif\n#endif\n";
+$vars =~ s/#endif\n\z/$root_macros#endif\n/;
 write_file("$source/wump_task_embed.h", $vars);
 my $embed = read_file("$source/embedvar.h");
 $embed =~ s/\n\/\* Wump execution state:.*\z//s;
@@ -304,6 +395,27 @@ $gv =~ s/\QGvGP(gv_HVadd(gv))->gp_hv\E/GvHV(gv_HVadd(gv))/g;
 $gv =~ s/\Q&(GvGP(gv_SVadd(gv))->gp_sv)\E/\&GvSV(gv_SVadd(gv))/g;
 $gv =~ s/\QGvGP(gv_AVadd(gv))->gp_av\E/GvAV(gv_AVadd(gv))/g;
 write_file("$source/gv.h", $gv);
+edit('gv.h', "#define GvSV(gv)\t(*Perl_wump_gv_sv((GV *)(gv)))", <<'C');
+#ifdef WUMP_ROOT_CONTEXT
+#define GvSV(gv) (GvGP(gv)->gp_sv)
+#else
+#define GvSV(gv)	(*Perl_wump_gv_sv((GV *)(gv)))
+#endif
+C
+edit('gv.h', "#define GvAV(gv)\t(*Perl_wump_gv_av((GV *)(gv)))", <<'C');
+#ifdef WUMP_ROOT_CONTEXT
+#define GvAV(gv) (GvGP(gv)->gp_av)
+#else
+#define GvAV(gv)	(*Perl_wump_gv_av((GV *)(gv)))
+#endif
+C
+edit('gv.h', "#define GvHV(gv)\t(*Perl_wump_gv_hv((GV *)(gv)))", <<'C');
+#ifdef WUMP_ROOT_CONTEXT
+#define GvHV(gv) (GvGP(gv)->gp_hv)
+#else
+#define GvHV(gv)	(*Perl_wump_gv_hv((GV *)(gv)))
+#endif
+C
 # Normalize earlier generated prologues before applying the combined gate.
 # Keeping the gate and task redirection together makes reapplication stable.
 my $scope = read_file("$source/scope.c");
@@ -479,4 +591,6 @@ for my $pair (
 ) {
 	write_file($pair->[1], read_file($pair->[0]));
 }
+require "$FindBin::Bin/ordinary.pl";
+apply_ordinary($source);
 print "Applied Wump task-state integration to $source\n";

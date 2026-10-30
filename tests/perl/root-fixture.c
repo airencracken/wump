@@ -8,6 +8,46 @@
 
 extern OP *Perl_wump_write_impl_preinc(pTHX);
 
+static UV constant_hook_calls;
+static OP *hooked_constant(pTHX) {
+	constant_hook_calls++;
+	return PL_ppaddr[OP_CONST](aTHX);
+}
+static bool hook_constant(OP *op) {
+	if (!op) return FALSE;
+	if (op->op_type == OP_CONST && op->op_ppaddr == PL_ppaddr[OP_CONST]) {
+		op->op_ppaddr = hooked_constant;
+		return TRUE;
+	}
+	if (op->op_flags & OPf_KIDS) {
+		for (OP *child = cUNOPx(op)->op_first; child; child = OpSIBLING(child))
+			if (hook_constant(child)) return TRUE;
+	}
+	return FALSE;
+}
+static XS(xs_constant_hook) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (PL_wump_task || items > 1) croak("Usage: RootFixture::constant_hook([CV]) outside an act");
+	if (items) {
+		if (!SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVCV) croak("CV reference required");
+		if (!hook_constant(CvROOT((CV *)SvRV(ST(0))))) croak("native constant opcode required");
+	}
+	ST(0) = sv_2mortal(newSVuv(constant_hook_calls));
+	XSRETURN(1);
+}
+
+static XS(xs_activate_and_clear) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items || PL_wump_task) croak("Usage: RootFixture::activate_and_clear() outside an act");
+	struct wump_perl_task context = {.interp = aTHX, .main = 1};
+	Perl_wump_task_activate(aTHX_ &context);
+	if (PL_wump_task != &context) abort();
+	Perl_wump_task_activate(aTHX_ NULL);
+	XSRETURN_EMPTY;
+}
+
 static XS(xs_malformed_utf8) {
 	dXSARGS;
 	PERL_UNUSED_VAR(cv);
@@ -560,6 +600,8 @@ XS_EXTERNAL(boot_RootFixture) {
 	newXS("RootFixture::constructor_self", xs_constructor_self, __FILE__);
 	newXS("RootFixture::debug_runops", xs_debug_runops, __FILE__);
 	newXS("RootFixture::key_too_large", xs_key_too_large, __FILE__);
+	newXS("RootFixture::activate_and_clear", xs_activate_and_clear, __FILE__);
+	newXS("RootFixture::constant_hook", xs_constant_hook, __FILE__);
 	newXS("RootFixture::key_missing", xs_key_missing, __FILE__);
 	newXS("RootFixture::scalar_publish", xs_scalar_publish, __FILE__);
 	newXS("RootFixture::vivify", xs_vivify, __FILE__);

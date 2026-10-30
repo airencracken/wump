@@ -23,7 +23,7 @@ TEST_TIMEOUT = 60
 TEST_LONG_TIMEOUT = 90
 TEST_FAILURE_TIMEOUT = 30
 SANITIZER_TEST_ARGS = CPPFLAGS='$(CPPFLAGS) -DWUMP_TEST_CASE_TIMEOUT=120' TEST_TIMEOUT=300 TEST_LONG_TIMEOUT=300 TEST_FAILURE_TIMEOUT=300
-PERL_SUITES = entry waitgroup preempt tasks parallel xs-parallel regex-parallel regex local elements pocket pocket-deparse separators hooks locks shared keys reads read-claims scalar-writes operands stack-loads lvalue-loads reference-loads scalar-references materialization iteration memory publication hidden-roots
+PERL_SUITES = entry ordinary waitgroup preempt tasks parallel xs-parallel regex-parallel regex local elements pocket pocket-deparse separators hooks locks shared keys reads read-claims scalar-writes operands stack-loads lvalue-loads reference-loads scalar-references materialization iteration memory publication hidden-roots
 
 RUNTIME = stack sched chan io error
 OBJECTS = $(addprefix $(BUILD)/,$(addsuffix .o,$(RUNTIME))) $(BUILD)/ctx_x86_64.o
@@ -84,6 +84,7 @@ perl-source-test:
 perl-test: perl-build perl-source-test
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/root-fixture.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/entry.t
+	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/ordinary.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/waitgroup.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/preempt.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/tasks.t
@@ -116,6 +117,7 @@ perl-test: perl-build perl-source-test
 	perl tests/perl/patcher.pl '$(BUILD)/perl/perl-5.42.2'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/refcount.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/task-context.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
+	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/clone-context.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/owned.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/allocator.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/reads.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
@@ -565,7 +567,7 @@ perl-valgrind-run:
 		PERL_DESTRUCT_LEVEL=2 timeout 300s valgrind --trace-children=yes --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --track-origins=yes --log-file='$(BUILD)/perl/'"$$suite"'-full-memcheck.%p.log' $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) "tests/perl/$$suite.t"; result=$$?; \
 		if [ "$$result" -ne 0 ]; then exit "$$result"; fi; \
 	done
-	@for fixture in refcount-c refcount-c++ task-context allocator key-legacy key-legacy-cpp readers read-cache read-cache-cpp borrowed borrowed-cpp reclamation retire-failure read-claims owned opcode-writes opcode-writes-cpp opcode-operands opcode-operands-cpp opcode-loads opcode-loads-cpp opcode-references opcode-references-cpp opcode-materialization opcode-materialization-cpp deferred-owner deferred-target; do \
+	@for fixture in refcount-c refcount-c++ task-context clone-context allocator key-legacy key-legacy-cpp readers read-cache read-cache-cpp borrowed borrowed-cpp reclamation retire-failure read-claims owned opcode-writes opcode-writes-cpp opcode-operands opcode-operands-cpp opcode-loads opcode-loads-cpp opcode-references opcode-references-cpp opcode-materialization opcode-materialization-cpp deferred-owner deferred-target; do \
 		printf 'Memcheck native fixture: %s\n' "$$fixture"; \
 		PERL_DESTRUCT_LEVEL=2 timeout 300s valgrind --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite,indirect --track-origins=yes --log-file='$(BUILD)/perl/'"$$fixture"'-native-full-memcheck.%p.log' '$(BUILD)/'"$$fixture"; result=$$?; \
 		if [ "$$result" -ne 0 ]; then exit "$$result"; fi; \

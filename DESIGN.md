@@ -264,9 +264,25 @@ selects per-act storage through an interpreter-filtered TLS pointer, reloaded
 after migration. Dispatch selects a per-slot allocator separately. This is an
 implementation difference from the proposed task pointer above; it still uses
 one interpreter and never creates or clones an interpreter for `act`.
-Typed inline field accessors select the storage once per access. The TLS
-selector itself stays out of line, so it reloads the current native thread's
-selector after migration rather than retaining a thread-local address.
+Typed inline field accessors select the storage once per access. On x86-64
+ELF, the selector loads through the current FS base with volatile assembly;
+only the executable's TLS offset can be cached across calls. Other targets
+retain the out-of-line selector. Neither path retains a native thread address
+across migration. A sticky atomic flag bypasses task and allocator selection
+until that interpreter first activates either context. Clearing a context
+never clears the flag, since another executor may still be using it.
+Cloning explicitly initializes the flag before the first locale-context switch
+and after the debug allocator poisons the interpreter. A native regression
+fills the clone allocation with nonzero bytes and checks that its first context
+switch already sees an inactive interpreter.
+
+Before activation, common opcodes also have ordinary-context variants generated
+from the same patched native bodies. Their state lvalues address the root
+interpreter directly. The ordinary runloop uses these variants only when the
+opcode retains its native public entry; custom ppaddr hooks still run. Once a
+callback activates a context, dispatch returns to the guarded standard loop
+before the next opcode. Atomic refcounts and shared-key safety remain enabled
+even on the inactive path, including for foreign native threads.
 
 ### 5.2 Escape tracking
 Go's compiler does escape analysis to decide what lives on the heap. We

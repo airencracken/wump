@@ -1,7 +1,7 @@
 /* Included by sv.c after arena_set's definition. No Perl callbacks or
  * scheduling occur while manipulating these executor-owned free lists. */
 #include <stdatomic.h>
-static _Thread_local struct wump_perl_allocator *wump_current_allocator;
+_Thread_local struct wump_perl_allocator *Perl_wump_allocator_tls;
 
 void Perl_wump_allocator_init(pTHX_ struct wump_perl_allocator *pool) {
 	assert(pool != Perl_wump_allocator_current(aTHX));
@@ -14,14 +14,15 @@ void Perl_wump_allocator_init(pTHX_ struct wump_perl_allocator *pool) {
 
 __attribute__((noinline)) struct wump_perl_allocator *Perl_wump_allocator_current(pTHX) {
 	__asm__ volatile("" ::: "memory");
-	struct wump_perl_allocator *pool = wump_current_allocator;
+	struct wump_perl_allocator *pool = Perl_wump_allocator_tls;
 	return pool && pool->interp == aTHX ? pool : NULL;
 }
 
 void Perl_wump_allocator_activate(pTHX_ struct wump_perl_allocator *pool) {
 	assert(pool == NULL || pool->interp == aTHX);
+	if (pool) S_wump_context_mark(aTHX);
 	__asm__ volatile("" ::: "memory");
-	wump_current_allocator = pool;
+	Perl_wump_allocator_tls = pool;
 }
 
 #define WUMP_ALLOCATOR_FIELD(type, name) \
