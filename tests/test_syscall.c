@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include "internal.h"
+#include "test_budget.h"
 
 extern int wump_test_get_errno(void);
 extern void wump_test_set_errno(int);
@@ -373,13 +374,7 @@ int main(int argc, char **argv) {
 			pid_t pid = fork();
 			CHECK(pid >= 0);
 			if (pid == 0) {
-				unsigned limit = 30;
-#ifdef WUMP_VALGRIND
-				if (RUNNING_ON_VALGRIND) {
-					limit = 120;
-				}
-#endif
-				alarm(limit);
+				alarm(wump_test_case_timeout());
 				tests[i].run();
 				_exit(0);
 			}

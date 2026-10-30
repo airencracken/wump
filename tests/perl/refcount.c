@@ -49,6 +49,12 @@ int main(int argc, char **argv, char **env) {
 	/* A large permanent root keeps the pre-fix regression from freeing the
 	 * counter accidentally. No worker allocates, mutates, or frees SV data. */
 	SvREFCNT(f.value) = seed;
+	U32 expected = seed + 1;
+	if (WUMP_REFCNT_CAS(f.value, expected) || expected != seed
+		|| WUMP_REFCNT_LOAD(f.value) != seed) return 1;
+	if (!WUMP_REFCNT_CAS(f.value, expected)
+		|| WUMP_REFCNT_LOAD(f.value) != seed - 1) return 1;
+	WUMP_REFCNT_INC(f.value);
 	if (pthread_barrier_init(&f.barrier, NULL, workers)) return 1;
 	pthread_t threads[workers];
 	for (int i = 0; i < workers; i++) {

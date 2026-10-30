@@ -10,7 +10,7 @@ my $output = "$build/allocator";
 for my $spec (['key-legacy', 'c'], ['key-legacy', 'c++'], ['allocator', 'c']) {
 	my ($fixture, $language) = @$spec;
 	my $target = "$build/$fixture" . ($language eq 'c++' ? '-cpp' : '');
-	my @command = ($language eq 'c++' ? 'c++' : shellwords($Config{cc}), shellwords($Config{ccflags}),
+	my @command = ($language eq 'c++' ? shellwords($ENV{CXX} // 'c++') : shellwords($Config{cc}), shellwords($Config{ccflags}),
 		'-O2', '-g', '-pthread', "-I$source", '-x', $language, "tests/perl/$fixture.c", '-x', 'none',
 		"$source/libperl.a", shellwords($Config{ldflags}), shellwords($Config{perllibs}), '-o', $target);
 	system @command;

@@ -49,6 +49,50 @@ for my $file ('perl.c', 'sv.c') {
 	close $output or die "$file: $!\n";
 }
 {
+	my $file = "$legacy/pp_ctl.c";
+	open my $input, '<', $file or die "$file: $!\n";
+	my $text = do { local $/; <$input> };
+	close $input or die "$file: $!\n";
+	# Recreate an incremental tree with both an old gate and its replacement.
+	# The older gate rejects /o replacements before reaching the corrected one.
+	my $start = index($text, "    if (Perl_wump_parallel(aTHX)) {\n", index($text, "PP(pp_regcomp)\n"));
+	my $end = index($text, "    /* prevent recompiling under /o and ithreads. */\n", $start);
+	$start >= 0 && $end > $start or die "missing regex admission block\n";
+	my $old = substr($text, $start, $end - $start);
+	$old =~ s/^        if \(\(pm->op_pmflags & PMf_KEEP\) && PM_GETRE\(pm\)\) goto finish;\n//m
+		or die "missing precompiled /o preservation\n";
+	substr($text, $start, 0) = $old;
+	open my $output, '>', $file or die "$file: $!\n";
+	print {$output} $text or die "$file: $!\n";
+	close $output or die "$file: $!\n";
+}
+{
+	my $file = "$legacy/sv.h";
+	open my $input, '<', $file or die "$file: $!\n";
+	my $text = do { local $/; <$input> };
+	close $input or die "$file: $!\n";
+	my $old = <<'C';
+/* C++ XS retains the upstream head layout and lvalue API. Its standard
+ * refcount helpers use the same compiler atomics as the C core. Direct
+ * legacy XS head manipulation still requires serialization. */
+#ifdef __cplusplus
+#  define WUMP_REFCNT_TYPE U32
+#else
+#  define WUMP_REFCNT_TYPE _Atomic(U32)
+#endif
+#define WUMP_REFCNT_INC(sv) __atomic_add_fetch(&(sv)->sv_refcnt, 1, __ATOMIC_RELAXED)
+#define WUMP_REFCNT_LOAD(sv) __atomic_load_n(&(sv)->sv_refcnt, __ATOMIC_ACQUIRE)
+#define WUMP_REFCNT_CAS(sv, rc) \
+    __atomic_compare_exchange_n(&(sv)->sv_refcnt, &(rc), (rc)-1, 0, \
+        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)
+C
+	$text =~ s{(?<=/\* start with 2 sv-head building blocks \*/\n).*?(?=\n#define _SV_HEAD\(ptrtype\))}{$old}s
+		or die "missing atomic refcount helper block\n";
+	open my $output, '>', $file or die "$file: $!\n";
+	print {$output} $text or die "$file: $!\n";
+	close $output or die "$file: $!\n";
+}
+{
 	my $file = "$legacy/pp_hot.c";
 	open my $input, '<', $file or die "$file: $!\n";
 	local $/;

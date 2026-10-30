@@ -2,6 +2,70 @@
 # Actual Perl method bodies execute only after that region has ended.
 sub apply_parallel {
 	my ($source) = @_;
+	# Reference generation and tail-call dispatch inspect heads which a
+	# sibling can be publishing for the first time. Read flags under the
+	# publication mutex without holding it across magic or lvalue callbacks.
+	for my $file (qw(pp.c pp_ctl.c)) {
+		edit($file, '#include "perl.h"', <<'C');
+#include "perl.h"
+
+STATIC U32
+S_wump_reference_flags(pTHX_ const SV *value)
+{
+    if (!Perl_wump_parallel(aTHX)) return SvFLAGS(value);
+    Perl_wump_memory_lock(aTHX);
+    U32 flags = SvFLAGS(value);
+    Perl_wump_memory_unlock(aTHX);
+    return flags;
+}
+C
+		my $path = "$source/$file";
+		my $text = read_file($path);
+		my $signature = $file eq 'pp.c' ? 'S_refto(pTHX_ SV *sv)' : 'PP(pp_goto)';
+		my $start = index($text, "$signature\n{");
+		my $end = index($text, "\n}\n", $start);
+		$start >= 0 && $end >= 0 or die "missing reference entry in $file\n";
+		my $body = substr($text, $start, $end - $start);
+		for my $spec ([SvTYPE => 'SVTYPEMASK'], [SvPADTMP => 'SVs_PADTMP'],
+			[SvSMAGICAL => 'SVs_SMG'], [SvTEMP => 'SVs_TEMP'], [SvROK => 'SVf_ROK']) {
+			my ($macro, $mask) = @$spec;
+			$body =~ s/\b\Q$macro\E\(sv\)/(S_wump_reference_flags(aTHX_ sv) \& $mask)/g;
+		}
+		$body =~ s/SvTYPE\(SvRV\(sv\)\)/(S_wump_reference_flags(aTHX_ SvRV(sv)) \& SVTYPEMASK)/g;
+		$body =~ s/AvREAL\(\(const AV \*\)sv\)/(S_wump_reference_flags(aTHX_ sv) \& SVpav_REAL)/g;
+		$body =~ s/AvREIFY\(\(const AV \*\)sv\)/(S_wump_reference_flags(aTHX_ sv) \& SVpav_REIFY)/g;
+		substr($text, $start, $end - $start, $body);
+		write_file($path, $text);
+	}
+	# Immortal values can appear on native temporary stacks. Sorting or
+	# freeing those references must not rewrite interpreter-wide TEMP flags.
+	{
+		my $path = "$source/pp_hot.c";
+		my $text = read_file($path);
+		my $start = index($text, "Perl_leave_adjust_stacks(pTHX_ SV **from_sp, SV **to_sp, U8 gimme, int pass)\n{");
+		my $end = index($text, "\n}\n", $start);
+		$start >= 0 && $end >= 0 or die "missing return temporary cleanup\n";
+		my $body = substr($text, $start, $end - $start);
+		$body =~ s/(?<!if \(!SvIMMORTAL\(sv\)\) )SvTEMP_(on|off)\(sv\);/if (!SvIMMORTAL(sv)) SvTEMP_$1(sv);/g;
+		substr($text, $start, $end - $start, $body);
+		write_file($path, $text);
+	}
+	edit('scope.c', '            SvTEMP_off(sv);',
+		'            if (!SvIMMORTAL(sv)) SvTEMP_off(sv);');
+	# goto &sub unrolls cx_pushsub and bypasses ordinary entersub. Prepare
+	# the target before unwinding the donor frame: preparation can throw.
+	edit('pp_ctl.c', "            /* First do some returnish stuff. */\n", <<'C');
+            if (PL_wump_task) {
+                if (CvISXSUB(cv)) {
+                    Perl_wump_xs_check(aTHX_ cv);
+                    Perl_wump_publish(aTHX_ (SV *)cv);
+                } else {
+                    Perl_wump_cv_prepare(aTHX_ cv);
+                }
+            }
+
+            /* First do some returnish stuff. */
+C
 	# A shared value can acquire a new mortal ownership too. Keep that
 	# ownership in a private holder instead of changing the shared TEMP bit.
 	edit('sv.c', "Perl_sv_2mortal(pTHX_ SV *const sv)\n{\n    if (!sv)\n        return sv;", <<'C');
@@ -55,6 +119,9 @@ C
 		['gv.c', 'Gv_AMupdate', 'int'],
 		['gv.c', 'gv_handler', 'CV *'],
 		['mro_core.c', 'mro_get_linear_isa', 'AV *'],
+		['mro_core.c', 'mro_isa_changed_in', 'void'],
+		['mro_core.c', 'mro_method_changed_in', 'void'],
+		['mro_core.c', 'mro_package_moved', 'void'],
 	) {
 		my ($file, $name, $type) = @$spec;
 		memory_guard($source, $file, $name, $type, 'stash',
@@ -135,8 +202,9 @@ C
 	# Compiled constants can be shared before publication too. Do not write
 	# their already-clear flag merely to construct a reference to them.
 	my $cleared = $body =~ s/^        (?:if \(!PL_wump_task \|\| !Perl_wump_is_shared\(aTHX_ sv\)\) )?SvTEMP_off\(sv\);/        if (SvTEMP(sv) \&\& (!PL_wump_task || !Perl_wump_is_shared(aTHX_ sv))) SvTEMP_off(sv);/mg;
-	$cleared == 2 || (!$cleared && $body =~ /if \(SvTEMP\(sv\) &&/)
+	$cleared == 2 || (!$cleared && $body =~ /if \((?:SvTEMP\(sv\)|\(S_wump_reference_flags\(aTHX_ sv\) & SVs_TEMP\)) &&/)
 		or die "unexpected reference constructor TEMP flags\n";
+	$body =~ s/SvTEMP\(sv\)/(S_wump_reference_flags(aTHX_ sv) \& SVs_TEMP)/g;
 	substr($text, $start, $end - $start, $body);
 	write_file($file, $text);
 	# Overload-table construction changes both stash magic and the cached

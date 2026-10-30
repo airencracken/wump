@@ -7,6 +7,35 @@ use WumpTest ();
 
 # Keep the harness outside the scheduler. Every child runs ordinary Perl
 # closures on one shared interpreter; the fixture reports its actual address.
+for my $slots (2, 4) {
+	local $ENV{WUMPPROCS} = $slots;
+	my $names = join ', ', map { '$cold_' . $_ } 1..256;
+	my $code = q{
+		my $out = chan(16);
+		for (1..16) {
+			act {
+				local $/ = ':';
+				RootFixture::executor_rendezvous();
+				for (1..8) {
+					my @values = (COLD_VALUES);
+					die "cold global changed\n" unless @values == 256 && !grep { $_ != 42 } @values;
+					yield;
+				}
+				yield;
+				die "builtin magic lost\n" unless $/ eq ':';
+				$out->send(1);
+			};
+		}
+		die "missing cold global reader\n" if grep { $out->recv != 1 } 1..16;
+		print "cold globals and builtin aliases preserve their values\n";
+	};
+	$code =~ s/COLD_VALUES/$names/;
+	WumpTest::check_program(
+		'use Wump; use RootFixture; our (' . $names . '); BEGIN { (' . $names . ') = (42) x 256 }' . $code,
+		0, qr/\Acold globals and builtin aliases preserve their values\n\z/,
+		"first package-scalar access shares publication metadata with $slots slots");
+}
+
 my $pool = q{
 	use Wump;
 	use RootFixture;

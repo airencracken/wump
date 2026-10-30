@@ -9,11 +9,18 @@ The HTTP dashboard remains a **one-slot acceptance baseline**. Its Unicode
 job backend can now run on one, two or four execution slots in the same
 interpreter and has a separate CPU benchmark below. Running the complete HTTP
 stack with multiple slots still needs further XS and runtime compilation work.
-Option parsing now finishes in `CHECK`, before execution slots start. The
-pinned native cwd readers and plain-scalar path canonicalizers have focused
-parallel audits and tests. The current four-slot startup gate is
-`File::Spec::Unix::_fn_catfile`; its module-context constants and path joining
-still need an audit before live HTTP acceptance can run on four slots.
+Option parsing and application, reactor and listener bootstrap now finish in
+`CHECK`, before execution slots start. Compile-only checks validate options
+without binding a listener. The
+pinned native cwd readers, functional Unix path joins, plain-scalar path
+canonicalizers, next-method and capability lookup have focused parallel audits and tests.
+Path joins support yielding overloads with private snapshots and constants.
+Bare native precompiled regexes, named-capture queries, numeric socket metadata
+and UTF-8 flag queries now have focused parallel coverage. Four-slot startup
+currently reaches `Encode::utf8::encode`, which remains gated. Listener cleanup
+also uses a dynamic regex that remains unsupported with multiple slots.
+Encoding, cleanup and remaining dependency audits still precede live HTTP
+acceptance on four slots.
 
 ## Run
 
