@@ -1208,6 +1208,13 @@ work/process timing, CPU time, build configuration, CPU model and source state.
 Five interleaved runs rotate execution order; summaries report medians and
 ratios without imposing a performance threshold.
 
+The [recorded matched-stock run](bench/perl-stock-baseline.jsonl) exposes large
+overheads on the implicit-loop-variable integer workload: 8.38x stock time for
+the ordinary fork and 35.03x for one-slot Wump, with slower two/four-slot runs.
+The [design assessment](DESIGN.md#matched-performance-checkpoint-2026-10-29)
+also records fresh native/Go comparisons and profiles. Close-to-stock speed,
+near-linear scaling and the 2x runtime target remain unmet.
+
 Build the stock control from the same verified source archive without applying
 the Wump patches. These Configure options match the default private build:
 

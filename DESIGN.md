@@ -793,10 +793,11 @@ an explicit non-goal and must not be mistaken for the implementation model.
 
 The next acceptance priorities are:
 
-1. Establish the stock-Perl overhead baseline and retain raw samples, compiler
-   configuration and source identity. Use matched workloads for throughput;
-   separate startup from work timing. Compare runtime primitives with Go
-   individually rather than averaging away slow spawn or channel cases.
+1. Reduce the ordinary-fork and one-slot Wump overhead exposed by the matched
+   baseline below. Preserve migration-safe state access, publication and reader
+   semantics while optimizing. Retain raw samples, compiler configuration and
+   source identity; separate startup from work timing. Recheck runtime
+   primitives individually, especially spawn and echo.
 2. Finish the bounded four-slot network acceptance path: HTTP and WebSocket
    progress during CPU work, correct results, admission/cancellation bounds,
    responsive health checks and clean shutdown. Audit encoding and listener
@@ -808,7 +809,72 @@ The next acceptance priorities are:
    parallel-language audit. Million-live-task and broader core-count scaling
    checks also remain explicit acceptance work.
 
-The immediate performance checkpoint uses five runs per slot count, eight
+### Matched performance checkpoint (2026-10-29)
+
+The matched-stock harness at `06703df` ran five interleaved samples of each
+variant, eight jobs per sample and 500,000 integer iterations per job. It uses
+Perl's implicit `$_` loop variable, modulo and addition, with no explicit yields.
+Both interpreters are Perl 5.42.2, GCC 14.2.1, `-O2`, with matching compiler/link
+flags, multiplicity, op-sharing and 64-bit settings. The host is the same Ryzen
+7 PRO 4750U. All 200 job results matched the independent reference.
+
+| Execution mode | Median work wall time | Slowdown vs stock | Speedup vs Wump one slot |
+| --- | --- | --- | --- |
+| Stock Perl | 0.124182 s | 1.00x | n/a |
+| Ordinary fork, Wump disabled | 1.040807 s | 8.38x | n/a |
+| Wump, one slot | 4.350042 s | 35.03x | 1.00x |
+| Wump, two slots | 5.564762 s | 44.81x | 0.78x |
+| Wump, four slots | 6.550921 s | 52.75x | 0.66x |
+
+This workload misses both the close-to-stock and near-linear-scaling goals.
+The Unicode backend's earlier multi-slot gains remain valid for that workload;
+they do not generalize to this scalar/default-variable loop. These measurements
+also expose substantial fork overhead without opting into Wump. They are local
+observations, not a general slowdown estimate for all Perl applications.
+[Raw samples and summaries](bench/perl-stock-baseline.jsonl) retain exact source
+identity, clean-tree status, configuration, CPU time and process timing.
+
+Five fresh native benchmark comparisons at the same source revision used
+100,000 iterations and Go 1.27.3 with nodwarf5. Ratios below divide median Wump
+wall time by median Go wall time for each identical work size; lower is faster.
+
+| Runtime case | One worker, Wump/Go | Four workers, Wump/Go |
+| --- | --- | --- |
+| Spawn/completion | 6.44x | 13.03x |
+| Voluntary yield | 3.19x | 1.08x |
+| Unbuffered round trip | 2.56x | 1.48x |
+| Buffered MPMC | 1.45x | 1.16x |
+| Ready channel selection | 1.46x | 1.30x |
+| Timer sleep | 0.89x | 0.61x |
+| Socketpair echo | 9.42x | 7.53x |
+| Explicit blocking handoff | 0.09x | 0.97x |
+| Native CPU loop | 0.97x | 0.97x |
+
+Spawn, echo and some single-worker cases miss the 2x target. Spawn uses batches
+of at most 1024 tasks, so these runs do not validate a million live acts.
+Echo measures a socketpair, not TCP. The blocking test uses different runtime
+handoff policies and is not a general syscall-cost comparison.
+The native CPU row does not assess the design's Perl-versus-Go per-core
+compute range; that needs the same algorithm implemented in both languages.
+[Raw native samples](bench/design-runtime.csv) and the
+[machine/toolchain record](bench/design-machine.json) preserve the evidence.
+
+Separate flat perf profiles used one million iterations per job, eight jobs,
+`cycles:u` at 199 Hz and no lost samples. Task-state selection accounts for
+about 18% of samples in the ordinary fork and 25% with one Wump slot. Arithmetic
+wrappers and metadata operations are also prominent; the four-slot profile
+shows about 17% in pthread_mutex_lock. This supports investigating state-access
+cost and tracking/synchronization of private operations, including the implicit
+loop variable, before making broader scaling claims. It does not establish
+which lock or optimization accounts for the full slowdown.
+[Named user-symbol profile rows](bench/design-profiles.csv) include entries
+at or above 1% and omit unresolved/kernel addresses; percentages retain the
+full capture denominator and do not sum to 100. Profiled runs are separate
+from the benchmark timings.
+
+### State-access checkpoint (2026-10-29)
+
+An earlier performance checkpoint used five runs per slot count, eight
 jobs, twenty analysis passes and four worker acts, with the same 128-line
 Unicode fixture. All 240 jobs across the before/after samples matched the
 reference. On the local Ryzen 7 PRO 4750U (16 logical CPUs), GCC 14.2.1 build,

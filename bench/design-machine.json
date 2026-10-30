@@ -1,0 +1,20 @@
+{
+   "cpu_model" : "AMD Ryzen 7 PRO 4750U with Radeon Graphics",
+   "go_sha256" : "6c15f34b6e4e29ab781c09bc22438db2dc514dcff73a83e776c0b2a2b1c41a25",
+   "go_version" : "go1.27.3-X:nodwarf5 linux/amd64",
+   "perf_version" : "6.19.12",
+   "private_sha256" : "2e98b028b8cb910f30deb61636f62d0782b53de3fc722ce8a09fec7686cbc3ff",
+   "profiles" : {
+      "event" : "cycles:u",
+      "iterations" : 1000000,
+      "jobs" : 8,
+      "lost_samples" : 0,
+      "sampling_hz" : 199
+   },
+   "runtime_build_flags" : "CC=cc\nAR=ar\nCPPFLAGS=-Iruntime/include -Iruntime/src\nCFLAGS=-O2 -g -std=c11 -Wall -Wextra -Werror -pthread\nLDFLAGS=-pthread\nLDLIBS=-lm\n",
+   "runtime_iterations" : 100000,
+   "runtime_runs" : 5,
+   "runtime_sha256" : "d653240149eba32beb6e44304a56b2692bf427029592e55af5302070610be0f0",
+   "source_revision" : "06703dfbe5790e2aa8f0ff2c65e63eb9bcf64371",
+   "stock_sha256" : "c7688d340a6002b222777a1c93c6892db939629a69266ed8b4e2834e7a0951da"
+}
