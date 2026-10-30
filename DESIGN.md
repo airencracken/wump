@@ -1223,6 +1223,9 @@ races on the shared literal head. Repetition now leaves already-clear and
 published heads untouched while preserving the original argument aliases;
 private temporaries keep native cleanup. The failing callback stress remains
 in the suite, alongside explicit repeated-argument alias checks.
+TSan also caught newRV_inc rewriting the original head in the min/max retainer.
+Min/max and native-handle retainers now use private RV heads with atomic
+reference increments and leave the retained value's flags untouched.
 
 The Mojo dashboard passes the external 48-check HTTP/WebSocket test on four
 execution slots. Daemon preparation completes helper proxy generation, route

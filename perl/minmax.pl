@@ -15,7 +15,10 @@ sub apply_minmax {
         for (I32 arg = 0; arg < items; arg++) {
             SV *original = ST(arg);
             SV *copy = Perl_wump_xs_scalar(aTHX_ original, "parallel min/max");
-            av_push(wump_originals, newRV_inc(original));
+            SV *holder = newSV_type(SVt_IV);
+            SvRV_set(holder, SvREFCNT_inc(original));
+            SvROK_on(holder);
+            av_push(wump_originals, holder);
             ST(arg) = copy;
         }
     }
@@ -35,6 +38,7 @@ XS
 XS
 		$entry =~ s/    ST\(0\) = retsv;\n/$result/ or die "missing min/max result\n";
 	}
+	$entry =~ s/            av_push\(wump_originals, newRV_inc\(original\)\);/            SV *holder = newSV_type(SVt_IV);\n            SvRV_set(holder, SvREFCNT_inc(original));\n            SvROK_on(holder);\n            av_push(wump_originals, holder);/;
 	substr($text, $start, $end - $start, $entry);
 	write_file("$source/$file", $text);
 	edit($file, "BOOT:\n{\n", <<'XS');

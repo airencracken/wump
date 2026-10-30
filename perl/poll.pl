@@ -17,6 +17,14 @@ wump_io_magic_only(SV *value)
     return TRUE;
 }
 
+static void
+wump_io_retain(pTHX_ SV *value)
+{
+    SV *holder = sv_2mortal(newSV_type(SVt_IV));
+    SvRV_set(holder, SvREFCNT_inc(value));
+    SvROK_on(holder);
+}
+
 static int
 wump_io_nonblocking(pTHX_ SV *handle, int mode)
 {
@@ -26,13 +34,13 @@ wump_io_nonblocking(pTHX_ SV *handle, int mode)
     if (!wump_io_magic_only(handle))
         croak("Wump: parallel handle mode requires a plain native handle");
     SV *glob = SvROK(handle) ? SvRV(handle) : handle;
-    (void)sv_2mortal(newRV_inc(glob));
+    wump_io_retain(aTHX_ glob);
     Perl_wump_capture_end(aTHX_ capture);
     capture = Perl_wump_capture_begin(aTHX_ glob);
     if (SvTYPE(glob) != SVt_PVGV || !wump_io_magic_only(glob) || !isGV_with_GP(glob))
         croak("Wump: parallel handle mode requires a plain native handle");
     IO *io = GvIO((GV *)glob);
-    if (io) (void)sv_2mortal(newRV_inc((SV *)io));
+    if (io) wump_io_retain(aTHX_ (SV *)io);
     Perl_wump_capture_end(aTHX_ capture);
     capture = io ? Perl_wump_capture_begin(aTHX_ (SV *)io) : NULL;
     if (io && !wump_io_magic_only((SV *)io))
