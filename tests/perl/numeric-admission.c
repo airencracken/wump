@@ -138,6 +138,7 @@ typedef struct fixture {
 	HV *stash;
 	GV *default_gv;
 	_Atomic unsigned ready[2], start[2], entered[2], release[2], writer_done;
+	_Atomic unsigned setup_ready[2], setup_go;
 	_Atomic unsigned gate_ready, gate_release, writer_go, mutex_calls[2];
 	_Atomic unsigned query_ready, query_go, query_done, query_release;
 	struct wump_perl_allocator pools[4];
@@ -241,6 +242,11 @@ static void *exercise(void *arg) {
 		SV *target = newSViv(0), *rhs = newSViv(2);
 		SV **saved_sp = PL_stack_sp;
 		SV *stack[2] = {f->source, rhs}; PL_stack_sp = stack + 1;
+		/* Publication during another thread's setup advances the warmup
+		 * epoch. Finish all metadata preparation before warming either slot,
+		 * so this fixture tests a hot reader rather than cold admission. */
+		atomic_store(&f->setup_ready[ctx->id], 1);
+		while (!atomic_load(&f->setup_go)) sched_yield();
 		CHECK(Perl_wump_numeric_enter(aTHX_ target));
 		Perl_wump_numeric_leave(aTHX);
 		CHECK(Perl_wump_numeric_enter(aTHX_ target));
@@ -290,8 +296,10 @@ int main(int argc, char **argv, char **env) {
 	CHECK(pthread_create(&threads[0], NULL, exercise, &args[0]) == 0);
 	CHECK(pthread_create(&threads[1], NULL, exercise, &args[1]) == 0);
 	CHECK(pthread_create(&threads[3], NULL, exercise, &args[3]) == 0);
-	CHECK(wait_flag(&f.ready[0], 3000) && wait_flag(&f.ready[1], 3000));
+	CHECK(wait_flag(&f.setup_ready[0], 3000) && wait_flag(&f.setup_ready[1], 3000));
 	CHECK(wait_flag(&f.query_ready, 3000));
+	atomic_store(&f.setup_go, 1);
+	CHECK(wait_flag(&f.ready[0], 3000) && wait_flag(&f.ready[1], 3000));
 	CHECK(pthread_create(&threads[2], NULL, exercise, &args[2]) == 0);
 	CHECK(wait_flag(&f.gate_ready, 3000));
 	atomic_store(&f.start[0], 1);
