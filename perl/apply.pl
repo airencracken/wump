@@ -175,6 +175,7 @@ void Perl_wump_av_detach(pTHX_ AV *value);
 void Perl_wump_hv_detach(pTHX_ HV *value);
 bool Perl_wump_is_shared(pTHX_ const SV *value);
 bool Perl_wump_readable(pTHX_ const SV *value);
+bool Perl_wump_scalar_read_begin(pTHX_ const SV *value, struct wump_shared **claim);
 SV *Perl_wump_scalar_snapshot(pTHX_ const SV *value);
 const SV *Perl_wump_read_origin(pTHX_ const SV *value);
 IV Perl_wump_read_iv(pTHX_ SV *value, I32 flags);

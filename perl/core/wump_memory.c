@@ -455,9 +455,16 @@ void Perl_wump_memory_check(pTHX_ const SV *value) {
 	if (busy) croak("Wump: publication overlaps mutation of a shared value");
 }
 
-bool Perl_wump_read_try_begin(pTHX_ const SV *value, struct wump_shared **claim) {
+/* Core scalar access obtains classification and its reader claim together.
+ * The registry is authoritative for published scalar cells; implicit shared
+ * stashes, GVs, immortals and inversion lists are not snapshot candidates.
+ * Do not inspect a scalar head before excluding a foreign logical writer. */
+static bool wump_read_try_begin(pTHX_ const SV *value, struct wump_shared **claim, bool *shared) {
 	*claim = NULL;
-	if (!value || !PL_wump_task || !aTHX->Iwump_memory || PL_phase == PERL_PHASE_DESTRUCT) return TRUE;
+	if (shared) *shared = FALSE;
+	if (!value || !aTHX->Iwump_memory || PL_phase == PERL_PHASE_DESTRUCT) return TRUE;
+	struct wump_perl_task *task = PL_wump_task;
+	if (!task && !shared) return TRUE;
 	if (wump_memory_untracked(aTHX->Iwump_memory, value)) return TRUE;
 	wump_registry_read_lock(aTHX);
 	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
@@ -465,16 +472,35 @@ bool Perl_wump_read_try_begin(pTHX_ const SV *value, struct wump_shared **claim)
 		wump_registry_read_unlock(aTHX);
 		return TRUE;
 	}
+	/* Root API callers retain snapshot semantics for explicitly published
+	 * scalars, even before the interpreter has activated an act. */
+	if (!task) {
+		if (shared) *shared = TRUE;
+		wump_registry_read_unlock(aTHX);
+		return TRUE;
+	}
 	unsigned access = atomic_load_explicit(&node->access, memory_order_acquire);
 	if (access & WUMP_WRITER) {
-		bool own = node->writer == wump_memory_actor(aTHX);
+		bool own = node->writer == (const void *)task;
 		wump_registry_read_unlock(aTHX);
 		return own;
 	}
 	atomic_fetch_add_explicit(&node->access, 1, memory_order_acquire);
+	if (shared) *shared = TRUE;
 	wump_registry_read_unlock(aTHX);
 	*claim = node;
 	return TRUE;
+}
+
+bool Perl_wump_read_try_begin(pTHX_ const SV *value, struct wump_shared **claim) {
+	return wump_read_try_begin(aTHX_ value, claim, NULL);
+}
+
+bool Perl_wump_scalar_read_begin(pTHX_ const SV *value, struct wump_shared **claim) {
+	bool shared;
+	if (!wump_read_try_begin(aTHX_ value, claim, &shared))
+		croak("Wump: read overlaps mutation of a shared value");
+	return shared;
 }
 
 struct wump_shared *Perl_wump_read_begin(pTHX_ const SV *value) {

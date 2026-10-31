@@ -21,7 +21,9 @@ onto real OS threads, Perl code running in parallel on every core.
 - **Perl stays Perl.** `local`, `die`/`eval`, `warn`, `defer`, closures,
   Try::Tiny, `$_`, regexes all keep working and mean what they mean today,
   extended per task where needed.
-- Single-threaded Perl stays close to stock speed.
+- Ordinary single-threaded Perl must not measurably regress against matched
+  stock builds across the acceptance workloads. Coroutine gains cannot offset
+  an ordinary-Perl regression; an isolated fast loop does not establish parity.
 - Somewhat competitive with Go: runtime primitives (spawn, switch, channel
   op) within ~2x of Go; Perl compute scales near-linearly with cores.
   Per core it will stay an interpreter, roughly 20-50x slower than Go.
@@ -863,20 +865,28 @@ an explicit non-goal and must not be mistaken for the implementation model.
 
 The next acceptance priorities are:
 
-1. Reduce one-slot Wump overhead and metadata contention exposed by the matched
-   baseline below. Check ordinary-fork performance across more workloads.
-   Preserve migration-safe state access, publication and reader
-   semantics while optimizing. Retain raw samples, compiler configuration and
-   source identity; separate startup from work timing. Recheck runtime
-   primitives individually, especially spawn and echo.
-2. Extend the passing bounded four-slot HTTP/WebSocket path with longer soaks
+1. Make coroutine execution a core interpreter contract suitable for eventual
+   Perl-core review. Give core accessors authoritative ownership/publication
+   results and carry bounded proofs through the operations that consume them,
+   rather than rediscovering them in each wrapper. Direct act context and
+   allocator/lifetime integration follow the same rule: define invalidation at
+   publication, callbacks, allocation and scheduling before removing a check.
+   Keep race detection and callback/alias semantics intact.
+2. Treat ordinary-fork regressions against matched stock as acceptance blockers.
+   Cover arithmetic, strings/Unicode, hashes, regexes, calls, allocation, runtime
+   compilation and XS; retain the known slow XS-heavy case alongside the fast
+   integer fixture. Relative-to-checkpoint gates prevent backsliding but do not
+   certify stock parity. Record source/build identity and raw samples, separate
+   startup from work, and compare coroutine primitives with Go independently
+   from Perl application throughput. One-slot overhead remains a primary goal.
+3. Extend the passing bounded four-slot HTTP/WebSocket path with longer soaks
    and more dependency stacks, retaining admission/cancellation bounds,
    responsive health checks, clean shutdown and the compiler/XS gates.
-3. Address general Perl I/O handoff and XS/compiler callback/reentry policy.
+4. Address general Perl I/O handoff and XS/compiler callback/reentry policy.
    Passing one dependency stack cannot establish general CPAN compatibility.
    Keep the passing full standard noninteractive upstream suite as a regression
    gate; it does not establish general concurrent CPAN compatibility.
-4. Track static deployment as independent work; it need not wait for every
+5. Track static deployment as independent work; it need not wait for every
    parallel-language audit. Million-live-task and broader core-count scaling
    checks also remain explicit acceptance work.
 

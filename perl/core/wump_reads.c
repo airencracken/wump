@@ -12,12 +12,12 @@ static struct wump_read_frame **wump_read_frames(pTHX) {
 	return task ? &task->read_frame : &aTHX->Iwump_read_frame;
 }
 
-static bool wump_readable_raw(pTHX_ const SV *value) {
+static bool wump_readable_raw(pTHX_ const SV *value, bool classified) {
 	if (!value || SvTYPE(value) > SVt_PVMG || SvTYPE(value) == SVt_INVLIST
 		|| SvROK(value) || SvOBJECT(value)
 		|| SvIMMORTAL(value) || SvVALID(value) || PL_phase == PERL_PHASE_DESTRUCT
 		|| !PL_curstackinfo) return FALSE;
-	if (!Perl_wump_is_shared(aTHX_ value)) return FALSE;
+	if (!classified && !Perl_wump_is_shared(aTHX_ value)) return FALSE;
 	if (SvTYPE(value) >= SVt_PVMG) {
 		for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic)
 			if (!Perl_wump_publish_magic(mg)) return FALSE;
@@ -26,13 +26,13 @@ static bool wump_readable_raw(pTHX_ const SV *value) {
 }
 
 bool Perl_wump_readable(pTHX_ const SV *value) {
-	struct wump_shared *claim = Perl_wump_read_begin(aTHX_ value);
+	struct wump_shared *claim;
+	bool shared = Perl_wump_scalar_read_begin(aTHX_ value, &claim);
 	/* A registered shared value with no reader claim belongs to this act's
 	 * active writer. Core mutators rely on conversion caches being installed
 	 * on that original SV. Explicit snapshots still use the raw eligibility
 	 * predicate and remain available inside a mutation. */
-	bool owned = PL_wump_task && !claim && Perl_wump_memory_shared(aTHX_ value) == 1;
-	bool result = !owned && wump_readable_raw(aTHX_ value);
+	bool result = shared && wump_readable_raw(aTHX_ value, TRUE);
 	Perl_wump_read_end(aTHX_ claim);
 	return result;
 }
@@ -81,7 +81,7 @@ bool Perl_wump_cache_truth(pTHX_ SV *value, I32 flags, bool fallback) {
 
 SV *Perl_wump_scalar_snapshot(pTHX_ const SV *value) {
 	struct wump_borrow *capture = Perl_wump_capture_begin(aTHX_ value);
-	if (!wump_readable_raw(aTHX_ value)) {
+	if (!wump_readable_raw(aTHX_ value, FALSE)) {
 		Perl_wump_capture_end(aTHX_ capture);
 		croak("Wump: shared scalar representation changed during snapshot capture");
 	}

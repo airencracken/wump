@@ -16,6 +16,7 @@ int __wrap_pthread_mutex_lock(pthread_mutex_t *mutex) {
 static void private_paths(pTHX_ SV *value) {
 	struct wump_shared *claim = NULL;
 	CHECK(Perl_wump_memory_shared(aTHX_ value) == -1);
+	CHECK(!Perl_wump_readable(aTHX_ value));
 	Perl_wump_memory_check(aTHX_ value);
 	CHECK(Perl_wump_read_try_begin(aTHX_ value, &claim) && !claim);
 	CHECK(!Perl_wump_mutation_begin(aTHX_ value));
@@ -30,6 +31,17 @@ int main(int argc, char **argv, char **env) {
 	PERL_SET_CONTEXT(interp);
 	perl_construct(interp);
 	dTHXa(interp);
+	/* Root execution must classify ordinary scalars without the metadata
+	 * mutex too; explicit publication still preserves source-cache semantics. */
+	SV *root = newSVpvs("42");
+	locks = 0;
+	CHECK(!Perl_wump_readable(aTHX_ root));
+	CHECK(!locks);
+	Perl_wump_publish(aTHX_ root);
+	locks = 0;
+	CHECK(Perl_wump_readable(aTHX_ root));
+	CHECK(locks == 1 && "root scalar classification must use one authoritative lookup");
+	CHECK(SvIV(root) == 42 && !SvIOK(root));
 	struct wump_perl_task owner = {.interp = interp, .main = 1};
 	struct wump_perl_task other = {.interp = interp, .main = 1};
 	Perl_wump_task_activate(aTHX_ &owner);
@@ -44,19 +56,26 @@ int main(int argc, char **argv, char **env) {
 	private_paths(aTHX_ value);
 	CHECK(locks == 0);
 	Perl_wump_memory_unlock(aTHX);
+	SvREFCNT_dec(root);
 	/* A failed/cleared publication is a conservative false positive. It
 	 * must not manufacture a claim or make an owned value shared. */
 	Perl_wump_memory_mark(aTHX_ value, 0);
 	private_paths(aTHX_ value);
+	Perl_wump_memory_mark(aTHX_ value, 1);
+	CHECK(!Perl_wump_readable(aTHX_ value));
 	ENTER;
 	SAVETMPS;
 	Perl_wump_publish(aTHX_ value);
 	CHECK(Perl_wump_memory_shared(aTHX_ value) == 1);
 	locks = 0;
+	CHECK(Perl_wump_readable(aTHX_ value));
+	CHECK(locks == 2 && "scalar classification and claim must share one lookup, followed by release");
+	locks = 0;
 	Perl_wump_publish(aTHX_ value);
 	CHECK(locks == 1);
 	struct wump_mutation *writer = Perl_wump_mutation_begin(aTHX_ value);
 	CHECK(writer);
+	CHECK(!Perl_wump_readable(aTHX_ value));
 	Perl_wump_task_activate(aTHX_ &other);
 	struct wump_shared *claim = NULL;
 	CHECK(!Perl_wump_read_try_begin(aTHX_ value, &claim) && !claim);
