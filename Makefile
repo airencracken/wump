@@ -51,12 +51,15 @@ perl-mojo-cpu-bench: perl-build
 
 STOCK_PERL = $(BUILD)/stock/perl/perl-5.42.2/perl
 .PHONY: perl-baseline-bench perl-baseline-test perl-perf-test perl-perf-check perl-perf-check-test
-.PHONY: perl-state-inventory-test perl-context-compat-test
+.PHONY: perl-state-inventory-test perl-context-compat-test perl-legacy-compat-test
 perl-state-inventory-test: perl-build
 	perl tests/perl/state-inventory.t '$(abspath $(BUILD))/perl/perl-5.42.2'
 
 perl-context-compat-test: perl-build
 	perl tests/perl/context-compat.t '$(abspath $(BUILD))/perl/perl-5.42.2/perl' '$(abspath $(STOCK_PERL))'
+
+perl-legacy-compat-test: perl-build
+	perl tests/perl/legacy-compat.t '$(abspath $(BUILD))/perl/perl-5.42.2/perl' '$(abspath $(STOCK_PERL))'
 
 perl-baseline-bench: perl-build
 	timeout 300s perl bench/perl-baseline.pl '$(abspath $(BUILD))/perl/perl-5.42.2/perl' '$(abspath $(STOCK_PERL))'

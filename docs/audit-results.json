@@ -36,6 +36,37 @@
          "sha256" : "c7688d340a6002b222777a1c93c6892db939629a69266ed8b4e2834e7a0951da"
       }
    },
+   "continuations" : [
+      {
+         "base_revision" : "24d4d6f",
+         "binary_hashes_match_original_record" : true,
+         "date_local" : "2026-10-31",
+         "existing_checks" : {
+            "context_differential_assertions" : 53,
+            "inventory_assertions" : 6,
+            "related_suite_assertions" : 115,
+            "related_suites" : ["entry", "ordinary", "pocket-deparse", "hooks", "separators"]
+         },
+         "fixture_setup_correction" : "The initial stock warning-policy assertion used implicit warning-query frame selection. Explicit enabled_at_level('numeric', 0) now observes the intended call frame without changing the expected enabled/disabled behavior. Initial failure and final passing logs are retained.",
+         "legacy_differential" : {
+            "assertions_per_configuration" : 9,
+            "configurations" : 9,
+            "modes" : ["stock", "private unused", "private required without import"],
+            "observations" : ["names and prototypes", "lexical hints and warnings", "warning and exception hooks", "selected output and separators", "read-only C-locale queries"],
+            "slot_environment" : ["1", "4", "invalid-unused"],
+            "top_level_checks" : 26
+         },
+         "limits" : [
+            "inactive execution only; configured slots do not prove parallel execution or migration",
+            "C locale queries only; locale mutation, other locales and concurrent handle semantics remain outside coverage",
+            "existing verified binaries reused with make -o perl-build; no new core, upstream, sanitizer or performance run"
+         ],
+         "logs" : "master/build/checkpoint-legacy-20261031/",
+         "milestone" : "T10 bounded legacy unused-mode differential",
+         "result" : "pass",
+         "runtime_source_modified" : false
+      }
+   ],
    "date_utc" : "2026-10-31",
    "declarations" : {
       "executor_selected" : 7,

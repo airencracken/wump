@@ -1075,12 +1075,22 @@ general thread safety or CPAN compatibility.
 ```sh
 make perl-state-inventory-test
 make perl-context-compat-test STOCK_PERL=/absolute/path/to/stock/perl
+make perl-legacy-compat-test STOCK_PERL=/absolute/path/to/stock/perl
 ```
 
 The stock control must be unmodified Perl 5.42.2. The differential checks
 unused, one-actor, cooperative and multi-slot modes separately, and retains
 known unsupported native-entry behavior explicitly. The inventory check also
 runs as part of `perl-test`.
+
+The legacy differential checks ordinary names/prototypes, lexical hints and
+warning policy, nested warning/exception hooks, selected output handles and
+separators, and read-only C-locale queries. It compares stock, the unused fork,
+and the fork after `require Wump` without import, each with `WUMPPROCS=1`, `4`,
+and an invalid unused value. It preserves exact observations and diagnostics;
+this unused-mode evidence does not establish parallel locale or shared-handle
+safety. Both differential targets require an explicit stock control and remain
+separate from `perl-test`.
 
 `make perl-upstream-full-test` runs upstream's complete noninteractive core,
 bundled-library and extension harness against the private fork. It clears

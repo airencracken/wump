@@ -1873,3 +1873,20 @@ active unit; setup failed before tests, was corrected to run/sv, and both logs
 are retained. Full MSan dependencies, the clone TSan failure and Helgrind/DRD
 tool assertions remain open. This is an integration step and a clearer
 acceptance baseline; the no-slowdown and Go performance goals remain unmet.
+
+## Legacy compatibility evidence (2026-10-31)
+
+The audit's T10 continuation adds an exact stock differential for legacy
+names/prototypes, lexical hints and warning policy, nested warning/exception
+hooks, selected output handles/separators, and read-only C-locale queries.
+Stock, the unused fork, and the fork after require without import all agree
+with slot settings `1`, `4`, and an invalid unused value. Merely setting
+`WUMPPROCS` does not activate runtime policy or validate actor configuration.
+
+The new target passes 26 top-level checks including nine configuration
+subtests. The existing context differential, inventory validation, and five
+related Perl suites also pass. Runtime source and binaries are unchanged;
+there is no new performance or parallel-safety conclusion. Forced nested-frame
+migration and the shutdown/unwind phase matrix remain the next audit work.
+See the [audit continuation](docs/EXECUTION-CONTEXT-AUDIT.md#legacy-unused-mode-continuation-2026-10-31)
+for exact scope, commands, results and remaining gaps.

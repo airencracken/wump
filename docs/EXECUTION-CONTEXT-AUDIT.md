@@ -178,6 +178,7 @@ here. A P entry is not an assertion of complete feature compatibility.
 | Nested arguments/lexicals, user `caller` frames, list/scalar/void context | D | D | D | D at 2/4 | New context fixture; first three user frames only. Separate P fixture proves actual parallel overlap. |
 | Block eval, string exceptions, nested `local`, normal destruction | D | D | D | D at 2/4 | No shutdown/cancellation equivalence is inferred from normal completion. |
 | `$_`, `$@`, captures, private-subject `pos()` | D | D | D | D at 2/4 | Shared-subject `pos()` and arbitrary concurrent regex engines are not certified. |
+| Legacy names/prototypes, lexical hints/warnings, nested hooks, selected output, read-only C-locale queries | D, including require without import and unused valid/invalid slot settings | Not exercised by this differential | Not exercised by this differential | Not exercised by this differential | T10 continuation below; configured slots do not imply actor execution. |
 | Ordinary JSON::PP default UTF-8 output | D, including `WUMPPROCS=4` without import | P | Initial many-actor 1-slot run passed | L at 2/4 | `utf8::encode` is not admitted; gate applies even to one actor configured with multiple slots. Character output is separate. |
 | Runtime string eval/require/do-file/dynamic regex compilation | Historical upstream evidence; not a fresh full stock sweep | P on covered paths | Partial P / U for general reentrant compile hooks | L | Block eval is supported separately. Parser/global compiler state is not fully task-local. |
 | Scoped package/element locals, separator/hook caches, aliases | Historical ordinary tests plus P | P | P | P on covered paths | Typeglob/refalias/delete localization and unsupported magic remain L; no blanket `local` compatibility claim. |
@@ -232,7 +233,7 @@ Do not turn a missing test into a public reproduction of a sensitive finding.
 | P1 / T7 | Native extension fixture with documented callback, TLS and normal-return contracts | After handoff, allocation uses the destination P; thread-affine native work stays pinned during its marked call; no pointer to executor-owned state is retained across yield. Deliberate misuse need not invoke undefined native behavior. |
 | P1 / T8 | Prepared reactor cancellation/connection churn plus a second small event-loop stack | Bounded job admission, progress, correct responses, detached waits, clean shutdown and listener reuse hold with repeated starts. One passing Mojo workload is not a module-wide certificate. |
 | P1 / T9 | Sequential multi-interpreter callback/reentry matrix and explicit rejection tests for unsupported nested entry | TLS selectors filter interpreter identity, root state returns correctly, and unsupported reentry fails without changing the already running interpreter. No simultaneous Perl-runtime support is presumed. |
-| P2 / T10 | Legacy unused-mode fixtures for names/prototypes, hints, warning/exception hooks, IO selection and supported read-only locale queries | Installing the fork or setting WUMPPROCS alone does not activate actor semantics or gates. Compare identical source with stock; keep expected behavior unchanged. |
+| P2 / T10 | Legacy unused-mode fixtures for names/prototypes, hints, warning/exception hooks, IO selection and supported read-only locale queries. **Covered for the bounded C-locale fixture below.** | Installing the fork or setting WUMPPROCS alone does not activate actor semantics or gates. Exact stock observations now cover these families, including require without import. Other locales, process locale mutation and actor-mode handle sharing remain outside this fixture. |
 | P2 / T11 | Trace off/on comparison with bounded event loss and schedule-independent outputs | Opt-in observation changes diagnostics only, not returned values, gate decisions, cleanup counts or default hot-path behavior. |
 
 ## Prioritized implementation plan
@@ -243,7 +244,8 @@ Do not turn a missing test into a public reproduction of a sensitive finding.
    review of every reclassification; unresolved entries cannot silently become
    safe merely because a field was omitted.
 2. **Extend differential context evidence before changing storage.** Start with
-   T2 and T10 in isolated tests. Acceptance: unchanged stock observations in
+   T2 and T10 in isolated tests. T10 now has the unused-mode fixture below;
+   forced migration in T2 remains open. Acceptance: unchanged stock observations in
    unused/one-actor/cooperative/parallel modes, with actual migration/overlap
    evidence supplied separately. Preserve existing hooks and callback semantics.
 3. **Pin the shutdown/unwind phase contract.** Add T3/T4 as separate small
@@ -270,6 +272,49 @@ Do not turn a missing test into a public reproduction of a sensitive finding.
    environments separately; never suppress/skip failures to meet a milestone.
    Keep ordinary stock performance and Go primitive targets as distinct gates.
 
+## Legacy unused-mode continuation (2026-10-31)
+
+This continuation implements T10 without changing runtime or selector storage.
+[legacy-observations.pl](../tests/perl/legacy-observations.pl) runs identical
+source under stock and the unused fork. A third mode requires Wump without
+import. Each mode runs with `WUMPPROCS=1`, `4`, and `invalid-unused`: all nine
+configurations must succeed, preserve exact observations and emit no unexpected
+diagnostics. Invalid configuration deliberately checks that actor startup and
+configuration validation have not occurred. Configuring four slots here is
+**not** parallel-execution evidence.
+
+The fixture observes legacy `act`, `chan`, `sel`, `scope` and `pocket` functions
+and prototypes, a rejected under-arity call, scoped hint hashes and string-eval
+inheritance, integer and lexical-warning policy, fatal numeric warnings,
+nested warning/die hooks and dynamic restoration, selected scalar-backed
+output handles and separators through a catchable exception, and read-only
+`POSIX::setlocale(LC_NUMERIC)`/`localeconv` under a harness-controlled C locale.
+Default JSON::PP UTF-8 serialization also succeeds in every inactive mode.
+The harness checks the stock observations independently before comparing the
+fork; it does not normalize error messages, hooks or observed state.
+
+Fresh results using the same binary hashes recorded in `audit-results.json`:
+
+| Check | Result |
+| --- | --- |
+| `perl-legacy-compat-test` | 26 top-level checks pass, including nine configuration subtests with nine assertions each. |
+| Existing `perl-context-compat-test` | 53 checks pass, retaining the active multi-slot JSON limitation. |
+| `perl-state-inventory-test` | Six checks pass; no ownership reclassification. |
+| Existing entry, ordinary, pocket-deparse, hooks and separators suites | Five files / 115 checks pass. |
+| `git diff --check` | Pass. |
+
+An initial fixture assertion incorrectly used warning-query frame selection
+that reported disabled warnings even on stock. The fixture now requests the
+immediate call frame explicitly with `warnings::enabled_at_level`; the expected
+enabled/disabled behavior is unchanged. Initial and final logs are retained
+under `build/checkpoint-legacy-20261031/` in the main checkout.
+
+No runtime bug was demonstrated. Runtime sources and binary hashes are
+unchanged, so there was no new core build, full upstream run, sanitizer run or
+performance measurement. This is bounded ordinary-mode evidence: it does not
+close T2 migration, T3/T4 teardown, native XS admission, locale mutation,
+non-C locales, arbitrary PerlIO layers or concurrent shared-handle semantics.
+
 ## Reproduction and maintenance
 
 With the matching private and stock builds available:
@@ -277,11 +322,12 @@ With the matching private and stock builds available:
 ```sh
 make perl-state-inventory-test
 make perl-context-compat-test STOCK_PERL=/absolute/path/to/stock/perl
+make perl-legacy-compat-test STOCK_PERL=/absolute/path/to/stock/perl
 ```
 
-The new inventory check is also in `perl-test`. The stock differential remains
-an explicit target because a stock build is an additional dependency; it does
-not silently substitute the private binary as its own control.
+The inventory check is also in `perl-test`. The stock differentials remain
+explicit targets because a stock build is an additional dependency; neither
+silently substitutes the private binary as its own control.
 
 For this audit, existing verified build outputs were used with `make -o
 perl-build ...` and an explicit BUILD/stock path. Fresh suite/native/runtime/

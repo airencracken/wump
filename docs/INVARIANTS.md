@@ -251,7 +251,12 @@ not be silently reinterpreted merely because the fork is installed.
 Enforcement: [opt-in](../perl/lib/Wump.pm), [main entry](../perl/apply.pl#L464).
 Evidence: [ordinary](../tests/perl/ordinary.t), [entry](../tests/perl/entry.t),
 [legacy syntax](../tests/perl/pocket-deparse.t),
-[same-version differential](../tests/perl/context-compat.t).
+[same-version context differential](../tests/perl/context-compat.t),
+[legacy differential](../tests/perl/legacy-compat.t).
+The legacy fixture compares names/prototypes, lexical hints/warnings, hooks,
+selected output and read-only C-locale queries with stock, including after
+`require Wump` without import. Even invalid `WUMPPROCS` must remain inert until
+activation. This evidence does not reclassify locale or IO state as task-local.
 
 **COMPAT-2 — An admission label is entry-specific.** Parallel XS admission uses
 native entry addresses registered before execution, with a constant-XS
