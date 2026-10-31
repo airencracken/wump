@@ -357,7 +357,9 @@ static SV **wump_regex_scalar(pTHX_ GV *gv) {
 
 SV **Perl_wump_gv_sv(GV *gv) {
 	dTHX;
-	SV **private = S_wump_private_scalar(aTHX_ PL_wump_task, gv);
+	struct wump_perl_task *task = PL_wump_task;
+	if (!task) return &GvGP(gv)->gp_sv;
+	SV **private = S_wump_private_scalar(aTHX_ task, gv);
 	if (private) return private;
 	wump_local *binding = wump_local_find(aTHX_ gv, 's', FALSE);
 	if (binding != NULL) return &binding->value;

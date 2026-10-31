@@ -62,7 +62,9 @@ static void check_slots(pTHX) {
 	GV *owned[] = {child.Idefgv, child.Ierrgv, child.Ireplgv};
 	for (unsigned i = 0; i < 3; i++) {
 		CHECK(root[i]);
+		Perl_wump_task_activate(aTHX_ NULL);
 		CHECK(!S_wump_private_scalar(aTHX_ NULL, root[i]));
+		CHECK(Perl_wump_gv_sv(root[i]) == &GvGP(root[i])->gp_sv);
 		Perl_wump_task_activate(aTHX_ &main_task);
 		if (!GvGP(root[i])->gp_sv) GvGP(root[i])->gp_sv = newSV(0);
 		SV **expected = &GvGP(root[i])->gp_sv;
