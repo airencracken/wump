@@ -555,6 +555,13 @@ body, string buffer, or COW count. Numeric and truth macro fast paths take a
 short reader claim before inspecting caches. Plain-scalar snapshot capture
 holds the same exclusion against writers through its allocating copy.
 
+Core scalar conversion now obtains publication classification and its reader
+claim together. A private scalar avoids metadata locking, and a shared scalar
+uses one authoritative lookup before its eligibility checks. The proof ends
+with the claim; allocating snapshots still establish their own exclusion.
+An active writer keeps conversions on its original scalar, and ordinary root
+API calls preserve snapshot behavior for explicitly published values.
+
 Computed string buffers survive nested conversions and yields until the
 caller's current temporary scope ends. Read frames belong to the current act,
 retain the source through callbacks, and unwind on exceptions or abandoned
@@ -1300,8 +1307,11 @@ upstream-case timings and the Unicode application benchmark.
 The [compatibility checkpoint](DESIGN.md#compatibility-and-performance-gates-2026-10-30)
 records the complete standard noninteractive upstream pass, publication fix,
 and fresh performance comparisons. Its large upstream XS macro case measured
-about 2.12x stock with Wump disabled. Broader ordinary-Perl parity remains an
-acceptance goal.
+about 2.12x stock with Wump disabled. The newer
+[core integration assessment](DESIGN.md#core-scalar-access-and-ordinary-perl-acceptance-2026-10-31)
+rechecks that case and a broader ordinary-workload matrix. Most measured paths
+still take roughly 1.7–3.5x stock work time; the fast integer loop does not
+establish ordinary-Perl parity. These regressions block upstream acceptance.
 
 The latest [scalar-lookup checkpoint](DESIGN.md#canonical-scalar-lookup-and-affinity-controls-2026-10-31)
 cuts one/two/four-slot integer work another 12–13%, to 4.25x/2.20x/1.21x stock

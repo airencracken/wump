@@ -1,0 +1,538 @@
+{
+   "after_private_sha256" : "2df6252fbc9c7c5cc3795ce80fa404674013f28f659a9e66ceb53e297271eaa5",
+   "after_source_dirty" : false,
+   "after_source_revision" : "e1b3af0b431cfead3ef5b75ef36a1ca32fa4ee1b",
+   "application" : {
+      "gate" : "PASS Mojo 1 slots wall_seconds: +0.37% (limit +10%)\nPASS Mojo 1 slots process_seconds: +0.59% (limit +10%)\nPASS Mojo 2 slots wall_seconds: -9.46% (limit +10%)\nPASS Mojo 2 slots process_seconds: -9.92% (limit +10%)\nPASS Mojo 4 slots wall_seconds: -7.94% (limit +10%)\nPASS Mojo 4 slots process_seconds: -8.12% (limit +10%)\n",
+      "medians" : {
+         "after" : {
+            "1" : {
+               "process_seconds" : 0.506293058395386,
+               "work_seconds" : 0.474021169
+            },
+            "2" : {
+               "process_seconds" : 0.446298122406006,
+               "work_seconds" : 0.415852221
+            },
+            "4" : {
+               "process_seconds" : 0.512693881988525,
+               "work_seconds" : 0.480528456
+            }
+         },
+         "before" : {
+            "1" : {
+               "process_seconds" : 0.503313064575195,
+               "work_seconds" : 0.472292658
+            },
+            "2" : {
+               "process_seconds" : 0.495469808578491,
+               "work_seconds" : 0.459305323
+            },
+            "4" : {
+               "process_seconds" : 0.557979106903076,
+               "work_seconds" : 0.521960131
+            }
+         }
+      },
+      "note" : "Unicode application comparison; no stock application control or HTTP throughput claim",
+      "runs" : 5
+   },
+   "before_private_sha256" : "81d5579784eb0c57053f2f2dd5d8960ed9170c82922dd4e806ac9ec46b2b2ad8",
+   "before_source_dirty" : false,
+   "before_source_revision" : "74fabb728f73b0b7a7c98b43064f77f36f71ba58",
+   "concurrent_builds_or_validation_during_timing" : false,
+   "cpu_affinity" : "0-15",
+   "cpu_model" : "AMD Ryzen 7 PRO 4750U with Radeon Graphics",
+   "date_utc" : "2026-10-31",
+   "fork_config" : {
+      "archname" : "x86_64-linux-thread-multi",
+      "cc" : "cc",
+      "ccflags" : "-D_REENTRANT -D_GNU_SOURCE -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64",
+      "gccversion" : "14.2.1 20241221",
+      "lddlflags" : "-shared -O2 -L/usr/local/lib -fstack-protector-strong",
+      "ldflags" : " -fstack-protector-strong -L/usr/local/lib",
+      "optimize" : "-O2",
+      "use64bitall" : "define",
+      "useithreads" : "define",
+      "usemultiplicity" : "define",
+      "version" : "v5.42.2",
+      "wump" : 1
+   },
+   "implementation" : "Core scalar read classification and reader claim use one authoritative registry lookup. Snapshot eligibility consumes that proof while the claim is held; no cached proof crosses allocation, callbacks, publication or scheduling.",
+   "integer_checkpoint_gate" : {
+      "after" : {
+         "fork" : {
+            "process_seconds" : 0.131433963775635,
+            "work_seconds" : 0.114783082
+         },
+         "stock" : {
+            "process_seconds" : 0.138216018676758,
+            "work_seconds" : 0.125238656
+         },
+         "wump-1" : {
+            "process_seconds" : 0.550056219100952,
+            "work_seconds" : 0.531851525
+         },
+         "wump-2" : {
+            "process_seconds" : 0.296983003616333,
+            "work_seconds" : 0.276254819
+         },
+         "wump-4" : {
+            "process_seconds" : 0.169748067855835,
+            "work_seconds" : 0.148334872
+         }
+      },
+      "before" : {
+         "fork" : {
+            "process_seconds" : 0.133346080780029,
+            "work_seconds" : 0.113758853
+         },
+         "stock" : {
+            "process_seconds" : 0.135761022567749,
+            "work_seconds" : 0.12263049
+         },
+         "wump-1" : {
+            "process_seconds" : 0.543361902236938,
+            "work_seconds" : 0.523373237
+         },
+         "wump-2" : {
+            "process_seconds" : 0.284491062164307,
+            "work_seconds" : 0.266817396
+         },
+         "wump-4" : {
+            "process_seconds" : 0.169184923171997,
+            "work_seconds" : 0.14951352
+         }
+      },
+      "budget_percent" : 10,
+      "fresh" : "PASS fork work: -1.20%, 0.92x stock (limit +10.00%)\nPASS fork process: -3.18%, 0.95x stock (limit +10.00%)\nPASS wump-1 work: -0.50%, 4.25x stock (limit +10.00%)\nPASS wump-1 process: -0.57%, 3.98x stock (limit +10.00%)\nPASS wump-2 work: +1.38%, 2.21x stock (limit +10.00%)\nPASS wump-2 process: +2.54%, 2.15x stock (limit +10.00%)\nPASS wump-4 work: -2.85%, 1.18x stock (limit +10.00%)\nPASS wump-4 process: -1.45%, 1.23x stock (limit +10.00%)\n",
+      "historical" : "PASS fork work: +0.13%, 0.92x stock (limit +10.00%)\nPASS fork process: -0.52%, 0.95x stock (limit +10.00%)\nPASS wump-1 work: -0.03%, 4.25x stock (limit +10.00%)\nPASS wump-1 process: -0.16%, 3.98x stock (limit +10.00%)\nPASS wump-2 work: +0.39%, 2.21x stock (limit +10.00%)\nPASS wump-2 process: +0.71%, 2.15x stock (limit +10.00%)\nPASS wump-4 work: -1.91%, 1.18x stock (limit +10.00%)\nPASS wump-4 process: -1.42%, 1.23x stock (limit +10.00%)\n",
+      "note" : "Relative checkpoint protection; does not certify stock parity. Default baseline remains perl-scalar-after.jsonl. No new eight-slot timing claim.",
+      "runs" : 5
+   },
+   "ordinary_acceptance_passed" : false,
+   "ordinary_matrix" : {
+      "boundary_verifications" : 32,
+      "capture_source" : "use v5.42;\nuse strict;\nuse warnings;\nuse JSON::PP qw(encode_json decode_json);\nuse Cwd 'abs_path';\nuse File::Basename 'dirname';\nuse Time::HiRes qw(clock_gettime CLOCK_MONOTONIC);\nmy $worker = abs_path('build/ordinary-matrix-worker.pl');\nmy $main = '/home/marcus/projects/wump/master';\nmy @variants = (\n\t['stock', \"$main/build/checkpoint-7a16547/stock/perl/perl-5.42.2/perl\"],\n\t['before', \"$main/build/perl/perl-5.42.2/perl\"],\n\t['after', abs_path('build/perl/perl-5.42.2/perl')],\n);\nmy @cases = ([numeric => 2000000], [calls => 1000000], [allocation => 300000],\n\t[hashes => 500000], [regex => 200000], [strings => 300000], ['encoding-xs' => 100000], [compilation => 10000]);\n$| = 1;\nfor my $fixture (@cases) {\n\tfor my $sample (1..5) {\n\t\tfor my $offset (0..2) {\n\t\t\tmy ($name, $binary) = @{$variants[($offset + $sample - 1) % 3]};\n\t\t\tmy $lib = dirname($binary) . '/lib';\n\t\t\tmy $start = clock_gettime(CLOCK_MONOTONIC);\n\t\t\topen my $child, '-|', 'timeout', '60s', $binary, \"-I$lib\", $worker, @$fixture or die $!;\n\t\t\tmy $text = do {local $/; <$child>};\n\t\t\tclose $child or die \"$name @$fixture failed: $?\\n$text\";\n\t\t\tmy $process = clock_gettime(CLOCK_MONOTONIC) - $start;\n\t\t\tmy $record = decode_json($text);\n\t\t\t$record->{fixture} eq $fixture->[0] && $record->{iterations} == $fixture->[1]\n\t\t\t\t&& $record->{verified} && $record->{wall_seconds} > 0 or die 'invalid result';\n\t\t\tprint encode_json({%$record, variant => $name, sample => $sample, private_perl => $binary,\n\t\t\t\tprocess_seconds => $process}), \"\\n\";\n\t\t}\n\t}\n}\n",
+      "fixtures" : {
+         "allocation" : {
+            "after_stock_process_ratio" : 2.76066980534326,
+            "after_stock_work_ratio" : 3.10023884894998,
+            "iterations" : 300000,
+            "medians" : {
+               "after" : {
+                  "process_seconds" : 0.308596043963917,
+                  "work_seconds" : 0.282754772983026
+               },
+               "before" : {
+                  "process_seconds" : 0.329036392038688,
+                  "work_seconds" : 0.30158680601744
+               },
+               "stock" : {
+                  "process_seconds" : 0.111783033004031,
+                  "work_seconds" : 0.0912041899864562
+               }
+            },
+            "work_change_percent" : -6.24431595105158
+         },
+         "calls" : {
+            "after_stock_process_ratio" : 3.19094529175777,
+            "after_stock_work_ratio" : 3.53854774257591,
+            "iterations" : 1000000,
+            "medians" : {
+               "after" : {
+                  "process_seconds" : 0.438115993980318,
+                  "work_seconds" : 0.41169636399718
+               },
+               "before" : {
+                  "process_seconds" : 0.47809056303231,
+                  "work_seconds" : 0.452062116004527
+               },
+               "stock" : {
+                  "process_seconds" : 0.137299750989769,
+                  "work_seconds" : 0.116346138005611
+               }
+            },
+            "work_change_percent" : -8.92924900766132
+         },
+         "compilation" : {
+            "after_stock_process_ratio" : 1.62798251608486,
+            "after_stock_work_ratio" : 1.74710194563385,
+            "iterations" : 10000,
+            "medians" : {
+               "after" : {
+                  "process_seconds" : 0.145304001984186,
+                  "work_seconds" : 0.118892044993117
+               },
+               "before" : {
+                  "process_seconds" : 0.150505180994514,
+                  "work_seconds" : 0.122010965016671
+               },
+               "stock" : {
+                  "process_seconds" : 0.0892540310160257,
+                  "work_seconds" : 0.0680510060046799
+               }
+            },
+            "work_change_percent" : -2.55626207294389
+         },
+         "encoding-xs" : {
+            "after_stock_process_ratio" : 3.12420748483988,
+            "after_stock_work_ratio" : 3.21303984240496,
+            "iterations" : 100000,
+            "medians" : {
+               "after" : {
+                  "process_seconds" : 1.12916766497074,
+                  "work_seconds" : 1.09975395002402
+               },
+               "before" : {
+                  "process_seconds" : 1.18427221098682,
+                  "work_seconds" : 1.15792712598341
+               },
+               "stock" : {
+                  "process_seconds" : 0.361425312003121,
+                  "work_seconds" : 0.342278341995552
+               }
+            },
+            "work_change_percent" : -5.02390648375082
+         },
+         "hashes" : {
+            "after_stock_process_ratio" : 1.69917801986001,
+            "after_stock_work_ratio" : 1.93302489356188,
+            "iterations" : 500000,
+            "medians" : {
+               "after" : {
+                  "process_seconds" : 0.0958399290102534,
+                  "work_seconds" : 0.0693582089734264
+               },
+               "before" : {
+                  "process_seconds" : 0.110925027984194,
+                  "work_seconds" : 0.0842314090114087
+               },
+               "stock" : {
+                  "process_seconds" : 0.0564037010190077,
+                  "work_seconds" : 0.0358806599979289
+               }
+            },
+            "work_change_percent" : -17.6575462912746
+         },
+         "numeric" : {
+            "after_stock_process_ratio" : 0.996051133245549,
+            "after_stock_work_ratio" : 0.959043451785594,
+            "iterations" : 2000000,
+            "medians" : {
+               "after" : {
+                  "process_seconds" : 0.0885059980209917,
+                  "work_seconds" : 0.0642818390042521
+               },
+               "before" : {
+                  "process_seconds" : 0.0889206469873898,
+                  "work_seconds" : 0.0632944870158099
+               },
+               "stock" : {
+                  "process_seconds" : 0.0888568820082583,
+                  "work_seconds" : 0.0670270349946804
+               }
+            },
+            "work_change_percent" : 1.55993362928366
+         },
+         "regex" : {
+            "after_stock_process_ratio" : 2.10551069972537,
+            "after_stock_work_ratio" : 2.2112526448334,
+            "iterations" : 200000,
+            "medians" : {
+               "after" : {
+                  "process_seconds" : 0.38725897797849,
+                  "work_seconds" : 0.359905912948307
+               },
+               "before" : {
+                  "process_seconds" : 0.405040454003029,
+                  "work_seconds" : 0.377650652022567
+               },
+               "stock" : {
+                  "process_seconds" : 0.183926388039254,
+                  "work_seconds" : 0.162761100044008
+               }
+            },
+            "work_change_percent" : -4.69871797631628
+         },
+         "strings" : {
+            "after_stock_process_ratio" : 2.12523759778318,
+            "after_stock_work_ratio" : 2.31783326976384,
+            "iterations" : 300000,
+            "medians" : {
+               "after" : {
+                  "process_seconds" : 0.26366550498642,
+                  "work_seconds" : 0.237354660988785
+               },
+               "before" : {
+                  "process_seconds" : 0.278363069985062,
+                  "work_seconds" : 0.250758320034947
+               },
+               "stock" : {
+                  "process_seconds" : 0.124064013012685,
+                  "work_seconds" : 0.102403681958094
+               }
+            },
+            "work_change_percent" : -5.34524997786475
+         }
+      },
+      "note" : "Exploratory verified microbenchmarks, not a mature acceptance suite. Seven fixtures remain slower than stock. Numeric work increases 1.56% against the predecessor in this capture; no claim of statistical significance or universal regression freedom.",
+      "runs" : 5,
+      "worker_sha256" : "37f8ffba8cb3375b28f87150f14845ac55891eca82597274c9e0babd3472f6e7",
+      "worker_source" : "use v5.42;\nuse strict;\nuse warnings;\nuse utf8;\nuse Time::HiRes qw(clock_gettime CLOCK_MONOTONIC);\nuse JSON::PP 'encode_json';\nuse Encode qw(encode decode);\nmy ($case, $n) = @ARGV;\n@ARGV == 2 && $n =~ /\\A[1-9][0-9]*\\z/ or die 'invalid workload';\nsub step ($value) { $value + 1 }\nmy $start = clock_gettime(CLOCK_MONOTONIC);\nmy ($sum, $expected) = (0, 0);\nif ($case eq 'numeric') {\n\tfor my $i (1..$n) { $sum += $i % 97 }\n\tmy $tail = $n % 97;\n\t$expected = int($n / 97) * 4656 + $tail * ($tail + 1) / 2;\n} elsif ($case eq 'calls') {\n\tfor my $i (1..$n) { $sum += step($i) }\n\t$expected = $n * ($n + 3) / 2;\n} elsif ($case eq 'allocation') {\n\tfor my $i (1..$n) {\n\t\tmy $value = [$i, {value => $i + 1}];\n\t\t$sum += $value->[0] + $value->[1]{value};\n\t}\n\t$expected = $n * ($n + 2);\n} elsif ($case eq 'hashes') {\n\tmy %counts;\n\tfor my $i (1..$n) { ++$counts{$i % 64} }\n\t$sum += $_ for values %counts;\n\tmy $wall = clock_gettime(CLOCK_MONOTONIC) - $start;\n\tfor my $key (0..63) {\n\t\tmy $count = int($n / 64) + ($key && $key <= $n % 64 ? 1 : 0);\n\t\t($counts{$key} // 0) == $count or die 'wrong hash count';\n\t}\n\t$sum == $n or die 'wrong hash sum';\n\tprint encode_json({fixture => $case, iterations => 0+$n, wall_seconds => $wall, verified => JSON::PP::true}), \"\\n\";\n\texit;\n} elsif ($case eq 'regex') {\n\tmy $text = 'α12 β34 γ56';\n\tfor (1..$n) { $sum += $1 while $text =~ /([0-9]+)/g }\n\t$expected = 102 * $n;\n} elsif ($case eq 'strings') {\n\tfor (1..$n) {\n\t\tmy $text = uc join '-', reverse split /:/, 'alpha:beta:gamma';\n\t\t$text eq 'GAMMA-BETA-ALPHA' or die 'wrong transformed string';\n\t\t$sum += length $text;\n\t}\n\t$expected = 16 * $n;\n} elsif ($case eq 'encoding-xs') {\n\tmy $text = 'aé水';\n\tfor (1..$n) {\n\t\tmy $bytes = encode('UTF-8', $text);\n\t\tdecode('UTF-8', $bytes) eq $text or die 'wrong encoding round trip';\n\t\t$sum += length $bytes;\n\t}\n\t$expected = 6 * $n;\n} elsif ($case eq 'compilation') {\n\tfor my $i (1..$n) {\n\t\tmy $code = eval 'sub ($value) { $value + 1 }';\n\t\t$code or die $@;\n\t\t$sum += $code->($i);\n\t}\n\t$expected = $n * ($n + 3) / 2;\n} else { die 'unknown workload' }\nmy $wall = clock_gettime(CLOCK_MONOTONIC) - $start;\n$sum == $expected or die \"$case: $sum != $expected\";\nprint encode_json({fixture => $case, iterations => 0+$n, wall_seconds => $wall, verified => JSON::PP::true}), \"\\n\";\n"
+   },
+   "ordinary_xs_case" : {
+      "after_stock_ratio" : 2.02960041594849,
+      "capture_after_source" : "use v5.42;\nuse strict;\nuse warnings;\nuse JSON::PP 'encode_json';\nuse Time::HiRes qw(clock_gettime CLOCK_MONOTONIC);\nuse File::Basename 'dirname';\nuse Cwd 'getcwd';\nmy $task_root = getcwd();\nmy $main = '/home/marcus/projects/wump/master';\nmy $stock = \"$main/build/checkpoint-7a16547/stock/perl/perl-5.42.2/perl\";\nlocal $ENV{PERL5LIB}; delete $ENV{PERL5LIB};\nlocal $ENV{PERL5OPT}; delete $ENV{PERL5OPT};\nlocal $ENV{PERL_CORE} = 1;\n$| = 1;\nfor my $variant (\n\t[\"stock\", $stock, 3, 120],\n\t[\"after\", \"$task_root/build/perl/perl-5.42.2/perl\", 3, 120],\n) {\n\tmy ($name, $binary, $runs, $limit) = @$variant;\n\tfor my $sample (1..$runs) {\n\t\tchdir dirname($binary) . '/ext/XS-APItest' or die $!;\n\t\topen my $log, '>', \"$task_root/build/handy-$name-$sample.tap\" or die $!;\n\t\tmy $started = clock_gettime(CLOCK_MONOTONIC);\n\t\topen my $child, '-|', 'timeout', \"${limit}s\", $binary, '-I../../lib', '-I../..',\n\t\t\t'-MTestInit=U2T', 't/handy00.t' or die $!;\n\t\tmy ($checks, $plan, $failures) = (0, 0, 0);\n\t\twhile (my $line = <$child>) {\n\t\t\tprint {$log} $line or die $!;\n\t\t\t$checks++ if $line =~ /^ok \\d+/;\n\t\t\t$plan = $1 if $line =~ /^1\\.\\.(\\d+)/;\n\t\t\t$failures++ if $line =~ /^(?:not ok|Bail out!)/;\n\t\t}\n\t\tclose $child;\n\t\tmy $status = $?;\n\t\tmy $wall = clock_gettime(CLOCK_MONOTONIC) - $started;\n\t\tclose $log or die $!;\n\t\tdie \"$name failed: $status\" unless $status == 0 || ($name eq 'before' && $status == 124 << 8);\n\t\tdie \"$name did not verify all macro checks\" if !$status && ($checks != 172283 || $plan != $checks || $failures);\n\t\tprint encode_json({fixture => 'upstream-xs-handy00-v5.42.2', variant => $name,\n\t\t\tsample => $sample, process_seconds => $wall, wait_status => $status,\n\t\t\tcompleted => $status ? JSON::PP::false : JSON::PP::true,\n\t\t\tverified_checks => $status ? 0 : $checks, observed_checks => $checks,\n\t\t\tprivate_perl => $binary, timeout_seconds => $limit}), \"\\n\";\n\t}\n}\nchdir $task_root or die $!;\n",
+      "capture_before_source" : "use v5.42;\nuse strict;\nuse warnings;\nuse JSON::PP 'encode_json';\nuse Time::HiRes qw(clock_gettime CLOCK_MONOTONIC);\nuse File::Basename 'dirname';\nuse Cwd 'getcwd';\nmy $task_root = getcwd();\nmy $main = '/home/marcus/projects/wump/master';\nmy $stock = \"$main/build/checkpoint-7a16547/stock/perl/perl-5.42.2/perl\";\nlocal $ENV{PERL5LIB}; delete $ENV{PERL5LIB};\nlocal $ENV{PERL5OPT}; delete $ENV{PERL5OPT};\nlocal $ENV{PERL_CORE} = 1;\n$| = 1;\nfor my $variant (\n\t[\"stock\", $stock, 3, 120],\n\t[\"current\", \"$main/build/perl/perl-5.42.2/perl\", 3, 120],\n) {\n\tmy ($name, $binary, $runs, $limit) = @$variant;\n\tfor my $sample (1..$runs) {\n\t\tchdir dirname($binary) . '/ext/XS-APItest' or die $!;\n\t\topen my $log, '>', \"$task_root/build/handy-$name-$sample.tap\" or die $!;\n\t\tmy $started = clock_gettime(CLOCK_MONOTONIC);\n\t\topen my $child, '-|', 'timeout', \"${limit}s\", $binary, '-I../../lib', '-I../..',\n\t\t\t'-MTestInit=U2T', 't/handy00.t' or die $!;\n\t\tmy ($checks, $plan, $failures) = (0, 0, 0);\n\t\twhile (my $line = <$child>) {\n\t\t\tprint {$log} $line or die $!;\n\t\t\t$checks++ if $line =~ /^ok \\d+/;\n\t\t\t$plan = $1 if $line =~ /^1\\.\\.(\\d+)/;\n\t\t\t$failures++ if $line =~ /^(?:not ok|Bail out!)/;\n\t\t}\n\t\tclose $child;\n\t\tmy $status = $?;\n\t\tmy $wall = clock_gettime(CLOCK_MONOTONIC) - $started;\n\t\tclose $log or die $!;\n\t\tdie \"$name failed: $status\" unless $status == 0 || ($name eq 'before' && $status == 124 << 8);\n\t\tdie \"$name did not verify all macro checks\" if !$status && ($checks != 172283 || $plan != $checks || $failures);\n\t\tprint encode_json({fixture => 'upstream-xs-handy00-v5.42.2', variant => $name,\n\t\t\tsample => $sample, process_seconds => $wall, wait_status => $status,\n\t\t\tcompleted => $status ? JSON::PP::false : JSON::PP::true,\n\t\t\tverified_checks => $status ? 0 : $checks, observed_checks => $checks,\n\t\t\tprivate_perl => $binary, timeout_seconds => $limit}), \"\\n\";\n\t}\n}\nchdir $task_root or die $!;\n",
+      "checks_per_completed_run" : 172283,
+      "fixture" : "upstream-xs-handy00-v5.42.2",
+      "medians" : {
+         "after" : {
+            "after" : {
+               "process_seconds" : 34.2827219230239
+            },
+            "stock" : {
+               "process_seconds" : 16.8913652429474
+            }
+         },
+         "before" : {
+            "current" : {
+               "process_seconds" : 35.2354105479899
+            },
+            "stock" : {
+               "process_seconds" : 17.0131556770066
+            }
+         }
+      }
+   },
+   "ordinary_xs_profile" : {
+      "event" : "cycles:u",
+      "frequency_hz" : 199,
+      "lost_samples" : 0,
+      "note" : "Predecessor profile of a complete XS macro case, recorded separately after quiet timing. Flat rows include inlined useful work; they do not isolate the total cost of each safety mechanism.",
+      "rows" : [
+         {
+            "object" : "perl",
+            "percent" : 6.89,
+            "symbol" : "Perl_wump_plain_runops"
+         },
+         {
+            "object" : "perl",
+            "percent" : 4.79,
+            "symbol" : "wump_memory_impl_hv_common"
+         },
+         {
+            "object" : "perl",
+            "percent" : 3,
+            "symbol" : "Perl_pp_multideref"
+         },
+         {
+            "object" : "perl",
+            "percent" : 2.98,
+            "symbol" : "wump_memory_impl_sv_setsv_flags"
+         },
+         {
+            "object" : "perl",
+            "percent" : 2.69,
+            "symbol" : "Perl_pp_entersub"
+         },
+         {
+            "object" : "perl",
+            "percent" : 2.38,
+            "symbol" : "Perl_leave_scope"
+         },
+         {
+            "object" : "perl",
+            "percent" : 2.08,
+            "symbol" : "Perl_sv_clear"
+         },
+         {
+            "object" : "perl",
+            "percent" : 1.98,
+            "symbol" : "Perl_yyparse"
+         },
+         {
+            "object" : "perl",
+            "percent" : 1.9,
+            "symbol" : "Perl_wump_memory_shared"
+         },
+         {
+            "object" : "perl",
+            "percent" : 1.63,
+            "symbol" : "wump_find_key"
+         },
+         {
+            "object" : "perl",
+            "percent" : 1.55,
+            "symbol" : "wump_mutation_begin"
+         },
+         {
+            "object" : "perl",
+            "percent" : 1.38,
+            "symbol" : "Perl_wump_memory_forget"
+         },
+         {
+            "object" : "perl",
+            "percent" : 1.37,
+            "symbol" : "Perl_pp_aassign"
+         },
+         {
+            "object" : "perl",
+            "percent" : 1.31,
+            "symbol" : "sbox32_hash_with_state.constprop.0"
+         },
+         {
+            "object" : "libc.so.6",
+            "percent" : 1.24,
+            "symbol" : "pthread_mutex_lock"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.92,
+            "symbol" : "Perl_SvPV_helper"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.9,
+            "symbol" : "Perl_pp_leavesub"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.87,
+            "symbol" : "wump_readable_raw"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.8,
+            "symbol" : "wump_memory_impl_sv_upgrade"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.73,
+            "symbol" : "Perl_leave_adjust_stacks"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.72,
+            "symbol" : "Perl_pp_padsv_store"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.72,
+            "symbol" : "Perl_sv_free2"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.72,
+            "symbol" : "S_pad_findlex"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.71,
+            "symbol" : "Perl_wump_is_shared"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.71,
+            "symbol" : "Perl_new_sv.isra.0"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.7,
+            "symbol" : "Perl_call_sv"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.67,
+            "symbol" : "Perl_wump_read_try_begin"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.65,
+            "symbol" : "Perl_pp_and"
+         },
+         {
+            "object" : "libc.so.6",
+            "percent" : 0.65,
+            "symbol" : "cfree"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.58,
+            "symbol" : "Perl_hv_common"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.56,
+            "symbol" : "Perl_free_tmps"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.55,
+            "symbol" : "Perl_pp_or"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.54,
+            "symbol" : "wump_unshare_key"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.54,
+            "symbol" : "Perl_rpeep"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.54,
+            "symbol" : "Perl_wump_pv_encoded"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.52,
+            "symbol" : "Perl_wump_gv_av"
+         },
+         {
+            "object" : "perl",
+            "percent" : 0.5,
+            "symbol" : "Perl_pp_anonhash"
+         }
+      ]
+   },
+   "stock_config" : {
+      "archname" : "x86_64-linux-thread-multi",
+      "cc" : "cc",
+      "ccflags" : "-D_REENTRANT -D_GNU_SOURCE -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64",
+      "gccversion" : "14.2.1 20241221",
+      "lddlflags" : "-shared -O2 -L/usr/local/lib -fstack-protector-strong",
+      "ldflags" : " -fstack-protector-strong -L/usr/local/lib",
+      "optimize" : "-O2",
+      "use64bitall" : "define",
+      "useithreads" : "define",
+      "usemultiplicity" : "define",
+      "version" : "v5.42.2",
+      "wump" : 0
+   },
+   "stock_sha256" : "c7688d340a6002b222777a1c93c6892db939629a69266ed8b4e2834e7a0951da",
+   "validation" : {
+      "archive_method" : "Six layout headers byte-checked; wump_task_types.h differs only by the added function declaration. Archives remain unmodified. Initial archive-replacement object list was stale; failed setup logs retained and corrected before test execution.",
+      "asan" : "35 Perl suites and owned/reads/operands native drivers passed over matching fully instrumented archive with changed run.c/sv.c rebuilt",
+      "memcheck" : "owned and C/C++ read-cache fixtures: zero errors and zero live bytes",
+      "mojo" : "CLI/service/live and benchmark-driver checks passed, 48 HTTP/WebSocket checks on each of one/four slots",
+      "project" : "complete C runtime and Perl project targets passed",
+      "regression" : "Adding scalar eligibility to private probes fails the old zero-mutex assertion and passes afterward; root publication preserves cache behavior, shared classification has one lookup plus claim release, writer-owned and pending scalars retain native behavior",
+      "remaining" : [
+         "ordinary stock regressions across seven exploratory fixtures and the XS macro case",
+         "active one-slot overhead and unrestricted short eight-slot variability",
+         "general I/O handoff, compiler/XS policy and remaining concurrency audits",
+         "full TSan clone race, MSan dependency coverage and Helgrind/DRD tool assertions"
+      ],
+      "tsan" : "34/35 Perl suites and all three native drivers pass; keys retains the previously reproduced S_ithread_clear/S_ithread_run clone race, no new suppression or exclusion",
+      "ubsan" : "Clang undefined,float-divide-by-zero on run.c/sv.c over normal archive; fourteen focused suites and native owned fixture passed, not full-core UBSan coverage",
+      "upstream" : {
+         "checks" : 1351353,
+         "files" : 2919,
+         "wall_seconds" : 366
+      }
+   }
+}
