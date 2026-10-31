@@ -1,4 +1,4 @@
-/* Shared by the public GV accessor and generated active opcode bodies.
+/* Bounded selection of canonical cells for the public GV accessor.
  * No allocation, callback or migration occurs while selecting this slot. */
 PERL_STATIC_INLINE SV **S_wump_canonical_scalar(GV *gv, GV *selected) {
 	/* Effective-glob aliases may name a match-result cell. Let the full

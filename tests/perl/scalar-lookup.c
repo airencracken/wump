@@ -100,7 +100,7 @@ static void check_slots(pTHX) {
 		CHECK(!main_task.locals);
 		CHECK(S_wump_private_scalar(aTHX_ &main_task, root[i]) == &GvGP(root[i])->gp_sv);
 	}
-	/* The fast opcode path must leave a missing cell to native lazy
+	/* The accessor must leave a missing cell to native lazy
 	 * initialization, rather than pushing NULL or caching its old address. */
 	SV *saved_scalar = GvGP(root[0])->gp_sv;
 	GvGP(root[0])->gp_sv = NULL;
