@@ -820,7 +820,7 @@ additionally needs the Perl I/O handoff,
 `sel`, and explicit signal/fork behavior. Assess readiness against these gates;
 the amount of completed infrastructure is not a reliable time estimate.
 
-### Implementation assessment (updated 2026-10-30)
+### Implementation assessment (updated 2026-10-31)
 
 The milestones below describe the intended development sequence. Work now
 overlaps them: there is real parallel Perl execution, while some earlier
@@ -835,8 +835,8 @@ the performance milestone is complete.
 | Perl semantics and language surface | Main-act entry, closure spawning, scalar/reference channels, wait groups, scoped locks, regex state, `local` and `pocket` have focused coverage. | Perl `sel`, core feature/call-form syntax, per-act environment/process integration and remaining magic/weak/object paths need work. |
 | Shared-memory safety | Conservative atomic counters, publication, read claims, private conversion snapshots and pinned storage retirement support audited paths. | General concurrent-read safety, ownership specialization, cheaper reclamation, remaining aggregate/cache/XS audits and a user-facing `perl -race` are unfinished. |
 | Useful network services | The dashboard passes 48 live HTTP/WebSocket checks each on one/four slots; its Unicode job backend verifies results on 1/2/4 slots. Audited encoding and prepared listener cleanup complete the bounded four-slot path. | Automatic Perl I/O/syscall handoff, general XS compatibility, runtime compilation policy and longer network soaks remain separate design gaps. |
-| Performance | The latest matched integer loop takes 0.91x stock time without Wump and 5.45x/8.36x/8.78x with one/two/four slots. Historical and fresh regression gates pass, and the default gate now uses this improved checkpoint. The Unicode job service also improves modestly. | Shared metadata serialization still prevents scaling on the integer loop. The earlier upstream XS macro case measured about 2.12x stock with Wump disabled. Near-linear scaling, broad ordinary-Perl parity and the Go runtime target remain unmet. |
-| Compatibility and validation | The final standard noninteractive upstream harness passes 2,919 files / 1,351,345 checks. Fresh project, ASan, focused TSan and Mojo checks pass. The new generated dispatch unit also passes targeted Clang/UBSan active and preemption checks. Earlier parser, full Clang/UBSan and Memcheck evidence remains recorded below. | Full Perl TSan reports a threads.pm clone race; full Perl MSan stops in uninstrumented locale dependencies. Helgrind/DRD abort internally on this host. General CPAN compatibility and longer network soaks remain unvalidated. |
+| Performance | The latest matched integer loop takes 0.92x stock time without Wump and 4.87x/2.50x/1.37x with one/two/four slots. Eight slots beat sequential stock on this fixture at two work sizes, including whole-process timing. Historical, fresh and application regression checks pass. | One-slot overhead, broad ordinary-Perl parity and the Go runtime target remain unmet. Eight-slot scaling is about 6.1x over one slot on the longer case. The earlier ordinary XS macro case measured about 2.12x stock and was not recaptured here; application metadata contention remains substantial. |
+| Compatibility and validation | The latest standard noninteractive upstream harness passes 2,919 files / 1,351,237 checks. Project, full project ASan, targeted Clang/UBSan, native Memcheck and live Mojo checks pass. TSan passes 34/35 Perl suites and ten native drivers with negative controls. | The remaining TSan failure is the previously reproduced threads.pm clone race; full Perl MSan stops in uninstrumented locale dependencies. Helgrind/DRD abort internally on this host. General CPAN compatibility and longer network soaks remain unvalidated. |
 | Deployment and portability | A private Perl fork and standalone C runtime build on Linux x86-64. | Static application bundling, the `wump` tool, dependency locking/cache and arm64 are pending. |
 
 There are three material differences from the proposed architecture. `aTHX`
@@ -1508,3 +1508,108 @@ The final standard noninteractive upstream run passes 2,919 files / 1,351,345
 checks in 340 seconds, without added exclusions. Patcher idempotence and legacy
 numeric-entry upgrades pass. Prior full TSan/MSan and Helgrind/DRD blockers
 remain open; full Clang/UBSan project and Memcheck were not repeated here.
+
+## Numeric admission and stock comparison (2026-10-31)
+
+Independent bounded-IV add/modulo operations now announce short reader regions
+in aligned executor slots. Metadata writers close the gate and drain those
+announcements before publication, writer admission, node removal or reclamation.
+The admission predicates and no-allocation/no-callback contract remain in force.
+Native recursive metadata regions and registration OOM retain the mutex path.
+Slots become dormant when their executor returns to metadata writes; two eligible
+operations without intervening writes warm the next arithmetic burst. Slot
+allocations survive dormancy and are freed when executor allocators merge.
+
+The first clean attempt (`7e37630`) made numeric work scale but regressed the
+Unicode application by 54%/78% on two/four slots. It was rejected. Its
+[before](bench/perl-admission-rejected-mojo-before.jsonl)/
+[after](bench/perl-admission-rejected-mojo-after.jsonl) samples remain available.
+Registry-only queries, reader/pin counters, completed writer releases and no-op
+collection now retain physical registry serialization without fencing unrelated
+numeric operations. Actual SV/publication writers still drain readers. Dormant
+slots and cheaper native metadata-depth bookkeeping bound the remaining cost.
+
+Two correctness regressions also have fail-before tests. A published target is
+rejected from registry state before reading its head; an inaccessible sentinel
+page crashed before moving that check. A writer's scalar conversion now installs
+its original cache: the classifier tested the impossible shared result 2 instead
+of the API's shared result 1. C/C++ tests verify cached conversion and explicit
+snapshots inside the claim. Native protocol coverage checks simultaneous readers,
+writer exclusion until both leave, closed-gate retry without mutex convoying,
+read-only queries/pin bookkeeping beside readers, recursive/nested interpreters,
+OOM fallback, dormant-slot reuse and complete teardown. Omitting one announcement
+admits a writer early and must abort with the expected negative-control message.
+ASan exposed a fixture setup race that invalidated warmup; an explicit setup
+barrier fixes the fixture without changing its admission assertions.
+
+Quiet five-run captures compare clean `b6e981e` and `84fd96a`, using matched
+GCC 14.2.1 / Perl 5.42.2 `-O2` builds on the same Ryzen 7 PRO 4750U. Eight jobs
+each run 500,000 iterations; all 400 job results verify. No task builds or
+validation run concurrently with timing.
+
+| Mode | Before median work | After median work | After / stock | Change in stock-relative work |
+| --- | --- | --- | --- | --- |
+| Stock control | 0.122710 s | 0.123257 s | 1.00x | — |
+| Ordinary fork | 0.114076 s | 0.113600 s | 0.92x | -0.86% |
+| Wump, one slot | 0.687588 s | 0.600582 s | 4.87x | -13.04% |
+| Wump, two slots | 1.025290 s | 0.308694 s | 2.50x | -70.03% |
+| Wump, four slots | 1.067141 s | 0.169462 s | 1.37x | -84.19% |
+
+All eight work/process comparisons pass against both the previous recorded
+checkpoint and this fresh control. The default integer gate now uses the
+improved capture; comparing the old timings against it fails all six active
+checks. [Before](bench/perl-admission-before.jsonl),
+[after](bench/perl-admission-after.jsonl) and the
+[machine/validation record](bench/admission-machine.json) preserve source states,
+compiler configurations and exact binary hashes.
+
+Optional eight-slot captures retain all standard controls and rotate six modes
+over seven runs. They require complete eight-slot evidence on both sides of a
+regression comparison; advertising eight slots without their samples fails.
+These two work sizes beat sequential stock on this integer fixture:
+
+| Iterations per job | Stock work | Eight-slot work | Stock whole process | Eight-slot whole process |
+| --- | --- | --- | --- | --- |
+| 500,000 | 0.125438 s | 0.099220 s | 0.139043 s | 0.122760 s |
+| 2,000,000 | 0.499430 s | 0.393886 s | 0.511212 s | 0.411951 s |
+
+The longer case uses about 21% less work time and 19% less whole-process time.
+Eight slots achieve about 6.1x scaling over one slot on that case. This is one
+parallel workload using eight execution slots against sequential stock; it does
+not establish broad Perl parity, low single-slot overhead or the Go runtime
+target. [Standard-length](bench/perl-admission-eight.jsonl) and
+[longer](bench/perl-admission-eight-long.jsonl) raw samples retain every control.
+
+The Unicode service's five-run one/two/four-slot work medians change from
+0.481/0.460/0.538 seconds to 0.480/0.470/0.516 seconds, or -0.15%/+2.05%/-4.05%.
+All six work/process comparisons pass the 10% budget, with 240 jobs verified.
+[Before](bench/perl-admission-mojo-before.jsonl)/
+[after](bench/perl-admission-mojo-after.jsonl) are application comparisons with no
+matched stock application control or HTTP-throughput claim. The archived
+comparison helper also rejects the first attempt's application regressions.
+
+Cycle profiles taken afterward have zero reported losses. Across one/four/eight
+slots the active dispatcher accounts for about 36–40%, numeric admission
+16–20%, global-scalar lookup 13–17%, and task selection 5–8% of samples. Named
+pthread mutex entries no longer reach the 1% reporting threshold on this numeric
+fixture. Application metadata contention remains a separate concern. State and
+global lookup overhead are the next measured numeric targets; automatic Perl
+I/O handoff, compiler/callback policy, remaining shared-cache/XS audits and
+broader application acceptance remain integration priorities.
+
+The complete runtime/Perl project suites, full project ASan rerun, optional Mojo
+target (including 48 live HTTP/WebSocket checks each on one/four slots), 107
+benchmark-runner and 71 gate checks pass. Eight repeated native protocol runs
+pass with their negative controls. Targeted Clang undefined/float-divide-by-zero
+instrumentation covers the metadata unit and native protocol fixture over the
+normal core; this is not full-core UBSan coverage. Native Memcheck reports zero
+errors and no leaked blocks. The complete standard noninteractive upstream
+harness passes 2,919 files / 1,351,237 checks in 374 seconds, with no added
+exclusions. Patcher idempotence, legacy upgrade and provenance checks pass.
+
+Broad TSan attempts all 35 Perl suites and ten native drivers. All native drivers
+and 34 suites pass, including numeric exclusion and C/C++ reader/writer stress.
+The `keys` suite retains the same `S_ithread_clear`/`S_ithread_run` race on
+`PL_veto_switch_non_tTHX_context`, reproduced on the previous `b6e981e` binary.
+No suppression or exclusion hides it. Wump acts do not use Perl ithreads. Full
+MSan locale dependencies and Helgrind/DRD internal assertions remain open.

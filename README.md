@@ -1277,7 +1277,7 @@ loading and result verification as well as work. Failed captures remain in
 `$(BUILD)/perl-baseline-current.jsonl.tmp`; successful captures are preserved
 before comparison, including when the regression budget fails.
 
-`PERL_PERF_BASELINE` defaults to the recorded active checkpoint. Use a baseline
+`PERL_PERF_BASELINE` defaults to the recorded numeric-admission checkpoint. Use a baseline
 captured on your own machine when its CPU model or configuration differs.
 `PERL_PERF_MAX_REGRESSION` selects an explicit percentage budget. This prevents
 backsliding from a checkpoint; it does not satisfy the outstanding active-Wump
@@ -1291,13 +1291,16 @@ and fresh performance comparisons. Its large upstream XS macro case measured
 about 2.12x stock with Wump disabled. Broader ordinary-Perl parity remains an
 acceptance goal.
 
-The latest [active dispatch checkpoint](DESIGN.md#active-dispatch-and-private-numeric-checkpoint-2026-10-30)
-reduces one-slot integer work time from 1.625s to 0.691s. Active one/two/four-slot
-work takes 5.45x/8.36x/8.78x stock time, with all historical and fresh-control
-regression checks passing. The default gate now uses this improved capture,
-so the previous active-runtime cost is no longer an acceptable baseline.
-The Unicode job-service comparison also improves modestly; shared metadata
-serialization still limits scaling.
+The latest [numeric-admission checkpoint](DESIGN.md#numeric-admission-and-stock-comparison-2026-10-31)
+reduces four-slot integer work from 1.067s to 0.169s. One/two/four-slot work
+takes 4.87x/2.50x/1.37x stock time. Eight-slot seven-run medians beat sequential
+stock on this fixture at both 500,000 and 2,000,000 iterations per job, including
+whole-process time: 0.123s versus 0.139s, and 0.412s versus 0.511s respectively.
+This uses eight execution slots for one fixed workload; broad parity and
+single-slot overhead remain open. Historical, fresh-control and application
+comparisons pass the 10% budget, and the default integer gate uses the improved
+capture. The earlier application-regressing attempt was rejected and its raw
+evidence is retained.
 
 The [original matched-stock run](bench/perl-stock-baseline.jsonl) exposed large
 overheads on the implicit-loop-variable integer workload. A fresh

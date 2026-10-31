@@ -1,0 +1,470 @@
+{
+   "after_private_sha256" : "57ee35a858fcbd1bef0c51193be8751f2c99ec20e692b0d304c4351d4abe46e0",
+   "after_source_dirty" : false,
+   "after_source_revision" : "84fd96a75a3234a4c669172a800b29d4da1b1369",
+   "application" : {
+      "fixture" : "unicode-log-v1",
+      "gate" : "all six work/process checks passed at +10% maximum",
+      "jobs" : 8,
+      "medians" : {
+         "1" : {
+            "after_seconds" : 0.480104727,
+            "before_seconds" : 0.480837784,
+            "change_percent" : -0.152454117457623
+         },
+         "2" : {
+            "after_seconds" : 0.469746441,
+            "before_seconds" : 0.460305665,
+            "change_percent" : 2.05097975494175
+         },
+         "4" : {
+            "after_seconds" : 0.515848987,
+            "before_seconds" : 0.53764503,
+            "change_percent" : -4.05398390830469
+         }
+      },
+      "note" : "No matched stock application control or HTTP throughput claim",
+      "passes" : 20,
+      "runs" : 5,
+      "verified_jobs" : 240,
+      "workers" : 4
+   },
+   "before_private_sha256" : "115800b1ae271598fa39a889a9acb53b95dd306bf7807157647f95bb4155fae2",
+   "before_source_dirty" : false,
+   "before_source_revision" : "b6e981ec1ada38a07dcae405714546b7a4a4976a",
+   "benchmark" : {
+      "concurrent_task_validation_or_builds" : false,
+      "default_baseline_after_acceptance" : "bench/perl-admission-after.jsonl",
+      "default_gate_negative_control" : "previous active costs rejected on all six active work/process checks; ordinary control remains within budget",
+      "fixture" : "integer-reduction-v1",
+      "fresh_gate" : "all eight work/process checks passed",
+      "historical_gate" : "all eight work/process checks passed",
+      "iterations" : 500000,
+      "jobs" : 8,
+      "medians" : {
+         "fork" : {
+            "after_process_seconds" : 0.130470991134644,
+            "after_stock_work_ratio" : 0.92165854129733,
+            "after_work_seconds" : 0.113600453,
+            "before_process_seconds" : 0.130895137786865,
+            "before_work_seconds" : 0.114075725,
+            "stock_relative_work_change_percent" : -0.85811853189941
+         },
+         "stock" : {
+            "after_process_seconds" : 0.138262033462524,
+            "after_stock_work_ratio" : 1,
+            "after_work_seconds" : 0.123256551,
+            "before_process_seconds" : 0.136486053466797,
+            "before_work_seconds" : 0.122710109,
+            "stock_relative_work_change_percent" : 0
+         },
+         "wump-1" : {
+            "after_process_seconds" : 0.621951818466187,
+            "after_stock_work_ratio" : 4.87261329420129,
+            "after_work_seconds" : 0.600581509,
+            "before_process_seconds" : 0.708617925643921,
+            "before_work_seconds" : 0.687587727,
+            "stock_relative_work_change_percent" : -13.0410731653025
+         },
+         "wump-2" : {
+            "after_process_seconds" : 0.330111980438232,
+            "after_stock_work_ratio" : 2.50448604553278,
+            "after_work_seconds" : 0.308694312,
+            "before_process_seconds" : 1.04398989677429,
+            "before_work_seconds" : 1.02529021,
+            "stock_relative_work_change_percent" : -70.0254861853887
+         },
+         "wump-4" : {
+            "after_process_seconds" : 0.189036130905151,
+            "after_stock_work_ratio" : 1.37486966514259,
+            "after_work_seconds" : 0.169461693,
+            "before_process_seconds" : 1.08661079406738,
+            "before_work_seconds" : 1.067141425,
+            "stock_relative_work_change_percent" : -84.1904360080071
+         }
+      },
+      "regression_budget_percent" : 10,
+      "runs" : 5,
+      "verified_jobs" : 400
+   },
+   "cpu_model" : "AMD Ryzen 7 PRO 4750U with Radeon Graphics",
+   "date_utc" : "2026-10-31",
+   "extended" : {
+      "eight" : {
+         "iterations" : 500000,
+         "jobs" : 8,
+         "medians" : {
+            "fork" : {
+               "process_seconds" : 0.132694959640503,
+               "work_seconds" : 0.116397961
+            },
+            "stock" : {
+               "process_seconds" : 0.139042854309082,
+               "work_seconds" : 0.125438124
+            },
+            "wump-1" : {
+               "process_seconds" : 0.618596076965332,
+               "work_seconds" : 0.600880082
+            },
+            "wump-2" : {
+               "process_seconds" : 0.331308841705322,
+               "work_seconds" : 0.310765536
+            },
+            "wump-4" : {
+               "process_seconds" : 0.190887928009033,
+               "work_seconds" : 0.17113887
+            },
+            "wump-8" : {
+               "process_seconds" : 0.122760057449341,
+               "work_seconds" : 0.099219707
+            }
+         },
+         "runs" : 7
+      },
+      "eight-long" : {
+         "iterations" : 2000000,
+         "jobs" : 8,
+         "medians" : {
+            "fork" : {
+               "process_seconds" : 0.472134828567505,
+               "work_seconds" : 0.455877285
+            },
+            "stock" : {
+               "process_seconds" : 0.511212110519409,
+               "work_seconds" : 0.499429982
+            },
+            "wump-1" : {
+               "process_seconds" : 2.42015290260315,
+               "work_seconds" : 2.401610997
+            },
+            "wump-2" : {
+               "process_seconds" : 1.25419211387634,
+               "work_seconds" : 1.229339096
+            },
+            "wump-4" : {
+               "process_seconds" : 0.699235916137695,
+               "work_seconds" : 0.674744265
+            },
+            "wump-8" : {
+               "process_seconds" : 0.411950826644897,
+               "work_seconds" : 0.393886392
+            }
+         },
+         "runs" : 7
+      }
+   },
+   "fork_config" : {
+      "archname" : "x86_64-linux-thread-multi",
+      "cc" : "cc",
+      "ccflags" : "-D_REENTRANT -D_GNU_SOURCE -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64",
+      "gccversion" : "14.2.1 20241221",
+      "lddlflags" : "-shared -O2 -L/usr/local/lib -fstack-protector-strong",
+      "ldflags" : " -fstack-protector-strong -L/usr/local/lib",
+      "optimize" : "-O2",
+      "use64bitall" : "define",
+      "useithreads" : "define",
+      "usemultiplicity" : "define",
+      "version" : "v5.42.2",
+      "wump" : 1
+   },
+   "profiles" : {
+      "event" : "cycles:u",
+      "frequency_hz" : 199,
+      "iterations" : 3000000,
+      "jobs" : 8,
+      "note" : "Recorded after timing, zero reported losses; unresolved kernel addresses are not attributed to particular syscalls",
+      "slots" : {
+         "1" : {
+            "approximate_samples" : "718",
+            "lost_samples" : 0,
+            "rows" : [
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 40.14,
+                  "symbol" : "Perl_wump_active_runops"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 16.83,
+                  "symbol" : "Perl_wump_gv_sv"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 16.78,
+                  "symbol" : "Perl_wump_numeric_enter"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 7.95,
+                  "symbol" : "wump_numeric_source"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 5.35,
+                  "symbol" : "S_wump_task_context"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "kernel",
+                  "object" : "[unknown]",
+                  "percent" : 3.97,
+                  "symbol" : "0xffffffffbb05aab7"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 1.92,
+                  "symbol" : "wump_local_find"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 1.51,
+                  "symbol" : "Perl_wump_numeric_leave"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 1.37,
+                  "symbol" : "S_wump_state_op"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 1.37,
+                  "symbol" : "S_wump_state_stack_sp"
+               }
+            ]
+         },
+         "4" : {
+            "approximate_samples" : "764",
+            "lost_samples" : 0,
+            "rows" : [
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 38.13,
+                  "symbol" : "Perl_wump_active_runops"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 19.93,
+                  "symbol" : "Perl_wump_numeric_enter"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 12.95,
+                  "symbol" : "Perl_wump_gv_sv"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 7.63,
+                  "symbol" : "wump_numeric_source"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 6.79,
+                  "symbol" : "S_wump_task_context"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 2.33,
+                  "symbol" : "wump_local_find"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "kernel",
+                  "object" : "[unknown]",
+                  "percent" : 2.07,
+                  "symbol" : "0xffffffffbb05aaff"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 1.8,
+                  "symbol" : "S_wump_state_stack_sp"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 1.68,
+                  "symbol" : "Perl_wump_numeric_leave"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 1.03,
+                  "symbol" : "S_wump_state_op"
+               }
+            ]
+         },
+         "8" : {
+            "approximate_samples" : "1K",
+            "lost_samples" : 0,
+            "rows" : [
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 35.9,
+                  "symbol" : "Perl_wump_active_runops"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 16.06,
+                  "symbol" : "Perl_wump_numeric_enter"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 14.37,
+                  "symbol" : "Perl_wump_gv_sv"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 7.9,
+                  "symbol" : "S_wump_task_context"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 7.64,
+                  "symbol" : "wump_numeric_source"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 4.08,
+                  "symbol" : "S_wump_state_op"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 3.17,
+                  "symbol" : "wump_local_find"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 2.03,
+                  "symbol" : "Perl_wump_numeric_leave"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "kernel",
+                  "object" : "[unknown]",
+                  "percent" : 1.87,
+                  "symbol" : "0xffffffffbb05aaff"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 1.76,
+                  "symbol" : "S_wump_state_stack_sp"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "kernel",
+                  "object" : "[unknown]",
+                  "percent" : 1.06,
+                  "symbol" : "0xffffffffbb05aa69"
+               }
+            ]
+         }
+      }
+   },
+   "rejected_attempt" : {
+      "application_change_percent" : {
+         "1" : 3.8,
+         "2" : 53.98,
+         "4" : 77.73
+      },
+      "note" : "Integer gains were rejected because application regressed; registry-only scopes, dormant-slot warmup and writer bookkeeping corrected the accepted implementation",
+      "revision" : "7e37630fe616d3d4ffe2ec4bd45e24fd934bc524"
+   },
+   "stock_config" : {
+      "archname" : "x86_64-linux-thread-multi",
+      "cc" : "cc",
+      "ccflags" : "-D_REENTRANT -D_GNU_SOURCE -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64",
+      "gccversion" : "14.2.1 20241221",
+      "lddlflags" : "-shared -O2 -L/usr/local/lib -fstack-protector-strong",
+      "ldflags" : " -fstack-protector-strong -L/usr/local/lib",
+      "optimize" : "-O2",
+      "use64bitall" : "define",
+      "useithreads" : "define",
+      "usemultiplicity" : "define",
+      "version" : "v5.42.2",
+      "wump" : 0
+   },
+   "stock_sha256" : "c7688d340a6002b222777a1c93c6892db939629a69266ed8b4e2834e7a0951da",
+   "validation" : {
+      "asan" : "full project rerun passed, detect_leaks=0 and stack-use-after-return detection; initial negative control exposed fixture setup invalidating warmup, fixed by setup barrier",
+      "benchmark_tools" : "107 benchmark runner checks and 71 comparison gate checks passed; initially incorrect private-driver invocation lacked strict.pm in children, corrected to repository host-Perl invocation",
+      "clang_ubsan" : "metadata run.c unit and native protocol fixture instrumented with undefined,float-divide-by-zero over normal core; targeted unit coverage, not full UBSan Perl",
+      "memcheck" : "native protocol fixture: zero errors, all heap blocks freed",
+      "mojo" : "optional target passed: CLI, services and 48 live HTTP/WebSocket checks each on one/four slots",
+      "project" : "complete runtime and Perl project suites passed; updated native protocol fixture also passed eight repeated positive/negative runs",
+      "regressions" : [
+         "missing numeric announcements expose early writers",
+         "registry queries previously blocked alongside numeric readers",
+         "published-target head probe crashed before registry-first fix",
+         "writer conversion-cache regression failed before shared-state fix"
+      ],
+      "remaining" : [
+         "broad stock-Perl parity and Go runtime target",
+         "general I/O handoff, compiler/callback policy and remaining shared-cache/XS audits",
+         "full TSan clone race, full MSan locale dependencies and Helgrind/DRD tool assertions remain open"
+      ],
+      "tsan" : {
+         "failed_suite" : "keys",
+         "native_drivers_passed" : 10,
+         "note" : "Known S_ithread_clear/S_ithread_run race in PL_veto_switch_non_tTHX_context reproduced on previous b6e981e binary; no new suppression or skipped check",
+         "suites_attempted" : 35,
+         "suites_passed" : 34
+      },
+      "upstream_full" : {
+         "files" : 2919,
+         "status" : "complete standard noninteractive harness passed, no added exclusions",
+         "tests" : 1351237,
+         "wall_seconds" : 374
+      }
+   }
+}
