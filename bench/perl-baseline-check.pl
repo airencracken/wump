@@ -10,7 +10,7 @@ my $limit = 10;
 GetOptions('max-regression=f' => \$limit) && @ARGV == 2 or die $usage;
 die "Invalid regression percentage\n" unless $limit =~ /\A\d+(?:\.\d+)?\z/ && $limit <= 100;
 my @variants = qw(stock fork wump-1 wump-2 wump-4);
-my %slots = (stock => 0, fork => 0, 'wump-1' => 1, 'wump-2' => 2, 'wump-4' => 4);
+my %slots = (stock => 0, fork => 0, 'wump-1' => 1, 'wump-2' => 2, 'wump-4' => 4, 'wump-8' => 8);
 my $json = JSON::PP->new->canonical;
 
 sub positive ($value) {
@@ -23,7 +23,7 @@ sub median (@values) {
 }
 sub capture ($path) {
 	open my $input, '<', $path or die "$path: $!\n";
-	my (%samples, %summaries, $metadata, $identity);
+	my (%samples, %summaries, $metadata, $identity, $declared_max);
 	while (my $line = <$input>) {
 		my $record = eval { decode_json($line) };
 		die "$path: invalid JSON record\n" unless ref($record) eq 'HASH';
@@ -69,12 +69,21 @@ sub capture ($path) {
 			$samples{$variant}{$sample} = $record;
 		} elsif (($record->{kind} // '') eq 'summary') {
 			die "$path: duplicate summary\n" if exists $summaries{$variant};
+			if (defined(my $max = $record->{max_slots})) {
+				die "$path: invalid execution-mode declaration\n" if ref($max) || ($max ne '4' && $max ne '8');
+				$declared_max //= $max;
+				die "$path: mixed execution-mode declarations\n" unless $declared_max eq $max;
+			}
 			$summaries{$variant} = $record;
 		} else { die "$path: unknown record kind\n" }
 	}
 	close $input or die "$path: $!\n";
 	my (%timings, $runs);
-	for my $variant (@variants) {
+	my @expected = @variants;
+	my $extended = exists($samples{'wump-8'}) || exists($summaries{'wump-8'}) || ($declared_max // 4) == 8;
+	die "$path: mismatched execution-mode declaration\n" if $extended && defined($declared_max) && $declared_max != 8;
+	push @expected, 'wump-8' if $extended;
+	for my $variant (@expected) {
 		my $summary = $summaries{$variant} // die "$path: missing $variant summary\n";
 		my $count = $summary->{runs} // '';
 		die "$path: at least three runs required\n" unless !ref($count) && $count =~ /\A[1-9][0-9]*\z/ && $count >= 3 && $count <= 20;
@@ -88,14 +97,15 @@ sub capture ($path) {
 		die "$path: inconsistent median\n" unless positive($reported)
 			&& abs($reported - $timings{$variant}{work}) <= $timings{$variant}{work} * 1e-9;
 	}
-	return {metadata => {%$metadata, runs => $runs}, timings => \%timings};
+	return {metadata => {%$metadata, runs => $runs, max_slots => $extended ? 8 : 4},
+		timings => \%timings, variants => \@expected};
 }
 
 my ($before, $after) = map { capture($_) } @ARGV;
 die "Cannot compare different workloads, machines or build configurations\n"
 	unless $json->encode($before->{metadata}) eq $json->encode($after->{metadata});
 my $failed = 0;
-for my $variant (@variants[1..$#variants]) {
+for my $variant (@{$after->{variants}}[1..$#{$after->{variants}}]) {
 	for my $metric (qw(work process)) {
 		my $old = $before->{timings}{$variant}{$metric} / $before->{timings}{stock}{$metric};
 		my $new = $after->{timings}{$variant}{$metric} / $after->{timings}{stock}{$metric};

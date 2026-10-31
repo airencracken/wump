@@ -146,6 +146,7 @@ perl-test: perl-build perl-source-test
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/memory.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/writes.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/operands.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
+	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/numeric-admission.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/loads.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/references.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/materialization.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
@@ -228,6 +229,7 @@ perl-operands-test: perl-build
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/root-fixture.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/operands.t
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/operands.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
+	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/numeric-admission.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 
 perl-operands-tsan:
 	PERL_SANITIZER=thread $(MAKE) BUILD='$(BUILD)/perl-tsan' PERL_TARBALL='$(abspath $(PERL_TARBALL))' CFLAGS='$(CFLAGS) -O1 -fsanitize=thread -fno-omit-frame-pointer' LDFLAGS='$(LDFLAGS) -fsanitize=thread' perl-operands-test perl-allocator-test

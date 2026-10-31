@@ -472,6 +472,20 @@ unfinished graph for a completed one. Publication-marker removal invalidates
 the classification even when a CV pad reuses its head without allocator free.
 Returning a head to the allocator removes its registry node before reuse.
 
+Bounded cached-IV add/modulo operations use an executor-local numeric reader
+announcement instead of holding that mutex. An SC announcement followed by an
+SC writer-gate probe pairs with writers' SC gate close and reader scan: either
+the reader sees the closed gate, or the writer sees its active announcement.
+The writer waits for release before touching registry or SV metadata. Readers
+finding a closed gate withdraw and retry, retaining writer priority without
+turning numeric operations into queued metadata writers. Numeric admission
+still checks the original registry states, foreign writer claims and scalar
+representation predicates before reading the source bodies or updating a
+private target. There are no callbacks, metadata entry, allocation or scheduling
+inside an admitted operation. Recursive metadata regions and native execution
+without an executor slot use the original mutex path. The aligned slots are
+bounded by executor count and freed at allocator merge, including runtime restart.
+
 A borrow briefly claims a reader count while capturing storage, then leaves
 a private mortal token in the caller's temporary scope. Tokens pin the source
 head and current generation; they follow the task's stacks across migration.

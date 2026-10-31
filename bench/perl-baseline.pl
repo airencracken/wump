@@ -9,11 +9,12 @@ use Getopt::Long 'GetOptions';
 use JSON::PP qw(decode_json encode_json);
 use Time::HiRes 'time';
 
-my $usage = "Usage: perl $0 PRIVATE_PERL STOCK_PERL [--runs 5] [--iterations 500000] [--jobs 8]\n";
+my $usage = "Usage: perl $0 PRIVATE_PERL STOCK_PERL [--runs 5] [--iterations 500000] [--jobs 8] [--max-slots 4|8]\n";
 @ARGV >= 2 or die $usage;
 my ($private, $stock) = splice @ARGV, 0, 2;
-my %options = (runs => 5, iterations => 500_000, jobs => 8);
-GetOptions(\%options, 'runs=i', 'iterations=i', 'jobs=i') && !@ARGV or die $usage;
+my %options = (runs => 5, iterations => 500_000, jobs => 8, max_slots => 4);
+GetOptions(\%options, 'runs=i', 'iterations=i', 'jobs=i', 'max_slots|max-slots=i') && !@ARGV or die $usage;
+die "Invalid max-slots (expected 4 or 8)\n" unless $options{max_slots} == 4 || $options{max_slots} == 8;
 for my $setting ([runs => 20], [iterations => 50_000_000], [jobs => 256]) {
 	my ($key, $max) = @$setting;
 	die "Invalid $key\n" unless $options{$key} >= 1 && $options{$key} <= $max;
@@ -71,9 +72,10 @@ my @variants = (
 	['stock', $stock, 'plain', 0], ['fork', $private, 'plain', 0],
 	map { ["wump-$_", $private, 'wump', $_] } (1, 2, 4),
 );
+push @variants, ['wump-8', $private, 'wump', 8] if $options{max_slots} == 8;
 my %samples;
 # Rotate interleaved runs so each variant takes a different position in a
-# five-run batch. Process startup is measured separately from compute work.
+# batch. Process startup is measured separately from compute work.
 for my $sample (1..$options{runs}) {
 	for my $offset (0..$#variants) {
 		my ($variant, $perl, $mode, $slots) = @{$variants[($offset + $sample - 1) % @variants]};

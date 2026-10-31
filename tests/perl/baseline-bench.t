@@ -51,6 +51,24 @@ for my $option (qw(runs iterations jobs)) {
 	is($output, '', 'invalid options emit no measurements');
 	like($errors, qr/Invalid \Q$option\E/, 'option failure identifies the constraint');
 }
+($status, $output, $errors) = run($private, $stock, '--runs', 1, '--iterations', 98, '--jobs', 8, '--max-slots', 8);
+is($status, 0, 'optional eight-slot comparison completes');
+is($errors, '', 'extended comparison emits no diagnostics');
+my @extended = map { decode_json($_) } split /\n/, $output;
+my @extended_samples = grep { $_->{kind} eq 'sample' } @extended;
+my @extended_summaries = grep { $_->{kind} eq 'summary' } @extended;
+is_deeply([map { $_->{variant} } @extended_summaries], [qw(stock fork wump-1 wump-2 wump-4 wump-8)],
+	'eight-slot mode preserves all standard controls and slot counts');
+is_deeply([map { $_->{execution_slots} } @extended_samples], [0, 0, 1, 2, 4, 8],
+	'extended raw samples record actual execution slots');
+ok(!grep({ $_->{verified_jobs} != 8 || $_->{iterations} != 98 } @extended_samples),
+	'every extended sample verifies the same eight jobs');
+for my $invalid (0, 3, 16) {
+	($status, $output, $errors) = run($private, $stock, '--max-slots', $invalid);
+	isnt($status, 0, "unsupported max-slots $invalid is rejected");
+	is($output, '', 'invalid slot options emit no measurements');
+	like($errors, qr/Invalid max-slots/, 'slot failure identifies the constraint');
+}
 ($status, $output, $errors) = run($private, $private, '--runs', 1);
 isnt($status, 0, 'a fork cannot masquerade as stock Perl');
 like($errors, qr/Wrong interpreter role/, 'interpreter identity is checked before timing');

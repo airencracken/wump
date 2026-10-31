@@ -42,6 +42,7 @@ $header .= "START_EXTERN_C\n";
 $header .= "struct wump_read_frame;\n";
 $header .= "struct wump_memory;\nstruct wump_mutation;\nstruct wump_retired;\n";
 $header .= "struct wump_shared;\nstruct wump_borrow;\n";
+$header .= "struct wump_numeric_reader;\n";
 $header .= "struct wump_cv_slot;\nstruct wump_regex_slot;\nstruct wump_local;\nstruct wump_element;\nstruct wump_element_iter;\nstruct wump_perl_task {\n";
 for my $name (@vars) {
 	exists $types{$name} or die "Missing upstream interpreter field: $name\n";
@@ -60,6 +61,7 @@ $header .= <<'C';
 	UV id;
 	int initialized, finished, main;
 	unsigned critical;
+	struct wump_numeric_reader *numeric_active;
 };
 I32 *Perl_wump_cv_depth(pTHX_ const CV *cv);
 PADLIST **Perl_wump_cv_padlist(CV *cv);
@@ -196,6 +198,7 @@ void Perl_wump_task_activate(pTHX_ struct wump_perl_task *task);
  * through the destination executor. Merge only after all users stop. */
 struct wump_perl_allocator {
 	PerlInterpreter *interp;
+	struct wump_numeric_reader *numeric_reader;
 	SV *Isv_root, *Isv_arenaroot;
 	IV Isv_count;
 	bool Inomemok;
@@ -209,6 +212,7 @@ struct wump_perl_allocator *Perl_wump_allocator_current(pTHX);
 void Perl_wump_allocator_init(pTHX_ struct wump_perl_allocator *pool);
 void Perl_wump_allocator_activate(pTHX_ struct wump_perl_allocator *pool);
 void Perl_wump_allocator_merge(pTHX_ struct wump_perl_allocator *pool);
+void Perl_wump_numeric_pool_free(pTHX_ struct wump_perl_allocator *pool);
 SV **Perl_wump_allocator_sv_root(pTHX);
 SV **Perl_wump_allocator_sv_arenaroot(pTHX);
 IV *Perl_wump_allocator_sv_count(pTHX);

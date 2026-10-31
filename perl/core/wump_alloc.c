@@ -47,6 +47,7 @@ __attribute__((noinline)) void *(*Perl_wump_allocator_body_roots(pTHX))[PERL_ARE
 
 void Perl_wump_allocator_merge(pTHX_ struct wump_perl_allocator *pool) {
 	assert(pool && pool->interp == aTHX && Perl_wump_allocator_current(aTHX) == NULL);
+	Perl_wump_numeric_pool_free(aTHX_ pool);
 	/* A value can outlive its executor or be freed on another executor.
 	 * Keep arenas intact, join caches, and add signed allocation deltas.
 	 * Only the interpreter's final teardown releases arena mappings. */

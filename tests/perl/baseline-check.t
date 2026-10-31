@@ -67,8 +67,39 @@ is($status, 0, 'zero budget accepts an identical capture');
 is($status, 1, 'process overhead regression fails even when work timing is unchanged');
 like($text, qr/^PASS wump-2 work:.*^FAIL wump-2 process:/ms, 'process and work checks stay separate');
 
+sub add_eight ($records) {
+	my @added = map { +{%$_, variant => 'wump-8', execution_slots => 8} }
+		grep { $_->{variant} eq 'wump-4' } @$records;
+	push @$records, @added;
+}
+my $extended = fixture('eight slots', \&add_eight);
+($status, $text) = run($extended, $extended);
+is($status, 0, 'complete extended captures pass');
+is(scalar(() = $text =~ /^PASS /mg), 10, 'extended captures also check eight-slot work and process timing');
+($status, $text) = run($baseline, $extended);
+isnt($status, 0, 'different execution-mode sets cannot be compared');
+($status, $text) = run($extended, fixture('eight-slot regression', sub { add_eight($_[0]); scale($_[0], 1.11, 'wump-8') }));
+is($status, 1, 'eight-slot regression fails');
+like($text, qr/^FAIL wump-8 work:.*^FAIL wump-8 process:/ms, 'extended regression names both metrics');
+($status, $text) = run($extended, fixture('incomplete eight slots', sub {
+	add_eight($_[0]); @{$_[0]} = grep { !($_->{variant} eq 'wump-8' && $_->{kind} eq 'sample' && $_->{sample} == 1) } @{$_[0]};
+}));
+isnt($status, 0, 'partial eight-slot evidence cannot pass');
+like($text, qr/incomplete wump-8 samples/, 'missing extended sample is identified');
+($status, $text) = run($baseline, fixture('advertised but absent eight slots', sub {
+	$_->{max_slots} = 8 for grep { $_->{kind} eq 'summary' } @{$_[0]};
+}));
+isnt($status, 0, 'advertised eight-slot mode cannot be omitted entirely');
+like($text, qr/missing wump-8 summary/, 'missing advertised mode is identified');
+($status, $text) = run($extended, fixture('contradictory eight slots', sub {
+	add_eight($_[0]); $_->{max_slots} = 4 for grep { $_->{kind} eq 'summary' } @{$_[0]};
+}));
+isnt($status, 0, 'extended samples cannot contradict their declared mode set');
+like($text, qr/mismatched execution-mode declaration/, 'contradictory mode declaration is identified');
+
 for my $case (
 	['dirty source', sub { $_->{source_dirty} = JSON::PP::true for @{$_[0]} }, qr/dirty or missing source state/],
+	['unknown mode', sub { $_[0][0]{variant} = 'wump-3' }, qr/unknown execution variant/],
 	['missing source state', sub { delete $_[0][0]{source_dirty} }, qr/dirty or missing source state/],
 	['unverified result', sub { $_[0][0]{verified_jobs}-- }, qr/unverified jobs/],
 	['missing mode', sub { @{$_[0]} = grep { $_->{variant} ne 'wump-4' } @{$_[0]} }, qr/missing wump-4 summary/],

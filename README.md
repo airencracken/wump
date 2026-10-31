@@ -198,6 +198,16 @@ metadata exclusion without entering the general conversion machinery. Shared,
 magical, COW, offset-PV and unsupported numeric cases retain their guarded
 native paths.
 
+An admitted numeric operation announces itself in an executor-owned slot and
+runs alongside other numeric readers. Metadata writers close a shared gate and
+wait for those short operations to finish before changing publication or
+mutation state. Readers arriving at a closed gate withdraw and retry without
+queuing on the writer mutex. Slots are allocated lazily, isolated on separate
+64-byte regions, and released when executor allocators merge. Registration
+allocation failure and recursive native metadata regions retain mutex admission.
+No callbacks, allocation, metadata entry or scheduling occur between numeric
+admission and release.
+
 Spawned acts' default, error, and regex-result globs are private storage cells.
 They keep their special names without namespace backreferences or unintended
 prototype CVs. Localization anchors likewise retain only their target GP;
@@ -1239,6 +1249,17 @@ make perl-perf-test STOCK_PERL="$PWD/build/stock/perl/perl-5.42.2/perl"
 make perl-perf-check PERL_PERF_BASELINE=before.jsonl PERL_PERF_CURRENT=after.jsonl
 make perl-perf-check-test
 ```
+
+To examine scaling beyond the standard one/two/four-slot gate, add eight slots:
+
+```sh
+perl bench/perl-baseline.pl "$PWD/build/perl/perl-5.42.2/perl" \
+  "$PWD/build/stock/perl/perl-5.42.2/perl" --max-slots 8 --runs 7
+```
+
+This retains stock, ordinary-fork and all standard slot controls. Extended
+captures require the same mode set on both sides of a regression comparison;
+the checker rejects missing or contradictory advertised eight-slot evidence.
 
 The check defaults to a maximum 10% increase in stock-normalized median work
 or whole-process time for ordinary Perl and Wump on one/two/four slots.
