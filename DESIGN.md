@@ -41,6 +41,15 @@ gets rebuilt).
 This is a **fork of perl5** (base: 5.42 maint). An XS module on stock perl
 can't do it: refcounting, pads and interpreter globals all have to change.
 
+The numbered architecture sections include proposed mechanisms. The current
+bridge keeps `aTHX` as the interpreter, selects task state through TLS, and
+restricts parallel compiler/XS entry. A task-private parser, general compiler/XS
+compatibility locks, generic Perl I/O handoff, a dedicated signal task and
+sysmon remain planned mechanisms.
+Use the [execution-context audit](docs/EXECUTION-CONTEXT-AUDIT.md) and
+[invariants](docs/INVARIANTS.md) for the current boundaries; design proposals
+must not be read as completed compatibility guarantees.
+
 ## 2. What it looks like
 
 ```perl

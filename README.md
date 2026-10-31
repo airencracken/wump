@@ -1044,7 +1044,10 @@ referenced by a selection must remain alive until
 that selection returns, including its losing cases. Sequential reuse is
 supported; shutdown removes abandoned waiters and timers before unmapping
 their stacks. Shutdown does not close or free channels or run abandoned
-tasks' cleanup code.
+tasks' ordinary C bodies or perform C stack unwinding. Registered context
+cleanup hooks run after waiters detach and before stacks are unmapped. The
+Perl bridge uses those hooks to unwind abandoned acts; that teardown cannot
+schedule their old bodies again.
 
 All parked tasks with no runnable work, pending timers, active I/O waits,
 or entered native calls produce `wump_run == -1` and `errno == EDEADLK`.
@@ -1061,6 +1064,23 @@ caller. `MADV_GUARD_INSTALL`, stack-size configuration, and large-population
 validation remain future work.
 
 ## Verification
+
+The [execution-context audit](docs/EXECUTION-CONTEXT-AUDIT.md) distinguishes
+tested behavior, explicit compatibility restrictions and unresolved risks.
+[INVARIANTS.md](docs/INVARIANTS.md) and the complete
+[state catalogue](docs/state-inventory.tsv) describe the ownership and lifetime
+assumptions future changes must preserve. Selected tests do not establish
+general thread safety or CPAN compatibility.
+
+```sh
+make perl-state-inventory-test
+make perl-context-compat-test STOCK_PERL=/absolute/path/to/stock/perl
+```
+
+The stock control must be unmodified Perl 5.42.2. The differential checks
+unused, one-actor, cooperative and multi-slot modes separately, and retains
+known unsupported native-entry behavior explicitly. The inventory check also
+runs as part of `perl-test`.
 
 `make perl-upstream-full-test` runs upstream's complete noninteractive core,
 bundled-library and extension harness against the private fork. It clears

@@ -51,6 +51,13 @@ perl-mojo-cpu-bench: perl-build
 
 STOCK_PERL = $(BUILD)/stock/perl/perl-5.42.2/perl
 .PHONY: perl-baseline-bench perl-baseline-test perl-perf-test perl-perf-check perl-perf-check-test
+.PHONY: perl-state-inventory-test perl-context-compat-test
+perl-state-inventory-test: perl-build
+	perl tests/perl/state-inventory.t '$(abspath $(BUILD))/perl/perl-5.42.2'
+
+perl-context-compat-test: perl-build
+	perl tests/perl/context-compat.t '$(abspath $(BUILD))/perl/perl-5.42.2/perl' '$(abspath $(STOCK_PERL))'
+
 perl-baseline-bench: perl-build
 	timeout 300s perl bench/perl-baseline.pl '$(abspath $(BUILD))/perl/perl-5.42.2/perl' '$(abspath $(STOCK_PERL))'
 
@@ -137,6 +144,7 @@ perl-test: perl-build perl-source-test
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/publication.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/hidden-roots.t
 	perl tests/perl/patcher.pl '$(BUILD)/perl/perl-5.42.2'
+	perl tests/perl/state-inventory.t '$(BUILD)/perl/perl-5.42.2'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/refcount.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/task-context.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/scalar-lookup.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'

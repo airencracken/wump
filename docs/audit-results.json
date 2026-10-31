@@ -1,0 +1,283 @@
+{
+   "audited_runtime_revision" : "f5ce9cfb85aa5351668b0d0b2010cebb394be668",
+   "binaries" : {
+      "private" : {
+         "config" : {
+            "archname" : "x86_64-linux-thread-multi",
+            "cc" : "cc",
+            "ccflags" : "-D_REENTRANT -D_GNU_SOURCE -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64",
+            "gccversion" : "14.2.1 20241221",
+            "lddlflags" : "-shared -O2 -L/usr/local/lib -fstack-protector-strong",
+            "ldflags" : " -fstack-protector-strong -L/usr/local/lib",
+            "optimize" : "-O2",
+            "use64bitall" : "define",
+            "useithreads" : "define",
+            "usemultiplicity" : "define",
+            "version" : "5.42.2"
+         },
+         "path" : "/home/marcus/projects/wump/master/build/perl/perl-5.42.2/perl",
+         "sha256" : "2e8132c0041aeb95ad66a19da14dc1ad5ae066f2a9dc73981a5541b6e7513832"
+      },
+      "stock" : {
+         "config" : {
+            "archname" : "x86_64-linux-thread-multi",
+            "cc" : "cc",
+            "ccflags" : "-D_REENTRANT -D_GNU_SOURCE -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64",
+            "gccversion" : "14.2.1 20241221",
+            "lddlflags" : "-shared -O2 -L/usr/local/lib -fstack-protector-strong",
+            "ldflags" : " -fstack-protector-strong -L/usr/local/lib",
+            "optimize" : "-O2",
+            "use64bitall" : "define",
+            "useithreads" : "define",
+            "usemultiplicity" : "define",
+            "version" : "5.42.2"
+         },
+         "path" : "/home/marcus/projects/wump/master/build/checkpoint-7a16547/stock/perl/perl-5.42.2/perl",
+         "sha256" : "c7688d340a6002b222777a1c93c6892db939629a69266ed8b4e2834e7a0951da"
+      }
+   },
+   "date_utc" : "2026-10-31",
+   "declarations" : {
+      "executor_selected" : 7,
+      "interpreter" : 344,
+      "intrpvar_sha256" : "8d1a8a6286e05134e2c43e1eef8191e7895fc9a9ea9ceba51eb8ea8b6370ba6c",
+      "perlvars_sha256" : "b6480223515daa4266e8f64d4b01a40e89e890dd4f90a5741bdfbca0f63a9f07",
+      "process_global" : 57,
+      "task_selected" : 63,
+      "unresolved_interpreter_declarations" : 234,
+      "wump_interpreter" : 8
+   },
+   "fresh_checks" : {
+      "differential_assertions" : 53,
+      "inventory_assertions" : 6,
+      "mojo" : [
+         {
+            "exit_code" : 0,
+            "name" : "live-1"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "live-4"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "mojo-jobs"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "mojo"
+         }
+      ],
+      "mojo_live_checks_per_slot" : {
+         "1" : 48,
+         "4" : 48
+      },
+      "native_perl_drivers" : [
+         {
+            "exit_code" : 0,
+            "name" : "task-context"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "scalar-lookup"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "owned"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "reads"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "entry"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "clone-context"
+         }
+      ],
+      "perl_suites" : [
+         {
+            "exit_code" : 0,
+            "name" : "entry"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "ordinary"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "active"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "waitgroup"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "preempt"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "tasks"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "parallel"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "xs-parallel"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "encode-parallel"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "bytes-parallel"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "native-integration"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "regex-parallel"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "regex"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "local"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "elements"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "pocket"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "pocket-deparse"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "separators"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "hooks"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "locks"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "shared"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "keys"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "reads"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "read-claims"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "scalar-writes"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "operands"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "stack-loads"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "lvalue-loads"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "reference-loads"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "scalar-references"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "materialization"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "iteration"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "memory"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "publication"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "hidden-roots"
+         }
+      ],
+      "runtime_programs" : [
+         {
+            "exit_code" : 0,
+            "name" : "test_runtime"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "test_context"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "test_select"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "test_io"
+         },
+         {
+            "exit_code" : 0,
+            "name" : "test_syscall"
+         }
+      ]
+   },
+   "inherited_not_rerun" : [
+      "full upstream harness",
+      "ASan/UBSan/Memcheck",
+      "full TSan known compatibility failure",
+      "whole-Perl MSan dependency gaps",
+      "Helgrind/DRD tool failures",
+      "performance comparisons"
+   ],
+   "known_boundary" : "Default JSON::PP::encode_json invokes utf8::encode and is rejected by the XS gate with multiple configured slots. Ordinary no-Wump usage and one-slot output remain supported. Initial transport failure retained; character-output transport isolates context checks without hiding this boundary.",
+   "limits" : [
+      "declaration coverage does not inventory every native static or extension payload",
+      "differential user-frame test does not force migration; existing parallel fixture separately verifies overlap",
+      "no arbitrary XS, CPAN, thread-safety or production-readiness certification",
+      "no new runtime memory-safety defect demonstrated; untested risks remain unresolved"
+   ],
+   "platform" : "Linux x86-64",
+   "runtime_source_modified" : false
+}
