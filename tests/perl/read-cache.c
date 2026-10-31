@@ -39,6 +39,18 @@ int main(int argc, char **argv, char **env) {
 	Perl_wump_task_activate(aTHX_ &task);
 	ENTER;
 	SAVETMPS;
+	SV *owned = newSVpvs("42");
+	Perl_wump_publish(aTHX_ owned);
+	CHECK(SvIV(owned) == 42 && !SvIOK(owned));
+	struct wump_mutation *writer = Perl_wump_mutation_begin(aTHX_ owned);
+	CHECK(writer);
+	CHECK(SvIV(owned) == 42 && SvIOK(owned)
+		&& "a writer's conversion must install its original scalar cache");
+	SV *snapshot = Perl_wump_scalar_snapshot(aTHX_ owned);
+	CHECK(snapshot != owned && SvIV(snapshot) == 42);
+	SvREFCNT_dec(snapshot);
+	Perl_wump_mutation_end(aTHX_ writer);
+	SvREFCNT_dec(owned);
 	exercise_hash(aTHX_ &hash, TRUE);
 	HV *empty = newHV();
 	Perl_wump_publish(aTHX_ (SV *)empty);
@@ -60,5 +72,6 @@ int main(int argc, char **argv, char **env) {
 	PERL_SYS_TERM();
 	puts("ok - published scalar reads and copies preserve source caches, dual values, booleans, encoding and COW buffers");
 	puts("ok - shared hash iteration and cloning preserve the root cursor and empty hash storage in C/C++");
+	puts("ok - writers install conversion caches on their own scalar and can explicitly snapshot it");
 	return 0;
 }

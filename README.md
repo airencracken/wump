@@ -205,6 +205,13 @@ mutation state. Readers arriving at a closed gate withdraw and retry without
 queuing on the writer mutex. Slots are allocated lazily, isolated on separate
 64-byte regions, and released when executor allocators merge. Registration
 allocation failure and recursive native metadata regions retain mutex admission.
+An executor returning to metadata writes unregisters its dormant slot, retaining
+the allocation for its next arithmetic burst. Two eligible operations without
+intervening metadata writes warm admission; isolated arithmetic keeps the mutex.
+Read-only registry probes, pin
+bookkeeping and completed mutation-claim releases use the registry mutex without
+stopping numeric readers; publication, writer admission and reclamation still
+close and drain the gate.
 No callbacks, allocation, metadata entry or scheduling occur between numeric
 admission and release.
 

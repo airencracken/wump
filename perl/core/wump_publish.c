@@ -47,7 +47,7 @@ static MAGIC *wump_publish_marker(const SV *value) {
 
 static bool wump_memory_published(pTHX_ const SV *value) {
 	if (wump_memory_untracked(aTHX->Iwump_memory, value)) return FALSE;
-	Perl_wump_memory_lock(aTHX);
+	wump_registry_read_lock(aTHX);
 	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
 	bool published = node && node->state == WUMP_PUBLISH_SHARED;
 	bool busy = node && (atomic_load_explicit(&node->access, memory_order_acquire) & WUMP_WRITER)
@@ -58,17 +58,22 @@ static bool wump_memory_published(pTHX_ const SV *value) {
 		MAGIC *marker = wump_publish_marker(value);
 		published = marker && marker->mg_private == WUMP_PUBLISH_SHARED;
 	}
-	Perl_wump_memory_unlock(aTHX);
+	wump_registry_read_unlock(aTHX);
 	if (busy) croak("Wump: publication overlaps mutation of a shared value");
 	return published;
 }
 
 bool Perl_wump_is_shared(pTHX_ const SV *value) {
 	if (!value) return FALSE;
-	if (aTHX->Iwump_memory) Perl_wump_memory_lock(aTHX);
+	/* Classification never changes an SV. Published heads cannot be numeric
+	 * targets; unregistered scalar heads belong to their calling act; and
+	 * implicit shared GVs/stashes are excluded by numeric admission's type
+	 * predicate. The registry mutex still excludes publication and metadata
+	 * writers while inspecting flags or magic. No callback occurs here. */
+	if (aTHX->Iwump_memory) wump_registry_read_lock(aTHX);
 	int shared = Perl_wump_memory_shared(aTHX_ value);
 	if (shared >= 0) {
-		Perl_wump_memory_unlock(aTHX);
+		wump_registry_read_unlock(aTHX);
 		return shared;
 	}
 	bool result;
@@ -82,7 +87,7 @@ bool Perl_wump_is_shared(pTHX_ const SV *value) {
 		MAGIC *mg = wump_publish_marker(value);
 		result = mg && mg->mg_private == WUMP_PUBLISH_SHARED;
 	}
-	if (aTHX->Iwump_memory) Perl_wump_memory_unlock(aTHX);
+	if (aTHX->Iwump_memory) wump_registry_read_unlock(aTHX);
 	return result;
 }
 

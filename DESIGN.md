@@ -485,6 +485,28 @@ private target. There are no callbacks, metadata entry, allocation or scheduling
 inside an admitted operation. Recursive metadata regions and native execution
 without an executor slot use the original mutex path. The aligned slots are
 bounded by executor count and freed at allocator merge, including runtime restart.
+Returning to metadata writes unregisters the executor's inactive slot under the
+mutex. Two eligible operations without intervening metadata writes warm a slot;
+the next operation can use its announcement. Cold operations retain mutex
+exclusion, and warming does not advance the metadata epoch or impede other
+executors' warmup. Its next arithmetic burst reuses that allocation and registers
+again under writer exclusion. Dormant executors therefore do not force every later
+metadata write to fence and scan slots after isolated arithmetic operations.
+
+Registry probes, sharing classification and pin/reader-count bookkeeping use
+the same recursive mutex without closing the gate. They never change SV fields
+or node membership. Published heads cannot be numeric targets; private scalar
+classification belongs to the calling act, and implicitly shared GVs/stashes
+are excluded by the numeric representation predicates. A completed logical
+writer also releases its bookkeeping under that mutex: its release store of
+access=0 publishes the completed storage changes to numeric readers' acquire
+probes. Readers seeing the writer bit do not inspect those scalar fields.
+New writer admission, publication, node removal and actual retirement collection
+still drain numeric readers. A no-op collection can return after a registry-only
+probe; pending reclamation rechecks pins under writer exclusion before removal.
+Numeric admission rejects a published or claimed target from its registry node
+before reading the head's type or flags. An inaccessible-page native regression
+checks this order; a foreign logical writer may already be updating that head.
 
 A borrow briefly claims a reader count while capturing storage, then leaves
 a private mortal token in the caller's temporary scope. Tokens pin the source

@@ -31,7 +31,7 @@ bool Perl_wump_readable(pTHX_ const SV *value) {
 	 * active writer. Core mutators rely on conversion caches being installed
 	 * on that original SV. Explicit snapshots still use the raw eligibility
 	 * predicate and remain available inside a mutation. */
-	bool owned = PL_wump_task && !claim && Perl_wump_memory_shared(aTHX_ value) == 2;
+	bool owned = PL_wump_task && !claim && Perl_wump_memory_shared(aTHX_ value) == 1;
 	bool result = !owned && wump_readable_raw(aTHX_ value);
 	Perl_wump_read_end(aTHX_ claim);
 	return result;

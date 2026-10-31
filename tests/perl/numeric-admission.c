@@ -7,6 +7,8 @@
 #include <errno.h>
 #include <stdio.h>
 #include <time.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 #define CHECK(expr) do { if (!(expr)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #expr); abort(); } } while (0)
 static _Thread_local unsigned locks;
@@ -39,12 +41,51 @@ static void root_paths(pTHX_ PerlInterpreter *other) {
 	PL_op = &op; PL_stack_sp = stack + 1;
 	CHECK(Perl_wump_numeric_enter(aTHX_ target));
 	Perl_wump_numeric_leave(aTHX);
+	CHECK(Perl_wump_numeric_enter(aTHX_ target));
+	Perl_wump_numeric_leave(aTHX);
 	locks = 0;
 	CHECK(Perl_wump_numeric_enter(aTHX_ target));
 	Perl_wump_numeric_leave(aTHX);
 	unsigned fast_locks = locks;
 	CHECK(!task.critical);
 	CHECK(!fast_locks && "warmed numeric admission must not take the metadata mutex");
+	/* Returning to metadata work makes this executor's slot dormant.
+	 * Rearming must reuse its allocation, including under memory pressure. */
+	for (unsigned repeat = 0; repeat < 32; repeat++) {
+		if (repeat & 1) {
+			size_t pins, retired, nodes;
+			Perl_wump_memory_stats(aTHX_ &pins, &retired, &nodes);
+		} else {
+			Perl_wump_memory_lock(aTHX); Perl_wump_memory_unlock(aTHX);
+		}
+		fail_registration = TRUE;
+		locks = 0;
+		CHECK(Perl_wump_numeric_enter(aTHX_ target));
+		Perl_wump_numeric_leave(aTHX);
+		CHECK((repeat & 1) || locks);
+		locks = 0;
+		CHECK(Perl_wump_numeric_enter(aTHX_ target));
+		Perl_wump_numeric_leave(aTHX);
+		CHECK((repeat & 1) || (locks && "isolated arithmetic must retain cold mutex admission"));
+		CHECK(fail_registration && !task.critical);
+		fail_registration = FALSE;
+		locks = 0;
+		CHECK(Perl_wump_numeric_enter(aTHX_ target));
+		Perl_wump_numeric_leave(aTHX);
+		CHECK(!locks && "rearmed numeric admission must retain its mutex-free path");
+	}
+	/* A published target must be rejected from registry state before any
+	 * head access: a foreign logical writer may be changing that head.
+	 * An inaccessible sentinel makes an early flag read deterministic. */
+	long page_size = sysconf(_SC_PAGESIZE);
+	CHECK(page_size > 0);
+	SV *sentinel = mmap(NULL, (size_t)page_size, PROT_NONE,
+		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	CHECK(sentinel != MAP_FAILED);
+	Perl_wump_memory_mark(aTHX_ sentinel, 2);
+	CHECK(!Perl_wump_numeric_enter(aTHX_ sentinel));
+	Perl_wump_memory_forget(aTHX_ sentinel);
+	CHECK(munmap(sentinel, (size_t)page_size) == 0);
 	/* A failed eligibility test must withdraw its announcement. */
 	sv_setiv(stack[1], 0);
 	op.op_type = OP_MODULO;
@@ -57,7 +98,7 @@ static void root_paths(pTHX_ PerlInterpreter *other) {
 	CHECK(Perl_wump_numeric_enter(aTHX_ target));
 	Perl_wump_numeric_leave(aTHX);
 	CHECK(locks && !task.critical);
-	/* The domain chain must survive nested interpreters and non-LIFO
+	/* Metadata depth must survive nested interpreters and non-LIFO
 	 * release, without retaining a native TLS address across a callback. */
 	PERL_SET_CONTEXT(other);
 	Perl_wump_memory_lock(other);
@@ -80,6 +121,8 @@ static void root_paths(pTHX_ PerlInterpreter *other) {
 	CHECK(!fail_registration && locks && !task.critical);
 	CHECK(Perl_wump_numeric_enter(aTHX_ target));
 	Perl_wump_numeric_leave(aTHX);
+	/* Teardown also handles an allocated but dormant slot. */
+	Perl_wump_memory_lock(aTHX); Perl_wump_memory_unlock(aTHX);
 	Perl_wump_allocator_activate(aTHX_ NULL);
 	Perl_wump_allocator_merge(aTHX_ &pool);
 	Perl_wump_allocator_merge(aTHX_ &pool);
@@ -93,9 +136,11 @@ typedef struct fixture {
 	SV *source;
 	COP *cop;
 	HV *stash;
+	GV *default_gv;
 	_Atomic unsigned ready[2], start[2], entered[2], release[2], writer_done;
 	_Atomic unsigned gate_ready, gate_release, writer_go, mutex_calls[2];
-	struct wump_perl_allocator pools[3];
+	_Atomic unsigned query_ready, query_go, query_done, query_release;
+	struct wump_perl_allocator pools[4];
 	bool unguarded;
 } fixture;
 typedef struct argument { fixture *f; int id; } argument;
@@ -138,14 +183,53 @@ static void *exercise(void *arg) {
 	JMPENV_BOOTSTRAP;
 	init_stacks(); task.initialized = 1;
 	ENTER; SAVETMPS;
-	if (ctx->id == 2) {
+	if (ctx->id == 3) {
+		SV *private_value = newSViv(17);
+		HV *private_hash = newHV();
+		SV *completed_value = newSViv(73);
+		Perl_wump_publish(aTHX_ completed_value);
+		struct wump_mutation *completed = Perl_wump_mutation_begin(aTHX_ completed_value);
+		CHECK(completed);
+		sv_setiv(completed_value, 74);
+		atomic_store(&f->query_ready, 1);
+		while (!atomic_load(&f->query_go)) sched_yield();
+		Perl_wump_mutation_end(aTHX_ completed);
+		CHECK(Perl_wump_memory_shared(aTHX_ f->source) == 1);
+		Perl_wump_memory_check(aTHX_ f->source);
+		CHECK(Perl_wump_is_shared(aTHX_ f->source));
+		CHECK(!Perl_wump_is_shared(aTHX_ private_value));
+		CHECK(!Perl_wump_is_shared(aTHX_ (SV *)private_hash));
+		CHECK(Perl_wump_is_shared(aTHX_ (SV *)f->stash));
+		CHECK(Perl_wump_is_shared(aTHX_ (SV *)f->default_gv));
+		struct wump_shared *claim = Perl_wump_read_begin(aTHX_ f->source);
+		CHECK(claim);
+		Perl_wump_read_end(aTHX_ claim);
+		struct wump_borrow *capture = Perl_wump_capture_begin(aTHX_ f->source);
+		CHECK(capture);
+		size_t pins, retired, nodes;
+		Perl_wump_memory_stats(aTHX_ &pins, &retired, &nodes);
+		CHECK(pins && nodes);
+		Perl_wump_capture_end(aTHX_ capture);
+		Perl_wump_memory_collect(aTHX);
+		Perl_wump_publish(aTHX_ f->source);
+		atomic_store(&f->query_done, 1);
+		while (!atomic_load(&f->query_release)) sched_yield();
+		SvREFCNT_dec(private_value);
+		SvREFCNT_dec(private_hash);
+		SvREFCNT_dec(completed_value);
+	} else if (ctx->id == 2) {
 		Perl_wump_memory_lock(aTHX);
 		atomic_store(&f->gate_ready, 1);
 		while (!atomic_load(&f->gate_release)) sched_yield();
 		Perl_wump_memory_unlock(aTHX);
 		while (!atomic_load(&f->writer_go)) sched_yield();
 		writer_thread = TRUE;
-		struct wump_mutation *guard = Perl_wump_mutation_begin(aTHX_ f->source);
+		bool busy;
+		struct wump_mutation *guard;
+		do {
+			guard = Perl_wump_mutation_try_begin(aTHX_ f->source, &busy);
+			if (busy) sched_yield();
+		} while (busy);
 		CHECK(guard);
 		sv_setiv(f->source, 99);
 		Perl_wump_mutation_end(aTHX_ guard);
@@ -157,6 +241,8 @@ static void *exercise(void *arg) {
 		SV *target = newSViv(0), *rhs = newSViv(2);
 		SV **saved_sp = PL_stack_sp;
 		SV *stack[2] = {f->source, rhs}; PL_stack_sp = stack + 1;
+		CHECK(Perl_wump_numeric_enter(aTHX_ target));
+		Perl_wump_numeric_leave(aTHX);
 		CHECK(Perl_wump_numeric_enter(aTHX_ target));
 		Perl_wump_numeric_leave(aTHX);
 		atomic_store(&f->ready[ctx->id], 1);
@@ -195,14 +281,17 @@ int main(int argc, char **argv, char **env) {
 	root_paths(aTHX_ other);
 	fixture f = {0};
 	f.interp = aTHX; f.cop = PL_curcop; f.stash = PL_curstash;
+	f.default_gv = PL_defgv;
 	f.unguarded = argc == 2 && strEQ(argv[1], "--unguarded-reader");
 	f.source = newSViv(42);
-	SvUPGRADE(f.source, SVt_PVMG); Perl_wump_memory_mark(aTHX_ f.source, 2);
-	for (int id = 0; id < 3; id++) Perl_wump_allocator_init(aTHX_ &f.pools[id]);
-	pthread_t threads[3]; argument args[3] = {{&f, 0}, {&f, 1}, {&f, 2}};
+	Perl_wump_publish(aTHX_ f.source);
+	for (int id = 0; id < 4; id++) Perl_wump_allocator_init(aTHX_ &f.pools[id]);
+	pthread_t threads[4]; argument args[4] = {{&f, 0}, {&f, 1}, {&f, 2}, {&f, 3}};
 	CHECK(pthread_create(&threads[0], NULL, exercise, &args[0]) == 0);
 	CHECK(pthread_create(&threads[1], NULL, exercise, &args[1]) == 0);
+	CHECK(pthread_create(&threads[3], NULL, exercise, &args[3]) == 0);
 	CHECK(wait_flag(&f.ready[0], 3000) && wait_flag(&f.ready[1], 3000));
+	CHECK(wait_flag(&f.query_ready, 3000));
 	CHECK(pthread_create(&threads[2], NULL, exercise, &args[2]) == 0);
 	CHECK(wait_flag(&f.gate_ready, 3000));
 	atomic_store(&f.start[0], 1);
@@ -211,17 +300,21 @@ int main(int argc, char **argv, char **env) {
 	CHECK(wait_flag(&f.entered[0], 3000));
 	atomic_store(&f.start[1], 1);
 	bool overlap = wait_flag(&f.entered[1], 3000);
+	atomic_store(&f.query_go, 1);
+	bool queried = wait_flag(&f.query_done, 1000);
 	atomic_store(&f.writer_go, 1);
 	bool writer_started = wait_flag(&writer_locked, 3000);
 	bool premature = atomic_load(&f.writer_done) != 0;
 	atomic_store(&f.release[0], 1);
 	premature |= wait_flag(&f.writer_done, 250);
 	atomic_store(&f.release[1], 1);
-	for (int id = 0; id < 3; id++) CHECK(pthread_join(threads[id], NULL) == 0);
-	for (int id = 0; id < 3; id++) Perl_wump_allocator_merge(aTHX_ &f.pools[id]);
+	atomic_store(&f.query_release, 1);
+	for (int id = 0; id < 4; id++) CHECK(pthread_join(threads[id], NULL) == 0);
+	for (int id = 0; id < 4; id++) Perl_wump_allocator_merge(aTHX_ &f.pools[id]);
 	CHECK(!atomic_load(&f.mutex_calls[0]) && !atomic_load(&f.mutex_calls[1])
 		&& "busy numeric admission must not convoy on the metadata mutex");
 	CHECK(!passed_gate && "new numeric reader passed a closed writer gate");
+	CHECK(queried && "registry-only queries must run beside admitted numeric readers");
 	CHECK(overlap && "independent numeric readers must be admitted concurrently");
 	CHECK(writer_started && "writer must acquire metadata mutex while numeric readers run");
 	CHECK(!premature && "metadata writer passed an admitted numeric reader");
@@ -233,7 +326,9 @@ int main(int argc, char **argv, char **env) {
 	PERL_SYS_TERM();
 	puts("ok - warmed numeric admission takes no mutex and withdraws failed eligibility");
 	puts("ok - recursive/nested interpreter regions and registration OOM retain safe fallback");
+	puts("ok - dormant slots rearm without allocation and merge safely");
 	puts("ok - independent numeric readers overlap and exclude metadata writers until both leave");
 	puts("ok - a closed writer gate defers new readers without queuing them on its mutex");
+	puts("ok - registry-only queries and read claims coexist with admitted numeric readers");
 	return 0;
 }

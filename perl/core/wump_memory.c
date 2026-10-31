@@ -26,13 +26,14 @@ struct wump_retired {
 struct wump_numeric_reader {
 	_Atomic unsigned active;
 	struct wump_numeric_reader *next;
+	unsigned epoch;
+	bool registered, warm;
 };
 
 struct wump_memory {
 	pthread_mutex_t mutex;
-	unsigned write_depth;
+	unsigned write_depth, numeric_epoch;
 	bool numeric_gated;
-	struct wump_memory *write_previous;
 	struct wump_numeric_reader *numeric_readers;
 	/* Isolate the reader-visible gate from writer mutex/list traffic even
 	 * when calloc supplies only the platform's ordinary alignment. */
@@ -46,14 +47,24 @@ struct wump_memory {
 	struct wump_parallel_xs *parallel_xs;
 };
 
-static _Thread_local struct wump_memory *wump_write_domain;
+/* A held native metadata region cannot schedule or migrate. A count of
+ * outer interpreter locks also handles nesting and non-LIFO releases.
+ * Numeric admission conservatively retains the mutex if any is held. */
+static _Thread_local unsigned wump_metadata_depth;
 
-static bool wump_memory_write_held(struct wump_memory *memory) {
-	/* Only the current thread's locked domains are reachable here. Keep
-	 * nested interpreters and recursive native metadata regions working. */
-	for (struct wump_memory *held = wump_write_domain; held; held = held->write_previous)
-		if (held == memory) return TRUE;
-	return FALSE;
+static void wump_numeric_disarm(pTHX_ struct wump_memory *memory) {
+	if (!memory->numeric_readers) return;
+	/* Metadata writer entry ends an executor's arithmetic burst. No admitted
+	 * operation can enter here; keep the slot for allocation-free reuse. */
+	struct wump_perl_allocator *pool = S_wump_pool_context(aTHX);
+	struct wump_numeric_reader *own = pool ? pool->numeric_reader : NULL;
+	if (!own || !own->registered) return;
+	assert(!atomic_load_explicit(&own->active, memory_order_relaxed));
+	struct wump_numeric_reader **link = &memory->numeric_readers;
+	while (*link && *link != own) link = &(*link)->next;
+	if (!*link) abort();
+	*link = own->next;
+	own->registered = FALSE;
 }
 
 static void wump_numeric_wait(_Atomic unsigned *flag) {
@@ -68,6 +79,18 @@ static void wump_numeric_wait(_Atomic unsigned *flag) {
 #endif
 		}
 	}
+}
+
+/* Registry-only probes and atomic reader-count updates need the mutex for
+ * node lifetime/coherence, but never write an SV or publication metadata.
+ * Numeric readers may run beside them; only actual metadata writers close
+ * and drain the numeric gate. These scopes never allocate or call Perl. */
+static void wump_registry_read_lock(pTHX) {
+	if (pthread_mutex_lock(&aTHX->Iwump_memory->mutex)) abort();
+}
+
+static void wump_registry_read_unlock(pTHX) {
+	if (pthread_mutex_unlock(&aTHX->Iwump_memory->mutex)) abort();
 }
 
 typedef struct wump_parallel_xs {
@@ -174,12 +197,15 @@ static bool wump_memory_untracked(struct wump_memory *memory, const SV *value) {
 	return !(word & (UINT64_C(1) << ((hash >> WUMP_MEMORY_FILTER_SHIFT) & 63)));
 }
 
-void Perl_wump_memory_lock(pTHX) {
+static void wump_memory_write_lock(pTHX_ bool numeric) {
 	struct wump_memory *memory = aTHX->Iwump_memory;
 	if (pthread_mutex_lock(&memory->mutex)) abort();
 	if (memory->write_depth++) return;
-	memory->write_previous = wump_write_domain;
-	wump_write_domain = memory;
+	wump_metadata_depth++;
+	if (!numeric) {
+		memory->numeric_epoch++;
+		wump_numeric_disarm(aTHX_ memory);
+	}
 	if (!memory->numeric_readers) return;
 	memory->numeric_gated = TRUE;
 	/* SC entry announcements and gate probes forbid the store/load cycle
@@ -190,17 +216,16 @@ void Perl_wump_memory_lock(pTHX) {
 		wump_numeric_wait(&reader->active);
 }
 
+void Perl_wump_memory_lock(pTHX) {
+	wump_memory_write_lock(aTHX_ FALSE);
+}
+
 void Perl_wump_memory_unlock(pTHX) {
 	struct wump_memory *memory = aTHX->Iwump_memory;
 	assert(memory->write_depth);
 	if (!--memory->write_depth) {
-		/* Remove this domain even if separately locked interpreters are
-		 * released in a different order. No callback or migration here. */
-		struct wump_memory **link = &wump_write_domain;
-		while (*link && *link != memory) link = &(*link)->write_previous;
-		if (!*link) abort();
-		*link = memory->write_previous;
-		memory->write_previous = NULL;
+		assert(wump_metadata_depth);
+		wump_metadata_depth--;
 		if (memory->numeric_gated) {
 			memory->numeric_gated = FALSE;
 			atomic_store_explicit(&memory->numeric_writer, 0, memory_order_release);
@@ -228,24 +253,33 @@ void Perl_wump_memory_init(pTHX) {
 }
 
 static struct wump_numeric_reader *wump_numeric_pool(pTHX_ struct wump_perl_allocator *pool) {
-	if (pool->numeric_reader) return pool->numeric_reader;
+	struct wump_numeric_reader *reader = pool->numeric_reader;
+	if (reader) return reader;
 	/* A slot belongs to an executor, not an act, and survives migration only
 	 * by selecting the destination allocator afresh. Separate cache lines
 	 * avoid a single contended global reader counter. Allocation failure
 	 * simply retains the original mutex path. */
-	void *storage = NULL;
-	size_t bytes = (sizeof(struct wump_numeric_reader) + 63) & ~(size_t)63;
-	if (posix_memalign(&storage, 64, bytes)) return NULL;
-	struct wump_numeric_reader *reader = (struct wump_numeric_reader *)storage;
-	atomic_init(&reader->active, 0);
-	Perl_wump_memory_lock(aTHX);
+	if (!reader) {
+		void *storage = NULL;
+		size_t bytes = (sizeof(struct wump_numeric_reader) + 63) & ~(size_t)63;
+		if (posix_memalign(&storage, 64, bytes)) return NULL;
+		reader = (struct wump_numeric_reader *)storage;
+		atomic_init(&reader->active, 0);
+		reader->registered = FALSE;
+		reader->warm = FALSE;
+		pool->numeric_reader = reader;
+	}
+	return reader;
+}
+
+static void wump_numeric_register(pTHX_ struct wump_numeric_reader *reader) {
 	struct wump_memory *memory = aTHX->Iwump_memory;
+	assert(memory->write_depth && !reader->registered);
 	atomic_store_explicit(&memory->numeric_writer, 1, memory_order_seq_cst);
 	memory->numeric_gated = TRUE;
 	reader->next = memory->numeric_readers;
-	memory->numeric_readers = pool->numeric_reader = reader;
-	Perl_wump_memory_unlock(aTHX);
-	return reader;
+	memory->numeric_readers = reader;
+	reader->registered = TRUE;
 }
 
 void Perl_wump_numeric_pool_free(pTHX_ struct wump_perl_allocator *pool) {
@@ -253,10 +287,12 @@ void Perl_wump_numeric_pool_free(pTHX_ struct wump_perl_allocator *pool) {
 	if (!reader) return;
 	Perl_wump_memory_lock(aTHX);
 	assert(!atomic_load_explicit(&reader->active, memory_order_relaxed));
-	struct wump_numeric_reader **link = &aTHX->Iwump_memory->numeric_readers;
-	while (*link && *link != reader) link = &(*link)->next;
-	if (!*link) abort();
-	*link = reader->next;
+	if (reader->registered) {
+		struct wump_numeric_reader **link = &aTHX->Iwump_memory->numeric_readers;
+		while (*link && *link != reader) link = &(*link)->next;
+		if (!*link) abort();
+		*link = reader->next;
+	}
 	pool->numeric_reader = NULL;
 	Perl_wump_memory_unlock(aTHX);
 	free(reader);
@@ -294,10 +330,10 @@ void Perl_wump_memory_mark(pTHX_ SV *value, unsigned state) {
 int Perl_wump_memory_shared(pTHX_ const SV *value) {
 	if (!aTHX->Iwump_memory) return -1;
 	if (wump_memory_untracked(aTHX->Iwump_memory, value)) return -1;
-	Perl_wump_memory_lock(aTHX);
+	wump_registry_read_lock(aTHX);
 	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
 	int result = node && node->state ? node->state == 2 : -1;
-	Perl_wump_memory_unlock(aTHX);
+	wump_registry_read_unlock(aTHX);
 	return result;
 }
 
@@ -327,10 +363,13 @@ bool Perl_wump_numeric_enter(pTHX_ SV *target) {
 		|| PL_phase == PERL_PHASE_DESTRUCT || TAINT_get
 		|| (PL_signals & PERL_SIGNALS_UNSAFE_FLAG)) return FALSE;
 	if (PL_op->op_type != OP_ADD && PL_op->op_type != OP_MODULO) return FALSE;
-	struct wump_numeric_reader *reader = NULL;
-	if (!wump_memory_write_held(aTHX->Iwump_memory)) {
+	struct wump_numeric_reader *reader = NULL, *candidate = NULL;
+	if (!wump_metadata_depth) {
 		struct wump_perl_allocator *pool = S_wump_pool_context(aTHX);
-		if (pool) reader = wump_numeric_pool(aTHX_ pool);
+		if (pool) {
+			candidate = wump_numeric_pool(aTHX_ pool);
+			if (candidate && candidate->registered) reader = candidate;
+		}
 		if (reader) {
 			for (;;) {
 				atomic_store_explicit(&reader->active, 1, memory_order_seq_cst);
@@ -343,16 +382,17 @@ bool Perl_wump_numeric_enter(pTHX_ SV *target) {
 			}
 		}
 	}
-	if (!reader) Perl_wump_memory_lock(aTHX);
+	if (!reader) wump_memory_write_lock(aTHX_ TRUE);
 	wump_shared *node = wump_memory_untracked(aTHX->Iwump_memory, target)
 		? NULL : wump_memory_find(aTHX->Iwump_memory, target);
 	/* These private layouts already have IV storage and need no allocation,
 	 * magic or COW handling. Cloned pads commonly retain a PVNV body even
 	 * when their current value is an integer. Reject offset PVs as well.
 	 * Published targets retain the general mutation and unwind protocol. */
+	if (node && (node->state || atomic_load_explicit(&node->access, memory_order_acquire)))
+		goto fallback;
 	svtype kind = SvTYPE(target);
-	if ((node && (node->state || atomic_load_explicit(&node->access, memory_order_acquire)))
-		|| (kind != SVt_IV && kind != SVt_PVIV && kind != SVt_PVNV) || SvOBJECT(target)
+	if ((kind != SVt_IV && kind != SVt_PVIV && kind != SVt_PVNV) || SvOBJECT(target)
 		|| (SvFLAGS(target) & (SVf_THINKFIRST | SVf_IVisUV | SVf_OOK))) goto fallback;
 	SV *left = PL_stack_sp[-1], *right = PL_stack_sp[0];
 	if (!left || !right || !wump_numeric_source(aTHX_ left)
@@ -362,6 +402,17 @@ bool Perl_wump_numeric_enter(pTHX_ SV *target) {
 	if (PL_op->op_type == OP_ADD) {
 		if (lhs > IV_MAX / 2 || rhs > IV_MAX / 2) goto fallback;
 	} else if (!rhs) goto fallback;
+	if (!reader && candidate) {
+		/* Isolated arithmetic keeps the existing mutex path. Only two
+		 * eligible operations without intervening metadata writes arm a
+		 * slot for the next operation. Cold numeric admission itself does
+		 * not advance the epoch, so parallel loop warmup can make progress.
+		 * This decision affects cost only; both paths exclude writers. */
+		if (candidate->warm && candidate->epoch == aTHX->Iwump_memory->numeric_epoch)
+			wump_numeric_register(aTHX_ candidate);
+		candidate->warm = TRUE;
+		candidate->epoch = aTHX->Iwump_memory->numeric_epoch;
+	}
 	/* These exact native branches only read cached IVs and store an IV,
 	 * invalidating the old private numeric/string caches just as sv_setiv.
 	 * They cannot allocate, throw, run get/set magic or decrement stack
@@ -374,6 +425,7 @@ bool Perl_wump_numeric_enter(pTHX_ SV *target) {
 	task->critical++;
 	return TRUE;
 fallback:
+	if (candidate) candidate->warm = FALSE;
 	if (reader) atomic_store_explicit(&reader->active, 0, memory_order_release);
 	else Perl_wump_memory_unlock(aTHX);
 #else
@@ -395,11 +447,11 @@ void Perl_wump_numeric_leave(pTHX) {
 void Perl_wump_memory_check(pTHX_ const SV *value) {
 	if (!aTHX->Iwump_memory) return;
 	if (wump_memory_untracked(aTHX->Iwump_memory, value)) return;
-	Perl_wump_memory_lock(aTHX);
+	wump_registry_read_lock(aTHX);
 	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
 	bool busy = node && (atomic_load_explicit(&node->access, memory_order_acquire) & WUMP_WRITER)
 		&& node->writer != wump_memory_actor(aTHX);
-	Perl_wump_memory_unlock(aTHX);
+	wump_registry_read_unlock(aTHX);
 	if (busy) croak("Wump: publication overlaps mutation of a shared value");
 }
 
@@ -407,20 +459,20 @@ bool Perl_wump_read_try_begin(pTHX_ const SV *value, struct wump_shared **claim)
 	*claim = NULL;
 	if (!value || !PL_wump_task || !aTHX->Iwump_memory || PL_phase == PERL_PHASE_DESTRUCT) return TRUE;
 	if (wump_memory_untracked(aTHX->Iwump_memory, value)) return TRUE;
-	Perl_wump_memory_lock(aTHX);
+	wump_registry_read_lock(aTHX);
 	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
 	if (!node || node->state != 2) {
-		Perl_wump_memory_unlock(aTHX);
+		wump_registry_read_unlock(aTHX);
 		return TRUE;
 	}
 	unsigned access = atomic_load_explicit(&node->access, memory_order_acquire);
 	if (access & WUMP_WRITER) {
 		bool own = node->writer == wump_memory_actor(aTHX);
-		Perl_wump_memory_unlock(aTHX);
+		wump_registry_read_unlock(aTHX);
 		return own;
 	}
 	atomic_fetch_add_explicit(&node->access, 1, memory_order_acquire);
-	Perl_wump_memory_unlock(aTHX);
+	wump_registry_read_unlock(aTHX);
 	*claim = node;
 	return TRUE;
 }
@@ -434,10 +486,10 @@ struct wump_shared *Perl_wump_read_begin(pTHX_ const SV *value) {
 
 void Perl_wump_read_end(pTHX_ struct wump_shared *claim) {
 	if (!claim) return;
-	Perl_wump_memory_lock(aTHX);
+	wump_registry_read_lock(aTHX);
 	unsigned before = atomic_fetch_sub_explicit(&claim->access, 1, memory_order_release);
 	assert(before && !(before & WUMP_WRITER));
-	Perl_wump_memory_unlock(aTHX);
+	wump_registry_read_unlock(aTHX);
 }
 
 void Perl_wump_memory_forget(pTHX_ SV *value) {
@@ -488,6 +540,13 @@ static void wump_memory_drain(pTHX_ struct wump_retired *retired) {
 void Perl_wump_memory_collect(pTHX) {
 	struct wump_memory *memory = aTHX->Iwump_memory;
 	if (!memory) return;
+	/* Most temporary pins retire no storage. A registry-only observation
+	 * can finish that no-op without stopping independent numeric work.
+	 * Recheck under writer exclusion before actually removing any owners. */
+	wump_registry_read_lock(aTHX);
+	bool ready = !memory->pins && memory->retired;
+	wump_registry_read_unlock(aTHX);
+	if (!ready) return;
 	Perl_wump_memory_lock(aTHX);
 	struct wump_retired *retired = NULL;
 	if (!memory->pins) {
@@ -521,11 +580,11 @@ void Perl_wump_retire_commit(pTHX_ struct wump_retired *retired) {
 }
 
 void Perl_wump_memory_stats(pTHX_ size_t *pins, size_t *retired, size_t *nodes) {
-	Perl_wump_memory_lock(aTHX);
+	wump_registry_read_lock(aTHX);
 	*pins = aTHX->Iwump_memory->pins;
 	*retired = aTHX->Iwump_memory->pending;
 	*nodes = aTHX->Iwump_memory->nodes;
-	Perl_wump_memory_unlock(aTHX);
+	wump_registry_read_unlock(aTHX);
 }
 
 void Perl_wump_memory_destroy(pTHX) {
@@ -575,7 +634,12 @@ static void wump_mutation_release(pTHX_ struct wump_mutation *guard) {
 		Perl_wump_memory_unlock(aTHX);
 		return;
 	}
-	Perl_wump_memory_lock(aTHX);
+	/* Scalar/storage updates have already finished. Publishing access=0
+	 * with release ordering makes them visible to future numeric readers;
+	 * those which saw the writer bit never inspected its scalar fields.
+	 * The registry mutex serializes claim bookkeeping with other claims.
+	 * New writers still close/drain the numeric gate before admission. */
+	wump_registry_read_lock(aTHX);
 	wump_shared *node = guard->node;
 	assert(node->writer == guard->actor && node->depth);
 	if (!--node->depth) {
@@ -583,7 +647,7 @@ static void wump_mutation_release(pTHX_ struct wump_mutation *guard) {
 		node->guard = NULL;
 		atomic_store_explicit(&node->access, 0, memory_order_release);
 	}
-	Perl_wump_memory_unlock(aTHX);
+	wump_registry_read_unlock(aTHX);
 	SvREFCNT_dec(guard->retained);
 	SvREFCNT_dec(guard->value);
 }
@@ -621,10 +685,10 @@ static struct wump_mutation *wump_mutation_begin(pTHX_ SV *value, bool *busy) {
 	 * do not introduce the reverse keys-mutex -> metadata-mutex order. */
 	if (value == (SV *)PL_strtab) return NULL;
 	if (Perl_wump_overlay_active(aTHX_ value)) return NULL;
-	Perl_wump_memory_lock(aTHX);
+	wump_registry_read_lock(aTHX);
 	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
 	bool shared = node && node->state == 2;
-	Perl_wump_memory_unlock(aTHX);
+	wump_registry_read_unlock(aTHX);
 	if (!shared || !SvREFCNT(value)) return NULL;
 	/* Reserve save-stack capacity before taking the claim, so an allocation
 	 * exception cannot strand a writer without its unwind callback. */
@@ -714,7 +778,7 @@ static SV *wump_borrow_release(pTHX_ wump_borrow *borrow) {
 	if (!borrow) return NULL;
 	if (borrow->active) {
 		borrow->active = FALSE;
-		Perl_wump_memory_lock(aTHX);
+		wump_registry_read_lock(aTHX);
 		if (borrow->reading)
 			atomic_fetch_sub_explicit(&borrow->node->access, 1, memory_order_release);
 		assert(borrow->node->borrows && aTHX->Iwump_memory->pins);
@@ -724,7 +788,7 @@ static SV *wump_borrow_release(pTHX_ wump_borrow *borrow) {
 			borrow->node->current_borrows--;
 		}
 		aTHX->Iwump_memory->pins--;
-		Perl_wump_memory_unlock(aTHX);
+		wump_registry_read_unlock(aTHX);
 		return borrow->owner;
 	}
 	return NULL;
@@ -765,17 +829,17 @@ static wump_borrow *wump_borrow_start(pTHX_ SV *value) {
 	if (!value || !aTHX->Iwump_memory || !PL_curstackinfo || PL_phase == PERL_PHASE_DESTRUCT)
 		return NULL;
 	if (wump_memory_untracked(aTHX->Iwump_memory, value)) return NULL;
-	Perl_wump_memory_lock(aTHX);
+	wump_registry_read_lock(aTHX);
 	wump_shared *node = wump_memory_find(aTHX->Iwump_memory, value);
 	bool shared = node && node->state == 2;
-	Perl_wump_memory_unlock(aTHX);
+	wump_registry_read_unlock(aTHX);
 	if (!shared) return NULL;
 	wump_borrow *borrow = wump_borrow_new(aTHX);
-	Perl_wump_memory_lock(aTHX);
+	wump_registry_read_lock(aTHX);
 	unsigned access = atomic_load_explicit(&node->access, memory_order_acquire);
 	if (access & WUMP_WRITER) {
 		if (node->writer != wump_memory_actor(aTHX)) {
-			Perl_wump_memory_unlock(aTHX);
+			wump_registry_read_unlock(aTHX);
 			croak("Wump: read overlaps mutation of a shared value");
 		}
 	} else {
@@ -789,16 +853,16 @@ static wump_borrow *wump_borrow_start(pTHX_ SV *value) {
 	node->borrows++;
 	node->current_borrows++;
 	aTHX->Iwump_memory->pins++;
-	Perl_wump_memory_unlock(aTHX);
+	wump_registry_read_unlock(aTHX);
 	return borrow;
 }
 
 static void wump_borrow_read_end(pTHX_ wump_borrow *borrow) {
 	if (!borrow || !borrow->reading) return;
-	Perl_wump_memory_lock(aTHX);
+	wump_registry_read_lock(aTHX);
 	atomic_fetch_sub_explicit(&borrow->node->access, 1, memory_order_release);
 	borrow->reading = FALSE;
-	Perl_wump_memory_unlock(aTHX);
+	wump_registry_read_unlock(aTHX);
 }
 
 struct wump_borrow *Perl_wump_capture_begin(pTHX_ const SV *value) {
