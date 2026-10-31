@@ -284,8 +284,8 @@ checkpoints, signal checks and the compiler admission gate. Header inline
 helpers and unaudited opcode bodies retain dynamic selection. No native TLS
 address or per-executor allocator pointer is cached by this optimization.
 
-Canonical default, error and regex-code-result scalar lookup uses the same
-bounded helper in public accessors and generated active bodies. With no active
+Canonical default, error and regex-code-result scalar lookup uses a bounded
+helper in the public accessor. With no active
 local bindings and no effective-glob alias, it returns the selected main/root or
 private act GP's scalar slot. Other GVs, all bindings and aliases retain general
 localization, regex-cell and publication handling. Selection neither allocates

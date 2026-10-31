@@ -11,7 +11,6 @@ sub apply_active {
 #include "regcomp.h"
 #include "feature.h"
 #include "wump_runtime_internal.h"
-#include "wump_scalar.h"
 
 OP *Perl_wump_read_impl_add(pTHX);
 OP *Perl_wump_read_impl_modulo(pTHX);
@@ -24,17 +23,6 @@ C
 	for my $name (@$vars) {
 		$active .= "#undef PL_$name\n#define PL_$name (*(wump_main ? &aTHX->I$name : &wump_task->I$name))\n";
 	}
-	$active .= <<'C';
-
-PERL_STATIC_INLINE SV **
-S_wump_active_scalar(pTHX_ struct wump_perl_task *task, GV *gv)
-{
-    SV **slot = S_wump_private_scalar(aTHX_ task, gv);
-    return slot ? slot : Perl_wump_gv_sv(gv);
-}
-#undef GvSV
-#define GvSV(gv) (*S_wump_active_scalar(aTHX_ wump_task, (GV *)(gv)))
-C
 	my @specs = (
 		(map { ['pp_hot.c', $_] } qw(const nextstate gvsv padsv iter unstack null pushmark add)),
 		['pp.c', 'modulo'],

@@ -13,10 +13,16 @@ SV **__real_Perl_wump_gv_sv(GV *gv);
 SV **__wrap_Perl_wump_gv_sv(GV *gv) {
 	dTHX;
 	struct wump_perl_task *task = PL_wump_task;
+	SV **expected = NULL;
 	if (task && !task->locals && gv == aTHX->Idefgv && PL_op
-		&& PL_op->op_type == OP_GVSV && PL_op->op_ppaddr == Perl_pp_gvsv)
+		&& PL_op->op_type == OP_GVSV && PL_op->op_ppaddr == Perl_pp_gvsv) {
+		expected = S_wump_private_scalar(aTHX_ task, gv);
+		CHECK(expected);
 		__atomic_fetch_add(&public_loads, 1, __ATOMIC_RELAXED);
-	return __real_Perl_wump_gv_sv(gv);
+	}
+	SV **actual = __real_Perl_wump_gv_sv(gv);
+	CHECK(!expected || actual == expected);
+	return actual;
 }
 END_EXTERN_C
 
@@ -58,6 +64,7 @@ static void check_slots(pTHX) {
 		CHECK(root[i]);
 		CHECK(!S_wump_private_scalar(aTHX_ NULL, root[i]));
 		Perl_wump_task_activate(aTHX_ &main_task);
+		if (!GvGP(root[i])->gp_sv) GvGP(root[i])->gp_sv = newSV(0);
 		SV **expected = &GvGP(root[i])->gp_sv;
 		CHECK(S_wump_private_scalar(aTHX_ &main_task, root[i]) == expected);
 		CHECK(Perl_wump_gv_sv(root[i]) == expected);
@@ -91,6 +98,37 @@ static void check_slots(pTHX) {
 		CHECK(!main_task.locals);
 		CHECK(S_wump_private_scalar(aTHX_ &main_task, root[i]) == &GvGP(root[i])->gp_sv);
 	}
+	/* The fast opcode path must leave a missing cell to native lazy
+	 * initialization, rather than pushing NULL or caching its old address. */
+	SV *saved_scalar = GvGP(root[0])->gp_sv;
+	GvGP(root[0])->gp_sv = NULL;
+	SV **saved_pad = PL_curpad;
+	SV *pad[2] = {NULL, (SV *)root[0]};
+	PADOP load = {0}; load.op_type = OP_GVSV;
+	load.op_ppaddr = Perl_pp_gvsv; load.op_padix = 1;
+	load.op_flags = OPf_WANT_SCALAR;
+	SSize_t stack_mark = PL_stack_sp - PL_stack_base;
+	SSize_t capacity = PL_stack_max - PL_stack_base;
+	while (PL_stack_sp < PL_stack_max) {
+		*++PL_stack_sp = &PL_sv_undef;
+#ifdef PERL_RC_STACK
+		SvREFCNT_inc_simple_void_NN(&PL_sv_undef);
+#endif
+	}
+	SSize_t full_mark = PL_stack_sp - PL_stack_base;
+	PL_curpad = pad; PL_op = (OP *)&load;
+	CHECK(Perl_wump_active_runops(aTHX_ &main_task) == 0);
+	SV *created = GvGP(root[0])->gp_sv;
+	CHECK(created && !SvOK(created));
+	CHECK(PL_stack_sp == PL_stack_base + full_mark + 1 && *PL_stack_sp == created);
+	CHECK(PL_stack_max - PL_stack_base > capacity);
+#ifdef PERL_RC_STACK
+	while (PL_stack_sp > PL_stack_base + stack_mark) SvREFCNT_dec(*PL_stack_sp--);
+#endif
+	PL_stack_sp = PL_stack_base + stack_mark;
+	PL_curpad = saved_pad;
+	GvGP(root[0])->gp_sv = saved_scalar;
+	SvREFCNT_dec(created);
 	PL_op = saved_op;
 	Perl_wump_task_activate(aTHX_ NULL);
 	SvREFCNT_dec(ordinary);
@@ -120,15 +158,16 @@ int main(int argc, char **argv, char **env) {
 	CV *hooked = get_cv("main::hooked", 0);
 	CHECK(hooked && install_hook(CvROOT(hooked)));
 	check_slots(aTHX);
+	__atomic_store_n(&public_loads, 0, __ATOMIC_RELAXED);
 	CHECK(perl_run(interp) == 0);
 	CHECK(__atomic_load_n(&hook_calls, __ATOMIC_RELAXED) == 33);
-	CHECK(!__atomic_load_n(&public_loads, __ATOMIC_RELAXED)
-		&& "canonical active scalar loads must bypass the public accessor");
+	CHECK(__atomic_load_n(&public_loads, __ATOMIC_RELAXED) >= 66000
+		&& "canonical scalar loads must exercise and verify the public accessor");
 	PL_perl_destruct_level = 2;
 	CHECK(perl_destruct(interp) == 0); perl_free(interp);
 	PERL_SYS_TERM();
 	puts("ok - canonical scalar cells preserve root/child identity, aliases and scoped localization");
-	puts("ok - main and spawned numeric loops bypass general scalar lookup and verify every result");
+	puts("ok - main and spawned numeric loops verify canonical public scalar loads and every result");
 	puts("ok - replaced scalar opcode entries retain their hooks and act context");
 	return 0;
 }
