@@ -1,0 +1,703 @@
+{
+   "after_private_sha256" : "4963f10aecab0a73cb9397bc439eeef6f865469d9b9a6226ea9dcdaa83ac674b",
+   "after_source_dirty" : false,
+   "after_source_revision" : "e97aba6cf57251643f3abe17a42c0e75de892a0b",
+   "application" : {
+      "fixture" : "unicode-log-v1",
+      "gate" : "all six work/process checks passed at +10% maximum",
+      "inherited_cpu_affinity" : "0-15 (not recorded by Mojo harness)",
+      "jobs" : 8,
+      "medians" : {
+         "1" : {
+            "after" : {
+               "process_seconds" : 0.502410888671875,
+               "work_seconds" : 0.474559997
+            },
+            "before" : {
+               "process_seconds" : 0.499629020690918,
+               "work_seconds" : 0.473089691
+            },
+            "change_process_seconds_percent" : 0.556786708888524,
+            "change_work_seconds_percent" : 0.310788002353668
+         },
+         "2" : {
+            "after" : {
+               "process_seconds" : 0.510567903518677,
+               "work_seconds" : 0.473386727
+            },
+            "before" : {
+               "process_seconds" : 0.498301982879639,
+               "work_seconds" : 0.468992919
+            },
+            "change_process_seconds_percent" : 2.46154361420647,
+            "change_work_seconds_percent" : 0.936860200228318
+         },
+         "4" : {
+            "after" : {
+               "process_seconds" : 0.569073915481567,
+               "work_seconds" : 0.5380638
+            },
+            "before" : {
+               "process_seconds" : 0.548624038696289,
+               "work_seconds" : 0.518483064
+            },
+            "change_process_seconds_percent" : 3.72748464210093,
+            "change_work_seconds_percent" : 3.77654302706405
+         }
+      },
+      "note" : "No matched stock application control or HTTP throughput claim",
+      "passes" : 20,
+      "runs" : 5,
+      "verified_jobs" : 240,
+      "workers" : 4
+   },
+   "before_private_sha256" : "4f0e8b684f60b09acbf34ff89e4e59377c4f34035fab9f7d277ef841938f0200",
+   "before_source_dirty" : false,
+   "before_source_revision" : "a543ff03fc6463a05f881433575d135b5a1dc23c",
+   "benchmark" : {
+      "before_mask" : "Legacy harness omits mask; both runs inherit unrestricted 0-15",
+      "concurrent_task_validation_or_builds" : false,
+      "cpu_affinity" : "0-15",
+      "default_baseline_after_acceptance" : "bench/perl-scalar-after.jsonl",
+      "default_gate_negative_control" : "predecessor rejected on all six active work/process checks; ordinary control remains within budget",
+      "fixture" : "integer-reduction-v1",
+      "fresh_gate" : "all eight stock-normalized work/process checks passed",
+      "historical_gate" : "all eight stock-normalized work/process checks passed",
+      "iterations" : 500000,
+      "jobs" : 8,
+      "medians" : {
+         "fork" : {
+            "after" : {
+               "process_seconds" : 0.130600929260254,
+               "work_seconds" : 0.113211505
+            },
+            "after_stock_process_seconds_ratio" : 0.955872601506281,
+            "after_stock_work_seconds_ratio" : 0.915348401784208,
+            "before" : {
+               "process_seconds" : 0.129875898361206,
+               "work_seconds" : 0.113065885
+            },
+            "change_process_seconds_percent" : 0.16518835123398,
+            "change_work_seconds_percent" : -1.10472254527042
+         },
+         "stock" : {
+            "after" : {
+               "process_seconds" : 0.136630058288574,
+               "work_seconds" : 0.123681327
+            },
+            "after_stock_process_seconds_ratio" : 1,
+            "after_stock_work_seconds_ratio" : 1,
+            "before" : {
+               "process_seconds" : 0.136096000671387,
+               "work_seconds" : 0.122157662
+            },
+            "change_process_seconds_percent" : 0,
+            "change_work_seconds_percent" : 0
+         },
+         "wump-1" : {
+            "after" : {
+               "process_seconds" : 0.544632911682129,
+               "work_seconds" : 0.52537015
+            },
+            "after_stock_process_seconds_ratio" : 3.98618663055694,
+            "after_stock_work_seconds_ratio" : 4.24777258413471,
+            "before" : {
+               "process_seconds" : 0.617357969284058,
+               "work_seconds" : 0.598732731
+            },
+            "change_process_seconds_percent" : -12.1248796743183,
+            "change_work_seconds_percent" : -13.3339567524672
+         },
+         "wump-2" : {
+            "after" : {
+               "process_seconds" : 0.291514873504639,
+               "work_seconds" : 0.271756877
+            },
+            "after_stock_process_seconds_ratio" : 2.13360718099772,
+            "after_stock_work_seconds_ratio" : 2.19723448633438,
+            "before" : {
+               "process_seconds" : 0.325072050094604,
+               "work_seconds" : 0.305789388
+            },
+            "change_process_seconds_percent" : -10.6735247607305,
+            "change_work_seconds_percent" : -12.2242176316533
+         },
+         "wump-4" : {
+            "after" : {
+               "process_seconds" : 0.170212030410767,
+               "work_seconds" : 0.14934583
+            },
+            "after_stock_process_seconds_ratio" : 1.24578758541744,
+            "after_stock_work_seconds_ratio" : 1.20750507471512,
+            "before" : {
+               "process_seconds" : 0.192716121673584,
+               "work_seconds" : 0.169596068
+            },
+            "change_process_seconds_percent" : -12.0225611697654,
+            "change_work_seconds_percent" : -13.0251081172859
+         }
+      },
+      "regression_budget_percent" : 10,
+      "runs" : 5,
+      "verified_jobs" : 400
+   },
+   "cpu_model" : "AMD Ryzen 7 PRO 4750U with Radeon Graphics",
+   "cpu_topology" : "# The following is the parsable format, which can be fed to other\n# programs. Each different item in every column has an unique ID\n# starting usually from zero.\n# CPU,Core,Socket\n0,0,0\n1,0,0\n2,1,0\n3,1,0\n4,2,0\n5,2,0\n6,3,0\n7,3,0\n8,4,0\n9,4,0\n10,5,0\n11,5,0\n12,6,0\n13,6,0\n14,7,0\n15,7,0\n",
+   "date_utc" : "2026-10-31",
+   "extended_unrestricted" : {
+      "eight" : {
+         "cpu_affinity" : "0-15",
+         "iterations" : 500000,
+         "jobs" : 8,
+         "medians" : {
+            "fork" : {
+               "process_seconds" : 0.13264799118042,
+               "work_seconds" : 0.114816955
+            },
+            "stock" : {
+               "process_seconds" : 0.136889934539795,
+               "work_seconds" : 0.12475186
+            },
+            "wump-1" : {
+               "process_seconds" : 0.545332908630371,
+               "work_seconds" : 0.526164319
+            },
+            "wump-2" : {
+               "process_seconds" : 0.29570198059082,
+               "work_seconds" : 0.27164967
+            },
+            "wump-4" : {
+               "process_seconds" : 0.169203996658325,
+               "work_seconds" : 0.149411132
+            },
+            "wump-8" : {
+               "process_seconds" : 0.13598108291626,
+               "work_seconds" : 0.116687105
+            }
+         },
+         "runs" : 7
+      },
+      "eight-long" : {
+         "cpu_affinity" : "0-15",
+         "iterations" : 2000000,
+         "jobs" : 8,
+         "medians" : {
+            "fork" : {
+               "process_seconds" : 0.475386142730713,
+               "work_seconds" : 0.451411959
+            },
+            "stock" : {
+               "process_seconds" : 0.511193990707397,
+               "work_seconds" : 0.498167175
+            },
+            "wump-1" : {
+               "process_seconds" : 2.1189980506897,
+               "work_seconds" : 2.10222106
+            },
+            "wump-2" : {
+               "process_seconds" : 1.10209703445435,
+               "work_seconds" : 1.083702975
+            },
+            "wump-4" : {
+               "process_seconds" : 0.615673065185547,
+               "work_seconds" : 0.595233384
+            },
+            "wump-8" : {
+               "process_seconds" : 0.373584985733032,
+               "work_seconds" : 0.354578812
+            }
+         },
+         "runs" : 7
+      }
+   },
+   "extended_unrestricted_historical_gate" : {
+      "eight" : "FAIL: eight-slot stock-normalized work +18.25%, process +12.51%; other eight comparisons pass",
+      "eight_long" : "PASS: all ten comparisons; eight-slot work -9.75%, process -9.31%",
+      "note" : "Short eight-slot performance remains placement-sensitive and does not pass the historical +10% budget; retained separately from physical-core controls"
+   },
+   "fork_config" : {
+      "archname" : "x86_64-linux-thread-multi",
+      "cc" : "cc",
+      "ccflags" : "-D_REENTRANT -D_GNU_SOURCE -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64",
+      "gccversion" : "14.2.1 20241221",
+      "lddlflags" : "-shared -O2 -L/usr/local/lib -fstack-protector-strong",
+      "ldflags" : " -fstack-protector-strong -L/usr/local/lib",
+      "optimize" : "-O2",
+      "use64bitall" : "define",
+      "useithreads" : "define",
+      "usemultiplicity" : "define",
+      "version" : "v5.42.2",
+      "wump" : 1
+   },
+   "implementation" : "Public canonical scalar accessor and inactive-root shortcut only; generated active dispatcher source and .text match a543ff0 byte-for-byte",
+   "physical_core_controls" : {
+      "2000000" : {
+         "before_mask" : "Legacy harness omits mask; capture script explicitly applies the same taskset mask to both sides",
+         "cpu_affinity" : "0,2,4,6,8,10,12,14",
+         "gate" : "all ten stock-normalized work/process checks passed at +10% maximum",
+         "iterations" : 2000000,
+         "jobs" : 8,
+         "medians" : {
+            "fork" : {
+               "after" : {
+                  "process_seconds" : 0.469680070877075,
+                  "work_seconds" : 0.451804399
+               },
+               "after_stock_process_seconds_ratio" : 0.906678418314161,
+               "after_stock_work_seconds_ratio" : 0.895322166962059,
+               "before" : {
+                  "process_seconds" : 0.476196050643921,
+                  "work_seconds" : 0.459014503
+               },
+               "change_process_seconds_percent" : -3.2237677052675,
+               "change_work_seconds_percent" : -3.55426370332311
+            },
+            "stock" : {
+               "after" : {
+                  "process_seconds" : 0.518022775650024,
+                  "work_seconds" : 0.504627737
+               },
+               "after_stock_process_seconds_ratio" : 1,
+               "after_stock_work_seconds_ratio" : 1,
+               "before" : {
+                  "process_seconds" : 0.508277893066406,
+                  "work_seconds" : 0.494458792
+               },
+               "change_process_seconds_percent" : 0,
+               "change_work_seconds_percent" : 0
+            },
+            "wump-1" : {
+               "after" : {
+                  "process_seconds" : 2.10799598693848,
+                  "work_seconds" : 2.088423632
+               },
+               "after_stock_process_seconds_ratio" : 4.06931140101578,
+               "after_stock_work_seconds_ratio" : 4.13854308606901,
+               "before" : {
+                  "process_seconds" : 2.43362092971802,
+                  "work_seconds" : 2.414547418
+               },
+               "change_process_seconds_percent" : -15.0097289235978,
+               "change_work_seconds_percent" : -15.2495826040707
+            },
+            "wump-2" : {
+               "after" : {
+                  "process_seconds" : 1.0976037979126,
+                  "work_seconds" : 1.078032392
+               },
+               "after_stock_process_seconds_ratio" : 2.11883308901874,
+               "after_stock_work_seconds_ratio" : 2.1362923853708,
+               "before" : {
+                  "process_seconds" : 1.26078796386719,
+                  "work_seconds" : 1.236816693
+               },
+               "change_process_seconds_percent" : -14.5807186370576,
+               "change_work_seconds_percent" : -14.594575072634
+            },
+            "wump-4" : {
+               "after" : {
+                  "process_seconds" : 0.620039939880371,
+                  "work_seconds" : 0.596984455
+               },
+               "after_stock_process_seconds_ratio" : 1.19693567353739,
+               "after_stock_work_seconds_ratio" : 1.18301950374163,
+               "before" : {
+                  "process_seconds" : 0.697480916976929,
+                  "work_seconds" : 0.676665958
+               },
+               "change_process_seconds_percent" : -12.7752562867997,
+               "change_work_seconds_percent" : -13.5534471895919
+            },
+            "wump-8" : {
+               "after" : {
+                  "process_seconds" : 0.353308200836182,
+                  "work_seconds" : 0.332962191
+               },
+               "after_stock_process_seconds_ratio" : 0.682032175888106,
+               "after_stock_work_seconds_ratio" : 0.659817458666566,
+               "before" : {
+                  "process_seconds" : 0.414156913757324,
+                  "work_seconds" : 0.388968283
+               },
+               "change_process_seconds_percent" : -16.2969720295361,
+               "change_work_seconds_percent" : -16.1236126924056
+            }
+         },
+         "runs" : 7
+      },
+      "500000" : {
+         "before_mask" : "Legacy harness omits mask; capture script explicitly applies the same taskset mask to both sides",
+         "cpu_affinity" : "0,2,4,6,8,10,12,14",
+         "gate" : "all ten stock-normalized work/process checks passed at +10% maximum",
+         "iterations" : 500000,
+         "jobs" : 8,
+         "medians" : {
+            "fork" : {
+               "after" : {
+                  "process_seconds" : 0.131288051605225,
+                  "work_seconds" : 0.114797818
+               },
+               "after_stock_process_seconds_ratio" : 0.948262976445915,
+               "after_stock_work_seconds_ratio" : 0.922004539255977,
+               "before" : {
+                  "process_seconds" : 0.132238864898682,
+                  "work_seconds" : 0.11519382
+               },
+               "change_process_seconds_percent" : -0.775772704981703,
+               "change_work_seconds_percent" : -0.146887636354753
+            },
+            "stock" : {
+               "after" : {
+                  "process_seconds" : 0.138451099395752,
+                  "work_seconds" : 0.124508951
+               },
+               "after_stock_process_seconds_ratio" : 1,
+               "after_stock_work_seconds_ratio" : 1,
+               "before" : {
+                  "process_seconds" : 0.13837194442749,
+                  "work_seconds" : 0.124754933
+               },
+               "change_process_seconds_percent" : 0,
+               "change_work_seconds_percent" : 0
+            },
+            "wump-1" : {
+               "after" : {
+                  "process_seconds" : 0.543562889099121,
+                  "work_seconds" : 0.525609497
+               },
+               "after_stock_process_seconds_ratio" : 3.92602797284684,
+               "after_stock_work_seconds_ratio" : 4.22145952382171,
+               "before" : {
+                  "process_seconds" : 0.619465112686157,
+                  "work_seconds" : 0.600935955
+               },
+               "change_process_seconds_percent" : -12.3030315421871,
+               "change_work_seconds_percent" : -12.3620586062971
+            },
+            "wump-2" : {
+               "after" : {
+                  "process_seconds" : 0.291862010955811,
+                  "work_seconds" : 0.272411922
+               },
+               "after_stock_process_seconds_ratio" : 2.10805123418735,
+               "after_stock_work_seconds_ratio" : 2.18789026662027,
+               "before" : {
+                  "process_seconds" : 0.327939033508301,
+                  "work_seconds" : 0.308626076
+               },
+               "change_process_seconds_percent" : -11.0520193016637,
+               "change_work_seconds_percent" : -11.5596105289678
+            },
+            "wump-4" : {
+               "after" : {
+                  "process_seconds" : 0.168964862823486,
+                  "work_seconds" : 0.149340732
+               },
+               "after_stock_process_seconds_ratio" : 1.22039379651665,
+               "after_stock_work_seconds_ratio" : 1.19943771753406,
+               "before" : {
+                  "process_seconds" : 0.19002103805542,
+                  "work_seconds" : 0.170515953
+               },
+               "change_process_seconds_percent" : -11.1318071307426,
+               "change_work_seconds_percent" : -12.2452946741972
+            },
+            "wump-8" : {
+               "after" : {
+                  "process_seconds" : 0.104890108108521,
+                  "work_seconds" : 0.084762275
+               },
+               "after_stock_process_seconds_ratio" : 0.757596787358839,
+               "after_stock_work_seconds_ratio" : 0.680772541405477,
+               "before" : {
+                  "process_seconds" : 0.118492126464844,
+                  "work_seconds" : 0.097586669
+               },
+               "change_process_seconds_percent" : -11.5298681132499,
+               "change_work_seconds_percent" : -12.9699438851837
+            }
+         },
+         "runs" : 7
+      }
+   },
+   "placement_investigation" : {
+      "note" : "Generated-active inline selection was removed; final patch is limited to public accessor. Diagnostic predecessor and candidate timings were bimodal. All probes and rejected raw captures are archived, not used as clean release comparisons.",
+      "rejected_dispatch_revision" : "7f91b63",
+      "runtime_affinity_policy_changed" : false,
+      "status" : "Unresolved unrestricted eight-slot variability; one-thread-per-core controls suggest placement/SMT sensitivity, not a proven complete diagnosis"
+   },
+   "profiles" : {
+      "event" : "cycles:u",
+      "frequency_hz" : 199,
+      "iterations" : 3000000,
+      "jobs" : 8,
+      "note" : "Recorded after timing; zero reported losses. Unresolved kernel addresses are not attributed to particular syscalls.",
+      "slots" : {
+         "1" : {
+            "approximate_samples" : "619",
+            "lost_samples" : 0,
+            "rows" : [
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 47.04,
+                  "symbol" : "Perl_wump_active_runops"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 24.28,
+                  "symbol" : "Perl_wump_numeric_enter"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "kernel",
+                  "object" : "[unknown]",
+                  "percent" : 6.87,
+                  "symbol" : "0xffffffffbb05aab7"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 5.9,
+                  "symbol" : "Perl_wump_gv_sv"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 5.58,
+                  "symbol" : "wump_numeric_source"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 2.41,
+                  "symbol" : "S_wump_state_stack_sp"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 1.75,
+                  "symbol" : "S_wump_task_context"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 1.27,
+                  "symbol" : "Perl_wump_numeric_leave"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 1.12,
+                  "symbol" : "S_wump_state_op"
+               }
+            ]
+         },
+         "4" : {
+            "approximate_samples" : "665",
+            "lost_samples" : 0,
+            "rows" : [
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 47.07,
+                  "symbol" : "Perl_wump_active_runops"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 21.7,
+                  "symbol" : "Perl_wump_numeric_enter"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 8.96,
+                  "symbol" : "wump_numeric_source"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 6.58,
+                  "symbol" : "Perl_wump_gv_sv"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 2.51,
+                  "symbol" : "S_wump_task_context"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "kernel",
+                  "object" : "[unknown]",
+                  "percent" : 2.44,
+                  "symbol" : "0xffffffffbb05aaff"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "kernel",
+                  "object" : "[unknown]",
+                  "percent" : 1.49,
+                  "symbol" : "0xffffffffbb05aa69"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 1.31,
+                  "symbol" : "S_wump_state_op"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "kernel",
+                  "object" : "[unknown]",
+                  "percent" : 1.31,
+                  "symbol" : "0xffffffffbb05aa97"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 1.16,
+                  "symbol" : "Perl_wump_numeric_leave"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 1,
+                  "symbol" : "S_wump_state_stack_sp"
+               }
+            ]
+         },
+         "8" : {
+            "approximate_samples" : "846",
+            "lost_samples" : 0,
+            "rows" : [
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 47.31,
+                  "symbol" : "Perl_wump_active_runops"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 23.76,
+                  "symbol" : "Perl_wump_numeric_enter"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 7.8,
+                  "symbol" : "wump_numeric_source"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 6.31,
+                  "symbol" : "Perl_wump_gv_sv"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 3.21,
+                  "symbol" : "S_wump_task_context"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 2.96,
+                  "symbol" : "S_wump_state_op"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "kernel",
+                  "object" : "[unknown]",
+                  "percent" : 1.86,
+                  "symbol" : "0xffffffffbb05aa69"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "user",
+                  "object" : "perl",
+                  "percent" : 1.51,
+                  "symbol" : "Perl_wump_numeric_leave"
+               },
+               {
+                  "command" : "perl",
+                  "kind" : "kernel",
+                  "object" : "[unknown]",
+                  "percent" : 1.06,
+                  "symbol" : "0xffffffffbb05aaff"
+               }
+            ]
+         }
+      }
+   },
+   "stock_config" : {
+      "archname" : "x86_64-linux-thread-multi",
+      "cc" : "cc",
+      "ccflags" : "-D_REENTRANT -D_GNU_SOURCE -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64",
+      "gccversion" : "14.2.1 20241221",
+      "lddlflags" : "-shared -O2 -L/usr/local/lib -fstack-protector-strong",
+      "ldflags" : " -fstack-protector-strong -L/usr/local/lib",
+      "optimize" : "-O2",
+      "use64bitall" : "define",
+      "useithreads" : "define",
+      "usemultiplicity" : "define",
+      "version" : "v5.42.2",
+      "wump" : 0
+   },
+   "stock_sha256" : "c7688d340a6002b222777a1c93c6892db939629a69266ed8b4e2834e7a0951da",
+   "validation" : {
+      "asan" : "35 Perl suites and scalar-lookup/reads/operands native drivers passed, including negative controls; changed run/active units rebuilt over matching fully instrumented archive with ABI headers verified identical; not a fresh full sanitizer source build",
+      "benchmark_tools" : "117 runner checks and 89 gate checks passed; recorded-mask mismatch negative control rejected",
+      "clang_ubsan" : "run.c/active unit instrumentation with undefined,float-divide-by-zero over normal core; eight focused Perl suites and native scalar fixture on one/four slots passed; not full-core UBSan coverage",
+      "memcheck" : "C/C++ scalar fixture on one/four slots: zero errors, zero live heap bytes; coroutine stacks registered with WUMP_VALGRIND",
+      "memcheck_harness_correction" : "Stale copied archive was caught by new public-call assertion; overlay refreshed from current libperl.a before passing rerun. Failed log retained.",
+      "mojo" : "optional target passed: CLI, services and 48 live HTTP/WebSocket checks each on one/four slots",
+      "project" : "complete runtime and Perl project targets passed, including patcher, new C/C++ scalar driver on one/four slots and active localization coverage",
+      "remaining" : [
+         "short unrestricted eight-slot historical regression/placement sensitivity",
+         "one-slot overhead and broad stock-Perl parity",
+         "general I/O handoff, compiler/callback policy and remaining shared-cache/XS audits",
+         "known TSan clone race, full MSan locale dependencies and Helgrind/DRD internal assertions remain open"
+      ],
+      "tsan" : {
+         "failed_suite" : "keys",
+         "method" : "same changed-unit rebuild over matching fully instrumented archive",
+         "native_drivers_passed" : 3,
+         "note" : "Known S_ithread_clear/S_ithread_run race on PL_veto_switch_non_tTHX_context previously reproduced on predecessor; no new suppression or exclusion",
+         "suites_attempted" : 35,
+         "suites_passed" : 34
+      },
+      "upstream_full" : {
+         "files" : 2919,
+         "status" : "complete standard noninteractive harness passed; no added exclusions",
+         "tests" : 1351163,
+         "wall_seconds" : 324
+      }
+   }
+}

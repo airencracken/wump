@@ -216,8 +216,8 @@ No callbacks, allocation, metadata entry or scheduling occur between numeric
 admission and release.
 
 Canonical default, error and regex-code-result scalar cells also have a direct
-lookup in the public GV accessor. It selects the main
-interpreter cell or the owning act's private cell without a callback. Active
+lookup in the public GV accessor. It selects the main interpreter cell or the
+owning act's private cell without a callback. Active
 local bindings and effective-glob aliases retain the full accessor, including
 regex-cell handling and publication of ordinary package values. Each call
 selects its current act without retaining a native TLS address or a cached
@@ -1289,7 +1289,7 @@ loading and result verification as well as work. Failed captures remain in
 `$(BUILD)/perl-baseline-current.jsonl.tmp`; successful captures are preserved
 before comparison, including when the regression budget fails.
 
-`PERL_PERF_BASELINE` defaults to the recorded numeric-admission checkpoint. Use a baseline
+`PERL_PERF_BASELINE` defaults to the recorded canonical-scalar checkpoint. Use a baseline
 captured on your own machine when its CPU model or configuration differs.
 `PERL_PERF_MAX_REGRESSION` selects an explicit percentage budget. This prevents
 backsliding from a checkpoint; it does not satisfy the outstanding active-Wump
@@ -1303,16 +1303,16 @@ and fresh performance comparisons. Its large upstream XS macro case measured
 about 2.12x stock with Wump disabled. Broader ordinary-Perl parity remains an
 acceptance goal.
 
-The latest [numeric-admission checkpoint](DESIGN.md#numeric-admission-and-stock-comparison-2026-10-31)
-reduces four-slot integer work from 1.067s to 0.169s. One/two/four-slot work
-takes 4.87x/2.50x/1.37x stock time. Eight-slot seven-run medians beat sequential
-stock on this fixture at both 500,000 and 2,000,000 iterations per job, including
-whole-process time: 0.123s versus 0.139s, and 0.412s versus 0.511s respectively.
-This uses eight execution slots for one fixed workload; broad parity and
-single-slot overhead remain open. Historical, fresh-control and application
-comparisons pass the 10% budget, and the default integer gate uses the improved
-capture. The earlier application-regressing attempt was rejected and its raw
-evidence is retained.
+The latest [scalar-lookup checkpoint](DESIGN.md#canonical-scalar-lookup-and-affinity-controls-2026-10-31)
+cuts one/two/four-slot integer work another 12–13%, to 4.25x/2.20x/1.21x stock
+time. Standard and application comparisons pass the 10% budget. With one
+hardware thread per physical core, eight-slot seven-run medians use 32–34% less
+work time and 24–32% less whole-process time than sequential stock at two work
+sizes. Unrestricted short eight-slot timing still exceeds the prior checkpoint
+by 18% in stock-relative work time and fails its optional regression gate;
+placement sensitivity remains open. Both affinity policies and every raw
+capture are retained. These results cover one parallel fixture; broad parity
+and single-slot overhead remain open.
 
 The [original matched-stock run](bench/perl-stock-baseline.jsonl) exposed large
 overheads on the implicit-loop-variable integer workload. A fresh
