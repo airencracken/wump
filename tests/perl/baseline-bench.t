@@ -39,6 +39,8 @@ for my $sample (@samples) {
 	cmp_ok($sample->{process_seconds}, '>=', $sample->{wall_seconds}, 'process timing includes startup outside work timing');
 	is($sample->{fork_config}{version}, $sample->{stock_config}{version}, 'comparison records matching Perl versions');
 	like($sample->{source_revision}, qr/\A[0-9a-f]{40,64}\z/, 'comparison records its source revision');
+	like($sample->{cpu_affinity}, qr/\A(?:unknown|[0-9]+(?:-[0-9]+)?(?:,[0-9]+(?:-[0-9]+)?)*)\z/,
+		'comparison records its inherited CPU affinity');
 }
 for my $summary (@summaries) {
 	my @wall = sort {$a <=> $b} map { $_->{wall_seconds} } grep { $_->{variant} eq $summary->{variant} } @samples;

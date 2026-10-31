@@ -1252,6 +1252,10 @@ builds and verifies every job against a closed-form integer reference. The
 plain fork run measures overhead even when `use Wump` is absent; the one-slot
 Wump run additionally includes act/channel scheduling. Raw JSON samples include
 work/process timing, CPU time, build configuration, CPU model and source state.
+Captures also record the inherited CPU affinity mask. The comparison gate
+rejects differing recorded masks and reports when legacy evidence has no mask.
+An unrestricted mask still lets the OS place workers on SMT siblings; fixed
+physical-core controls must be compared separately from unrestricted runs.
 Five interleaved runs rotate execution order; summaries report medians and
 ratios without imposing a performance threshold.
 

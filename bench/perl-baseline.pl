@@ -65,9 +65,17 @@ if (open my $cpuinfo, '<', '/proc/cpuinfo') {
 	while (<$cpuinfo>) { if (/\Amodel name\s*:\s*(.+)/) { $cpu_model = $1; last } }
 	close $cpuinfo or die "Close CPU information: $!\n";
 }
+my $cpu_affinity = 'unknown';
+if (open my $status, '<', '/proc/self/status') {
+	while (<$status>) {
+		if (/\ACpus_allowed_list:\s*(\S+)\s*\z/) { $cpu_affinity = $1; last }
+	}
+	close $status or die "Close CPU affinity information: $!\n";
+}
 my %metadata = (source_revision => $revision, source_dirty => $dirty ? JSON::PP::true : JSON::PP::false,
 	private_perl => $private, stock_perl => $stock, fork_config => $fork_config,
-	stock_config => $stock_config, cpu_model => $cpu_model, fixture => 'integer-reduction-v1');
+	stock_config => $stock_config, cpu_model => $cpu_model, cpu_affinity => $cpu_affinity,
+	fixture => 'integer-reduction-v1');
 my @variants = (
 	['stock', $stock, 'plain', 0], ['fork', $private, 'plain', 0],
 	map { ["wump-$_", $private, 'wump', $_] } (1, 2, 4),

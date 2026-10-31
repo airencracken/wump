@@ -23,7 +23,7 @@ sub median (@values) {
 }
 sub capture ($path) {
 	open my $input, '<', $path or die "$path: $!\n";
-	my (%samples, %summaries, $metadata, $identity, $declared_max);
+	my (%samples, %summaries, $metadata, $identity, $declared_max, $affinity, $affinity_identity);
 	while (my $line = <$input>) {
 		my $record = eval { decode_json($line) };
 		die "$path: invalid JSON record\n" unless ref($record) eq 'HASH';
@@ -34,6 +34,16 @@ sub capture ($path) {
 		die "$path: dirty or missing source state\n" unless JSON::PP::is_bool($record->{source_dirty}) && !$record->{source_dirty};
 		die "$path: invalid source revision\n" unless !ref($record->{source_revision})
 			&& ($record->{source_revision} // '') =~ /\A[0-9a-f]{40,64}\z/;
+		my $mask;
+		if (exists $record->{cpu_affinity}) {
+			$mask = $record->{cpu_affinity};
+			die "$path: invalid CPU affinity\n" unless defined($mask) && !ref($mask)
+				&& $mask =~ /\A(?:unknown|[0-9]+(?:-[0-9]+)?(?:,[0-9]+(?:-[0-9]+)?)*)\z/;
+		}
+		my $mask_identity = defined($mask) ? "recorded:$mask" : 'legacy';
+		$affinity_identity //= $mask_identity;
+		die "$path: mixed CPU affinity evidence\n" unless $affinity_identity eq $mask_identity;
+		$affinity = $mask;
 		for my $field (qw(iterations jobs)) {
 			die "$path: invalid $field\n" unless !ref($record->{$field}) && ($record->{$field} // '') =~ /\A[1-9][0-9]*\z/;
 		}
@@ -97,11 +107,16 @@ sub capture ($path) {
 		die "$path: inconsistent median\n" unless positive($reported)
 			&& abs($reported - $timings{$variant}{work}) <= $timings{$variant}{work} * 1e-9;
 	}
-	return {metadata => {%$metadata, runs => $runs, max_slots => $extended ? 8 : 4},
+	return {metadata => {%$metadata, runs => $runs, max_slots => $extended ? 8 : 4}, affinity => $affinity,
 		timings => \%timings, variants => \@expected};
 }
 
 my ($before, $after) = map { capture($_) } @ARGV;
+if (defined($before->{affinity}) && defined($after->{affinity})) {
+	die "Cannot compare different CPU affinity masks\n" unless $before->{affinity} eq $after->{affinity};
+} elsif (defined($before->{affinity}) || defined($after->{affinity})) {
+	print "NOTE CPU affinity is unrecorded in a legacy capture; matching affinity is assumed\n";
+}
 die "Cannot compare different workloads, machines or build configurations\n"
 	unless $json->encode($before->{metadata}) eq $json->encode($after->{metadata});
 my $failed = 0;

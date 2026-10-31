@@ -47,6 +47,33 @@ my $baseline = fixture('before with spaces');
 my ($status, $text) = run($baseline, $baseline);
 is($status, 0, 'identical complete captures pass');
 is(scalar(() = $text =~ /^PASS /mg), 8, 'ordinary and all slot counts check work and process timing');
+my $affinity = fixture('recorded affinity', sub { $_->{cpu_affinity} = '0-15' for @{$_[0]} });
+($status, $text) = run($affinity, $affinity);
+is($status, 0, 'matching recorded CPU affinity passes');
+($status, $text) = run($affinity, fixture('pinned affinity', sub {
+	$_->{cpu_affinity} = '0,2,4,6,8,10,12,14' for @{$_[0]};
+}));
+isnt($status, 0, 'different CPU affinity cannot silently pass');
+like($text, qr/different CPU affinity/, 'affinity mismatch is identified');
+($status, $text) = run($baseline, $affinity);
+is($status, 0, 'legacy evidence remains comparable');
+like($text, qr/NOTE CPU affinity is unrecorded/, 'legacy affinity assumption is explicit');
+for my $mask ('', '0-', '0 1', 'arbitrary', []) {
+	($status, $text) = run($affinity, fixture('invalid affinity', sub { $_->{cpu_affinity} = $mask for @{$_[0]} }));
+	isnt($status, 0, 'invalid affinity evidence fails');
+	like($text, qr/invalid CPU affinity/, 'invalid affinity is identified');
+}
+($status, $text) = run($affinity, fixture('mixed affinity', sub {
+	$_->{cpu_affinity} = '0-15' for @{$_[0]};
+	$_[0][0]{cpu_affinity} = '0-7';
+}));
+isnt($status, 0, 'mixed affinity within a capture fails');
+like($text, qr/mixed CPU affinity/, 'mixed affinity is identified');
+($status, $text) = run($affinity, fixture('partial affinity', sub {
+	$_->{cpu_affinity} = '0-15' for @{$_[0]};
+	delete $_[0][0]{cpu_affinity};
+}));
+isnt($status, 0, 'partly missing affinity evidence fails');
 ($status, $text) = run($baseline, fixture('slower host', sub { scale($_[0], 1.5) }));
 is($status, 0, 'uniform host slowdown cancels against the matched stock control');
 for my $variant (qw(fork wump-1 wump-2 wump-4)) {
