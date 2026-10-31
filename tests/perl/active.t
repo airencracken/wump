@@ -20,22 +20,32 @@ for my $slots (1, 2, 4) {
 		}
 		sub exercise ($id) {
 			my $original = RootFixture::execution_context();
-			local $_ = "act-$id";
-			for my $round (1..8) {
-				my $value = bless [$id + 100], 'ActiveNumber';
-				die "yielding arithmetic lost its result\n" unless $value % 97 == ($id + 100) % 97;
-				die "custom ppaddr was bypassed\n" unless hooked() == 42;
-				my $sum = 0;
-				$sum += $_ % 97 for 1..500;
-				die "integer loop lost its state\n" unless $sum == 23400 && $_ eq "act-$id";
-				my $zero = 0;
-				eval { my $unused = $round % $zero };
-				die "native fallback lost its exception\n" unless $@ =~ /Illegal modulus zero/;
-				yield;
-				my $current = RootFixture::execution_context();
-				die "callback changed interpreter or act\n"
-					unless $current->[0] == $original->[0] && $current->[1] == $original->[1];
+			$_ = "private-$id";
+			yield;
+			die "unlocalized scalar lost its act\n" unless $_ eq "private-$id";
+			{
+				local $_ = "act-$id";
+				for my $round (1..8) {
+					my $value = bless [$id + 100], 'ActiveNumber';
+					die "yielding arithmetic lost its result\n" unless $value % 97 == ($id + 100) % 97;
+					die "custom ppaddr was bypassed\n" unless hooked() == 42;
+					my $sum = 0;
+					$sum += $_ % 97 for 1..500;
+					die "integer loop lost its state\n" unless $sum == 23400 && $_ eq "act-$id";
+					my $zero = 0;
+					eval { my $unused = $round % $zero };
+					die "native fallback lost its exception\n" unless $@ =~ /Illegal modulus zero/;
+					yield;
+					my $current = RootFixture::execution_context();
+					die "callback changed interpreter or act\n"
+						unless $current->[0] == $original->[0] && $current->[1] == $original->[1];
+				}
 			}
+			my $sum = 0;
+			$sum += $_ % 97 for 1..500;
+			yield;
+			die "scalar fast path did not resume after local\n"
+				unless $sum == 23400 && $_ eq "private-$id";
 			return $id;
 		}
 		my $out = chan(16);

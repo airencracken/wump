@@ -2,6 +2,7 @@
 # within the integration C file included by upstream run.c.
 $(common_objs) $(main_only_objs) $(mini_only_objs) perlmain$(OBJ_EXT) wump_plain_ops$(OBJ_EXT) wump_active_ops$(OBJ_EXT): wump_task_types.h wump_task_embed.h wump_plain_ops.h
 run$(OBJ_EXT): wump_core.c wump_local.c wump_elements.c wump_lvalues.c wump_magic.c wump_lock.c wump_waitgroup.c wump_publish.c wump_memory.c wump.h wump_runtime_internal.h
+run$(OBJ_EXT) wump_active_ops$(OBJ_EXT): wump_scalar.h
 sv$(OBJ_EXT): wump_alloc.c wump_reads.c wump_storage_sv.c
 hv$(OBJ_EXT): wump_keys.c wump_storage_hv.c
 av$(OBJ_EXT): wump_storage_av.c

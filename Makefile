@@ -139,6 +139,7 @@ perl-test: perl-build perl-source-test
 	perl tests/perl/patcher.pl '$(BUILD)/perl/perl-5.42.2'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/refcount.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/task-context.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
+	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/scalar-lookup.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/clone-context.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/owned.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/allocator.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'

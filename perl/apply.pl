@@ -579,6 +579,7 @@ edit('class.c', '    fields[fieldix] = val;',
 edit('pp.c', '    SvLOCK(sv);', '    if (PL_wump_task) Perl_wump_lock(aTHX_ sv); else SvLOCK(sv);');
 for my $pair (
 	["$FindBin::Bin/core/wump_core.c", "$source/wump_core.c"],
+	["$FindBin::Bin/core/wump_scalar.h", "$source/wump_scalar.h"],
 	["$FindBin::Bin/core/wump_alloc.c", "$source/wump_alloc.c"],
 	["$FindBin::Bin/core/wump_reads.c", "$source/wump_reads.c"],
 	["$FindBin::Bin/core/wump_memory.c", "$source/wump_memory.c"],

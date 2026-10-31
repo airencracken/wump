@@ -1,6 +1,7 @@
 /* Built into the private Perl fork; this cannot be loaded into stock Perl.
  * Acts share one interpreter and never clone it; execution state is private. */
 #include "XSUB.h"
+#include "wump_scalar.h"
 #include "wump_runtime_internal.h"
 #include <math.h>
 
@@ -356,6 +357,8 @@ static SV **wump_regex_scalar(pTHX_ GV *gv) {
 
 SV **Perl_wump_gv_sv(GV *gv) {
 	dTHX;
+	SV **private = S_wump_private_scalar(aTHX_ PL_wump_task, gv);
+	if (private) return private;
 	wump_local *binding = wump_local_find(aTHX_ gv, 's', FALSE);
 	if (binding != NULL) return &binding->value;
 	if (PL_wump_task != NULL) {

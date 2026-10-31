@@ -215,6 +215,13 @@ close and drain the gate.
 No callbacks, allocation, metadata entry or scheduling occur between numeric
 admission and release.
 
+Canonical default, error and regex-code-result scalar cells also have a direct
+lookup shared by the public GV accessor and active opcodes. It selects the main
+interpreter cell or the owning act's private cell without a callback. Active
+local bindings and effective-glob aliases retain the full accessor, including
+regex-cell handling and publication of ordinary package values. The active
+runloop supplies its owning act; it does not cache a native TLS address.
+
 Spawned acts' default, error, and regex-result globs are private storage cells.
 They keep their special names without namespace backreferences or unintended
 prototype CVs. Localization anchors likewise retain only their target GP;
