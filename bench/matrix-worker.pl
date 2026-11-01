@@ -8,6 +8,8 @@ BEGIN {
 		require Wump;
 		Wump->import;
 	}
+	require threads if ($ENV{WUMP_MATRIX_MODE} // '') eq 'ithreads';
+	require POSIX if ($ENV{WUMP_MATRIX_MODE} // '') eq 'fork';
 }
 use JSON::PP ();
 use Encode ();
@@ -20,8 +22,11 @@ my ($op, $n, $jobs) = @ARGV;
 $op =~ /\A(?:arithmetic|calls|arrays|hashes|strings|regex|utf8|json|yield|spawn|channel)\z/
 	&& $n =~ /\A[1-9][0-9]*\z/ && $n <= 2000000
 	&& $jobs =~ /\A[1-9][0-9]*\z/ && $jobs <= 64 or die "invalid matrix workload\n";
-my $active = ($ENV{WUMP_MATRIX_MODE} // '') eq 'wump';
-my $slots = $active ? Wump::execution_slots() : 0;
+my $mode = $ENV{WUMP_MATRIX_MODE} // 'plain';
+$mode =~ /\A(?:plain|wump|fork|ithreads)\z/ or die "invalid matrix mode\n";
+my $active = $mode eq 'wump';
+my $slots = $active ? Wump::execution_slots() : $mode eq 'plain' ? 0 : ($ENV{WUMP_MATRIX_SLOTS} // 0);
+$slots =~ /\A(?:0|1|2|4)\z/ && ($mode eq 'plain' || $slots > 0) or die "invalid matrix slots\n";
 my $primitive = $op =~ /\A(?:yield|spawn|channel)\z/;
 die "coroutines require an active runtime\n" if $primitive && !$active;
 
@@ -87,6 +92,67 @@ sub compute ($id) {
 	return $op eq 'json' ? [$id, $sum, $last] : [$id, $sum];
 }
 
+sub worker_jobs ($worker) {
+	my @values;
+	for (my $id = $worker + 1; $id <= $jobs; $id += $slots) { push @values, compute($id) }
+	return \@values;
+}
+
+sub fork_jobs () {
+	my @children;
+	my $created = eval {
+		for my $worker (0..($slots < $jobs ? $slots : $jobs) - 1) {
+			pipe(my $read, my $write) or die "pipe: $!\n";
+			my $pid = fork();
+			defined($pid) or die "fork: $!\n";
+			if (!$pid) {
+				my $ok = eval {
+					close $read or die "close pipe reader: $!\n";
+					close $_->[1] or die "close inherited pipe reader: $!\n" for @children;
+					print {$write} JSON::PP::encode_json(worker_jobs($worker)) or die "write fork results: $!\n";
+					close $write or die "close fork results: $!\n";
+					1;
+				};
+				warn $@ unless $ok;
+				POSIX::_exit($ok ? 0 : 1);
+			}
+			close $write or die "close pipe writer: $!\n";
+			push @children, [$pid, $read];
+		}
+		1;
+	};
+	my $error = $created ? '' : $@;
+	my @values;
+	for my $child (@children) {
+		my ($pid, $read) = @$child;
+		my $text = do { local $/; <$read> };
+		close $read or $error ||= "close fork reader: $!\n";
+		if (waitpid($pid, 0) != $pid || $? != 0) { $error ||= "fork worker failed\n"; next }
+		my $values = eval { JSON::PP::decode_json($text) };
+		if (ref($values) ne 'ARRAY') { $error ||= "invalid fork results\n"; next }
+		push @values, @$values;
+	}
+	die $error if length($error);
+	return @values;
+}
+
+sub ithread_jobs () {
+	my @workers;
+	my $created = eval {
+		push @workers, threads->create(\&worker_jobs, $_) for 0..($slots < $jobs ? $slots : $jobs) - 1;
+		1;
+	};
+	my $error = $created ? '' : $@;
+	my @values;
+	for my $worker (@workers) {
+		my $values = eval { $worker->join() };
+		if ($@ || $worker->error() || ref($values) ne 'ARRAY') { $error ||= "ithread worker failed\n"; next }
+		push @values, @$values;
+	}
+	die $error if length($error);
+	return @values;
+}
+
 my @results;
 my $start = clock_gettime(CLOCK_MONOTONIC);
 if (!$primitive) {
@@ -94,6 +160,10 @@ if (!$primitive) {
 		my $out = Wump::chan(4);
 		for my $id (1..$jobs) { Wump::act(sub { $out->send(compute($id)) }) }
 		push @results, scalar $out->recv for 1..$jobs;
+	} elsif ($mode eq 'fork') {
+		@results = fork_jobs();
+	} elsif ($mode eq 'ithreads') {
+		@results = ithread_jobs();
 	} else { push @results, compute($_) for 1..$jobs }
 } elsif ($op eq 'yield') {
 	my $count = 0;

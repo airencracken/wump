@@ -44,11 +44,11 @@ is($status, 0, 'all languages and slot counts complete across the 97-value bound
 is($errors, '', 'successful capture emits no diagnostics');
 BAIL_OUT($errors) if $status;
 my $capture = load_capture($path);
-is(scalar @{$capture->{cells}}, 88, 'all eleven operations and eight variants are present');
-is(scalar(map {@{$_->{samples}}} @{$capture->{cells}}), 264, 'all three raw runs are retained');
+is(scalar @{$capture->{cells}}, 154, 'all eleven operations and fourteen variants are present');
+is(scalar(map {@{$_->{samples}}} @{$capture->{cells}}), 462, 'all three raw runs are retained');
 like($text, qr/Stock Perl.*Wump unused.*Go 4/, 'capture prints the readable matrix');
 like($text, qr/parallel XS admission: utf8::encode|\| json \|/, 'JSON behavior remains visible');
-for my $spec (['stock', 1, 1], ['wump-unused', 1, 2], ['stock', 2, 96], ['wump-unused', 2, 89]) {
+for my $spec (['stock', 1, 1], ['wump-unused', 1, 8], ['stock', 2, 168], ['wump-unused', 2, 161]) {
 	my ($variant, $run, $sequence) = @$spec;
 	my ($cell) = grep {$_->{operation} eq 'arithmetic' && $_->{variant} eq $variant} @{$capture->{cells}};
 	is($cell->{samples}[$run - 1]{sequence}, $sequence, 'execution order rotates between raw runs');
@@ -57,8 +57,59 @@ for my $cell (@{$capture->{cells}}) {
 	is(scalar @{$cell->{samples}}, 3, "$cell->{operation}/$cell->{variant} retains every repetition");
 }
 for my $op (qw(yield spawn channel)) {
-	my ($cell) = grep {$_->{operation} eq $op && $_->{variant} eq 'stock'} @{$capture->{cells}};
-	is($cell->{samples}[0]{status}, 'unsupported', "$op is not fabricated for stock Perl");
+	for my $variant (qw(stock fork-1 fork-2 fork-4 ithreads-1 ithreads-2 ithreads-4)) {
+		my ($cell) = grep {$_->{operation} eq $op && $_->{variant} eq $variant} @{$capture->{cells}};
+		is($cell->{samples}[0]{status}, 'unsupported', "$op is not fabricated for $variant");
+	}
+}
+for my $mode (qw(fork ithreads)) {
+	for my $jobs (1, 7) {
+		local $ENV{WUMP_MATRIX_MODE} = $mode;
+		local $ENV{WUMP_MATRIX_SLOTS} = 4;
+		($status, $text, $errors) = run($stock, '-I' . dirname($stock) . '/lib', 'bench/matrix-worker.pl', 'arrays', 98, $jobs);
+		is($status, 0, "$mode handles $jobs jobs with four worker slots");
+		is($errors, '', 'process/thread completion produces no diagnostics');
+		ok(eval {validate_result(decode_json($text), 'arrays', "$mode-4", 98, $jobs); 1}, 'uneven partitions and idle slots retain every unique job') or diag($@);
+	}
+}
+for my $failure (qw(fork-create fork-child ithreads-create)) {
+	my $mode = $failure =~ /^fork/ ? 'fork' : 'ithreads';
+	local $ENV{WUMP_MATRIX_MODE} = $mode;
+	local $ENV{WUMP_MATRIX_SLOTS} = 4;
+	my $inject = $failure eq 'fork-create' ? q{
+		BEGIN { my $calls = 0; *CORE::GLOBAL::fork = sub {
+			if (++$calls == 2) { $! = 11; return undef }
+			return CORE::fork();
+		} }
+	} : $failure eq 'fork-child' ? q{
+		BEGIN { *CORE::GLOBAL::fork = sub {
+			my $pid = CORE::fork();
+			POSIX::_exit(17) if defined($pid) && !$pid;
+			return $pid;
+		} }
+	} : q{
+		BEGIN {
+			require threads;
+			my $create = \&threads::create;
+			my $calls = 0;
+			no warnings 'redefine';
+			*threads::create = sub { die "injected thread creation failure\n" if ++$calls == 2; goto &$create };
+		}
+	};
+	my $program = $inject . q{
+		my $file = shift;
+		do $file;
+		my $error = $@;
+		die "failure was swallowed\n" unless $error =~ /fork:|fork worker failed|injected thread creation failure/;
+		die "unreaped child\n" if waitpid(-1, 1) != -1;
+		die "unjoined thread\n" if $ENV{WUMP_MATRIX_MODE} eq 'ithreads' && threads->list();
+		print "clean failure\n";
+	};
+	($status, $text, $errors) = run($stock, '-I' . dirname($stock) . '/lib', '-e', $program,
+		abs_path('bench/matrix-worker.pl'), 'arrays', 98, 7);
+	is($status, 0, "$failure propagates after reaping/joining started workers") or diag($errors);
+	is($text, "clean failure\n", 'failed worker publishes no success result');
+	is($errors, '', 'failure cleanup emits no leaked-worker diagnostics');
 }
 ($status, $text, $errors) = run($^X, 'bench/matrix-report.pl', $path, '--metric', 'process');
 is($status, 0, 'saved capture can be reported without running workloads');
@@ -90,6 +141,20 @@ for my $n (1, 97, 1025) {
 		is($status, 0, "$variant spawn handles $n operations, including cohort overflow");
 		my $result = eval {decode_json($text)};
 		ok(eval {validate_result($result, 'spawn', $variant, $n, 1); 1}, 'boundary result passes independent identity/count/checksum validation') or diag($@, $errors);
+	}
+}
+for my $op (qw(yield spawn)) {
+	for my $mode (qw(public xs)) {
+		for my $n (1, 1025) {
+			local $ENV{WUMPPROCS} = 1;
+			($status, $text, $errors) = run($wump, '-I' . dirname($wump) . '/lib', '-Iperl/lib',
+				'bench/api-overhead.pl', $op, $mode, $n);
+			is($status, 0, "$op/$mode API probe completes $n operations");
+			is($errors, '', 'API probe has no diagnostics');
+			my $value = eval {decode_json($text)};
+			is_deeply($value && [@{$value}{qw(operation mode iterations slots completed)}],
+				[$op, $mode, $n, 1, $n], 'probe retains its identity and verifies the completion count');
+		}
 	}
 }
 

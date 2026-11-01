@@ -77,7 +77,7 @@ chomp $kernel;
 my @fixture_files = ("$FindBin::Bin/matrix.pl", "$FindBin::Bin/matrix-worker.pl", "$FindBin::Bin/matrix-worker.go", "$FindBin::Bin/lib/Wump/BenchMatrix.pm");
 for my $fixture (@fixture_files) { $output_path ne abs_path($fixture) or die "output would replace a benchmark source\n" }
 my $capture = {
-	schema => 'wump-operation-matrix-v1', complete => JSON::PP::true,
+	schema => 'wump-operation-matrix-v2', complete => JSON::PP::true,
 	parameters => {map {$_ => $opts{$_}} qw(runs iterations jobs)},
 	machine => {cpu_model => $model, affinity => $affinity, kernel => $kernel},
 	source => {revision => $revision, dirty => $dirty ? JSON::PP::true : JSON::PP::false,
@@ -102,14 +102,15 @@ for my $run (1..$opts{runs}) {
 			my $variant = $variants[($offset + $run - 1) % @variants];
 			my $slots = $variant =~ /-(1|2|4)\z/ ? 0 + $1 : 0;
 			my $result;
-			if (primitive($op) && !$slots) {
+			if (primitive($op) && (!$slots || $variant =~ /\A(?:fork|ithreads)-/)) {
 				$result = {status => 'unsupported', reason => 'no coroutine runtime in this mode', operation => $op,
-					iterations => $opts{iterations}, jobs => $opts{jobs}, slots => 0};
+					iterations => $opts{iterations}, jobs => $opts{jobs}, slots => $slots};
 			} else {
 				local $ENV{WUMPPROCS} = $slots || 1;
-				local $ENV{WUMP_MATRIX_MODE} = $variant =~ /\Awump-[124]\z/ ? 'wump' : 'plain';
+				local $ENV{WUMP_MATRIX_MODE} = $variant =~ /\A(wump|fork|ithreads)-[124]\z/ ? $1 : 'plain';
+				local $ENV{WUMP_MATRIX_SLOTS} = $slots;
 				my @command = $variant =~ /\Ago-/ ? ($go, $op, @opts{qw(iterations jobs)}, $slots)
-					: (perl_command($variant eq 'stock' ? $stock : $wump), "$FindBin::Bin/matrix-worker.pl", $op, @opts{qw(iterations jobs)});
+					: (perl_command($variant eq 'stock' || $variant =~ /\A(?:fork|ithreads)-/ ? $stock : $wump), "$FindBin::Bin/matrix-worker.pl", $op, @opts{qw(iterations jobs)});
 				my ($output, $elapsed) = capture(@command);
 				$result = eval {JSON::PP::decode_json($output)};
 				ref($result) eq 'HASH' or die "invalid worker JSON: $op $variant\n";

@@ -11,7 +11,7 @@ my %config = (version => 'v5.42.2', archname => 'x86_64-linux-thread-multi',
 	cc => 'cc', gccversion => '14', ccflags => '-O2', ldflags => '', lddlflags => '-shared',
 	optimize => '-O2', usemultiplicity => 'define', useithreads => 'define', use64bitall => 'define');
 my $original = {
-	schema => 'wump-operation-matrix-v1', complete => JSON::PP::true,
+	schema => 'wump-operation-matrix-v2', complete => JSON::PP::true,
 	parameters => {iterations => 2, jobs => 2, runs => 3},
 	source => {revision => 'a' x 40, fixture_sha256 => 'b' x 64, dirty => JSON::PP::false},
 	machine => {cpu_model => 'test CPU', affinity => '0-3', kernel => 'test kernel'},
@@ -36,8 +36,8 @@ for my $op_index (0..$#ops) {
 		my @samples;
 		for my $run (1..3) {
 			my %sample = (operation => $op, slots => $slots, iterations => 2, jobs => 2, run => $run,
-				sequence => ($run - 1) * 88 + $op_index * 8 + ($variant_index - $run + 9) % 8 + 1);
-			if ($op =~ /\A(?:spawn|yield|channel)\z/ && !$slots) {
+				sequence => ($run - 1) * @ops * @variants + $op_index * @variants + ($variant_index - $run + 1 + @variants) % @variants + 1);
+			if ($op =~ /\A(?:spawn|yield|channel)\z/ && (!$slots || $variant =~ /\A(?:fork|ithreads)-/)) {
 				%sample = (%sample, status => 'unsupported', reason => 'no coroutine runtime in this mode');
 			} elsif ($op eq 'json' && $variant =~ /\Awump-[24]\z/) {
 				%sample = (%sample, status => 'unsupported', reason => 'parallel XS admission: utf8::encode',
@@ -67,6 +67,26 @@ sub check ($candidate, $before = $original, $limit = 10) {
 	return compare($before, $candidate, $limit);
 }
 ok(validate_capture($original), 'complete literal three-language fixture validates');
+{
+	my $legacy = clone();
+	$legacy->{schema} = 'wump-operation-matrix-v1';
+	$legacy->{cells} = [grep {$_->{variant} !~ /\A(?:fork|ithreads)-/} @{$legacy->{cells}}];
+	my $sequence = 0;
+	for my $cell (@{$legacy->{cells}}) { $_->{sequence} = ++$sequence for @{$cell->{samples}} }
+	ok(validate_capture($legacy), 'archived v1 captures remain readable');
+	like(report($legacy), qr/Stock Perl.*Wump unused.*Go 4/, 'archived v1 report retains its original columns');
+	unlike(report($legacy), qr/ithreads 1/, 'archived captures do not fabricate new controls');
+	my ($failed) = compare($legacy, clone($legacy), 10);
+	is($failed, 0, 'archived v1 comparisons remain usable');
+	ok(!eval {compare($legacy, $original, 10); 1}, 'schemas cannot be compared across different variant sets');
+}
+like(report($original), qr/Fork 1.*Fork 2.*Fork 4.*ithreads 1.*ithreads 2.*ithreads 4/, 'report includes each process and thread count');
+{
+	my $bad = clone();
+	$bad->{binaries}{stock}{config}{useithreads} = '';
+	$bad->{binaries}{wump}{config}{useithreads} = '';
+	ok(!eval {validate_capture($bad); 1}, 'new matrix requires an ithreads-capable stock control');
+}
 my ($failed, $text) = check(clone());
 is($failed, 0, 'identical matrices pass');
 like($text, qr/PASS arithmetic wump-unused work/, 'unused fork is covered');

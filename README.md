@@ -15,7 +15,7 @@ stock-Perl performance and standalone deployment remain unfinished.
 | Tasks | Stackful C tasks; Perl closures on multiple slots; channels, wait groups, yielding and compute checkpoints | Native core language surface and broader execution-context coverage |
 | Perl state | Audited stacks, pads, exceptions, captures, localization and shared-value paths | Remaining interpreter globals, magic, weak references and XS/compiler boundaries |
 | I/O | C epoll sockets/pipes and explicit blocking-call handoff; a tested Mojolicious fixture | General Perl I/O integration and transparent native-call handling |
-| Performance | Verified comparisons against stock Perl and Go, with saved regression baselines | Lower ordinary-Perl and task overhead, cheaper spawn, larger-scale validation |
+| Performance | Verified comparisons against stock Perl, forks, ithreads and Go, with saved regression baselines | Lower ordinary-Perl and task overhead, cheaper spawn, larger-scale validation |
 | Deployment | A private interpreter build | Static application bundles, dependency tooling and portability |
 
 See the [design and implementation assessment](DESIGN.md#implementation-assessment-updated-2026-10-31)
@@ -89,9 +89,11 @@ make bench-matrix-check \
 	MATRIX_BASELINE=/path/to/compatible/earlier-capture.json
 ```
 
-The default columns are stock Perl, the unused fork, Wump on one/two/four slots,
-and Go on one/two/four slots. Work and whole-process timing stay separate.
-Stock Perl's missing coroutine APIs are N/A. The checker flags regressions
+The default columns are sequential stock Perl, stock Perl forks and ithreads
+on one/two/four workers, Wump unused or on one/two/four slots, and Go on
+one/two/four slots. Work and whole-process timing stay separate.
+Coroutine-only fixtures are N/A for stock Perl, forks and ithreads. The checker
+flags regressions
 against the saved baseline; it never turns unsupported work into a fast result.
 The [initial matrix](bench/operation-matrix-baseline.md) is a recorded example;
 use a local baseline when your machine, CPU mask or controls differ.

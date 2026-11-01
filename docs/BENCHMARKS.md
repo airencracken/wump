@@ -4,7 +4,8 @@ Commands run from the repository root.
 
 ## Common operation matrix
 
-The primary matrix compares stock Perl, the unused Wump fork, Wump with one,
+The primary matrix compares sequential stock Perl, stock Perl forks and
+ithreads with one/two/four workers, the unused Wump fork, Wump with one,
 two and four execution slots, and Go with one, two and four execution slots.
 The Wump columns execute the Perl API, including scalar message handling.
 The standalone C runtime has separate focused benchmarks below.
@@ -38,8 +39,14 @@ control are under the focused benchmarks below.
 | channel | Unbuffered request/reply with a completion handshake; one round trip |
 
 Common operations run the same number of independent seeded jobs. Stock and
-the unused fork execute jobs sequentially; Wump/Go execute them as tasks. Work
-time includes task creation and result collection for those columns. Each job
+the unused Wump fork execute jobs sequentially; Wump/Go execute them as tasks.
+Fork/ithread workers run on the unmodified stock interpreter. Jobs are assigned
+round-robin to at most the requested worker count, with no persistent pool
+between samples. Forks return results through pipes; ithreads return results
+through join. Work time includes worker creation, cloning, IPC/result collection
+and reaping/joining. Dependencies are loaded before work timing. These columns
+measure whole batches, not bare fork/clone call latency, shared-heap tasks or a
+prefork server. Each job
 has the same loop count. Coroutine primitives use the loop count directly,
 independent of the common-job setting. Every job ID/count/checksum is verified
 against an independent 97-value reference; JSON's final payload and every
@@ -57,8 +64,11 @@ constructed values live across iterations. Go's UTF-8 representation and
 Perl's character representation naturally differ. These are operation-level
 reference points, not general language or application speed claims.
 
-Stock Perl and the unused fork have no active coroutine API, so their primitive
-cells are explicitly N/A. The JSON worker probes the real entry: the current
+Stock Perl, forks, ithreads and the unused Wump fork have no equivalent
+coroutine fixture, so their primitive cells are explicitly N/A. Process/thread
+creation and IPC benchmarks need their own bounded fixtures; the coroutine
+spawn row is not a measurement of `fork()` or `threads->create()`.
+The JSON worker probes the real entry: the current
 multi-slot `utf8::encode` rejection is recorded with its diagnostic. Other
 errors, timeouts, warnings, malformed results or incorrect checksums fail the
 entire capture. Newly supported JSON is accepted as measured work; losing
@@ -68,7 +78,8 @@ never counted as a fast measurement or silently dropped.
 `MATRIX_RUNS` defaults to five, `MATRIX_ITERATIONS` to 50,000 and `MATRIX_JOBS`
 to eight. Variants rotate between repetitions; execution sequence numbers and
 all raw observations are retained. Work timing excludes interpreter startup,
-module setup and result serialization. Whole-process time includes them and
+module setup and final report serialization. IPC/result transfer inside a
+fork/ithread batch remains timed. Whole-process time includes all setup and
 is recorded separately:
 
 Both workers prepare their common dependencies before timing, including those
@@ -149,6 +160,31 @@ timed samples and 40 explicit N/A samples. Reproducing that particular record
 requires the same prepared stock/Go controls and affinity; ordinary unpinned
 captures intentionally cannot pass a comparison with it. A baseline self-check
 validates the record, not an improvement over an earlier matrix.
+
+New captures use schema v2 with fourteen variants. Archived v1 captures remain
+readable and comparable with other compatible v1 captures. A v1/v2 comparison
+is rejected: adding process/thread controls requires a fresh baseline, never
+fabricated historical samples. Tooling tests cover uneven worker partitions,
+more slots than jobs, failed worker creation, child failure and reaping/joining
+all workers before propagating failure.
+
+### Perl API wrapper probe
+
+```sh
+WUMPPROCS=1 build/perl/perl-5.42.2/perl -Ibuild/perl/perl-5.42.2/lib \
+	-Iperl/lib bench/api-overhead.pl yield public 200000
+WUMPPROCS=1 build/perl/perl-5.42.2/perl -Ibuild/perl/perl-5.42.2/lib \
+	-Iperl/lib bench/api-overhead.pl yield xs 200000
+```
+
+`bench/api-overhead.pl` compares the public Perl wrapper with the same internal
+XS entry for yield or spawn. Spawn retains the same channel methods in both
+modes, isolating only `act`'s wrapper. Both verify the completed count. Rotate
+paired runs on the same binary and CPU mask. Internal entries are diagnostic,
+not a supported application API. Removing this wrapper still leaves an XS
+call, interpreter bookkeeping and the runtime operation; it does not measure
+a hypothetical keyword implementation. Ordinary compute-row overhead cannot
+be attributed to Wump API wrappers, which those timed loops never invoke.
 
 ## Existing focused benchmarks
 

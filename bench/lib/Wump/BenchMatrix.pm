@@ -7,7 +7,11 @@ use JSON::PP ();
 our @EXPORT_OK = qw(operations variants primitive expected validate_result validate_metadata validate_capture load_capture median summarize report compare);
 
 sub operations () { return qw(arithmetic calls arrays hashes strings regex utf8 json yield spawn channel) }
-sub variants () { return qw(stock wump-unused wump-1 wump-2 wump-4 go-1 go-2 go-4) }
+sub variants ($schema = 'wump-operation-matrix-v2') {
+	return qw(stock wump-unused wump-1 wump-2 wump-4 go-1 go-2 go-4) if $schema eq 'wump-operation-matrix-v1';
+	$schema eq 'wump-operation-matrix-v2' or die "unknown matrix schema\n";
+	return qw(stock fork-1 fork-2 fork-4 ithreads-1 ithreads-2 ithreads-4 wump-unused wump-1 wump-2 wump-4 go-1 go-2 go-4);
+}
 sub primitive ($op) { return $op =~ /\A(?:yield|spawn|channel)\z/ ? 1 : 0 }
 sub slots ($variant) { return $variant =~ /-(1|2|4)\z/ ? 0 + $1 : 0 }
 sub integer ($v, $min, $max) { return defined($v) && !ref($v) && $v =~ /\A\d+\z/ && $v >= $min && $v <= $max }
@@ -49,7 +53,7 @@ sub validate_result ($r, $op, $variant, $n, $jobs) {
 		defined($r->{$key}) && !ref($r->{$key}) && $r->{$key} eq "$value" or die "worker identity mismatch: $key\n";
 	}
 	if (($r->{status} // '') eq 'unsupported') {
-		my $plain = primitive($op) && ($variant eq 'stock' || $variant eq 'wump-unused')
+		my $plain = primitive($op) && ($variant eq 'stock' || $variant eq 'wump-unused' || $variant =~ /\A(?:fork|ithreads)-[124]\z/)
 			&& ($r->{reason} // '') eq 'no coroutine runtime in this mode';
 		my $json = $op eq 'json' && $variant =~ /\Awump-[24]\z/
 			&& ($r->{reason} // '') eq 'parallel XS admission: utf8::encode'
@@ -59,7 +63,7 @@ sub validate_result ($r, $op, $variant, $n, $jobs) {
 		return;
 	}
 	($r->{status} // '') eq 'ok' && positive($r->{wall_seconds}) or die "invalid worker timing or status\n";
-	!(primitive($op) && slots($variant) == 0) or die "plain mode claims coroutine execution\n";
+	!(primitive($op) && ($variant !~ /\A(?:wump|go)-[124]\z/)) or die "plain mode claims coroutine execution\n";
 	integer($r->{units}, 1, 128000000) && $r->{units} == $n * (primitive($op) ? 1 : $jobs) or die "invalid operation count\n";
 	my $count = primitive($op) ? 1 : $jobs;
 	ref($r->{results}) eq 'ARRAY' && @{$r->{results}} == $count or die "incomplete job results\n";
@@ -78,7 +82,7 @@ sub validate_result ($r, $op, $variant, $n, $jobs) {
 }
 
 sub validate_metadata ($capture) {
-	ref($capture) eq 'HASH' && ($capture->{schema} // '') eq 'wump-operation-matrix-v1'
+	ref($capture) eq 'HASH' && ($capture->{schema} // '') =~ /\Awump-operation-matrix-v[12]\z/
 		&& JSON::PP::is_bool($capture->{complete}) && $capture->{complete} or die "incomplete or unknown matrix schema\n";
 	my $params = $capture->{parameters};
 	ref($params) eq 'HASH' && integer($params->{iterations}, 1, 2000000)
@@ -105,6 +109,8 @@ sub validate_metadata ($capture) {
 	for my $key (qw(version archname cc gccversion ccflags ldflags lddlflags optimize usemultiplicity useithreads use64bitall)) {
 		$capture->{binaries}{wump}{config}{$key} eq $capture->{binaries}{stock}{config}{$key} or die "stock/Wump build mismatch: $key\n";
 	}
+	$capture->{binaries}{stock}{config}{useithreads} eq 'define' or die "stock Perl lacks ithreads\n"
+		if $capture->{schema} eq 'wump-operation-matrix-v2';
 	my $go = $capture->{binaries}{go}{config};
 	for my $key (qw(version os arch compiler)) { string($go->{$key}) or die "invalid Go build identity\n" }
 	ref($go->{settings}) eq 'ARRAY' or die "missing Go build settings\n";
@@ -120,11 +126,11 @@ sub validate_capture ($capture) {
 	validate_metadata($capture);
 	my $params = $capture->{parameters};
 	my @operations = operations();
-	my @variants = variants();
+	my @variants = variants($capture->{schema});
 	ref($capture->{cells}) eq 'ARRAY' && @{$capture->{cells}} == @operations * @variants or die "incomplete matrix cells\n";
 	my (%seen, %sequence);
 	my %ops = map {$_ => 1} operations();
-	my %variants = map {$_ => 1} variants();
+	my %variants = map {$_ => 1} @variants;
 	for my $cell (@{$capture->{cells}}) {
 		ref($cell) eq 'HASH' && $ops{$cell->{operation} // ''} && $variants{$cell->{variant} // ''} or die "unknown matrix cell\n";
 		!$seen{"$cell->{operation}:$cell->{variant}"}++ or die "duplicate matrix cell\n";
@@ -174,12 +180,19 @@ sub report ($capture, $metric = 'work') {
 	my $summary = summarize($capture);
 	my $text = '# Common operation matrix' . "\n\n";
 	$text .= $metric eq 'work' ? "Median ns per operation; lower is better.\n\n" : "Median whole-process milliseconds; lower is better.\n\n";
-	$text .= "| Operation | Stock Perl | Wump unused | Wump 1 | Wump 2 | Wump 4 | Go 1 | Go 2 | Go 4 |\n";
-	$text .= "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
+	my @variants = variants($capture->{schema});
+	my %labels = (stock => 'Stock Perl', 'wump-unused' => 'Wump unused');
+	for my $kind (qw(fork ithreads wump go)) {
+		for my $slots (1, 2, 4) {
+			$labels{"$kind-$slots"} = ($kind eq 'go' ? 'Go' : $kind eq 'wump' ? 'Wump' : $kind eq 'fork' ? 'Fork' : 'ithreads') . " $slots";
+		}
+	}
+	$text .= '| Operation | ' . join(' | ', map {$labels{$_}} @variants) . " |\n";
+	$text .= '| --- | ' . join(' | ', ('---:') x @variants) . " |\n";
 	for my $op (operations()) {
 		$text .= "| $op | " . join(' | ', map {
 			$summary->{$op}{$_}{status} eq 'ok' ? sprintf('%.1f', $summary->{$op}{$_}{$metric}) : 'N/A'
-		} variants()) . " |\n";
+		} @variants) . " |\n";
 	}
 	if ($metric eq 'work') {
 		$text .= "\nTime ratios; below 1.0 means Wump takes less time than that control.\n\n";
@@ -196,7 +209,7 @@ sub report ($capture, $metric = 'work') {
 	}
 	$text .= "\nN/A means unavailable, never a zero-cost operation:\n\n";
 	for my $op (operations()) {
-		for my $variant (variants()) {
+		for my $variant (@variants) {
 			my $entry = $summary->{$op}{$variant};
 			$text .= "- $op / $variant: $entry->{reason}\n" if $entry->{status} ne 'ok';
 		}
@@ -209,6 +222,7 @@ sub report ($capture, $metric = 'work') {
 sub compare ($before, $after, $limit) {
 	defined($limit) && !ref($limit) && $limit =~ /\A\d+(?:\.\d+)?\z/ && $limit <= 100 or die "invalid regression budget\n";
 	my $json = JSON::PP->new->canonical;
+	$before->{schema} eq $after->{schema} or die "different matrix schemas\n";
 	for my $c ($before, $after) {
 		!$c->{source}{dirty} && $c->{parameters}{runs} >= 3 or die "comparison requires clean source and at least three runs\n";
 	}
@@ -224,7 +238,7 @@ sub compare ($before, $after, $limit) {
 	my ($a, $b) = map {summarize($_)} ($before, $after);
 	my ($failed, $text) = (0, '');
 	for my $op (operations()) {
-		for my $variant (grep {/\Awump/} variants()) {
+		for my $variant (grep {/\Awump/} variants($after->{schema})) {
 			my ($old, $new) = ($a->{$op}{$variant}, $b->{$op}{$variant});
 			if ($new->{status} ne 'ok') {
 				if ($old->{status} eq 'ok') { $failed = 1; $text .= "FAIL $op $variant: support lost\n" }
