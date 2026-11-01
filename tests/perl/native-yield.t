@@ -73,6 +73,9 @@ is($dynamic, 'root', 'native child yields leave parent dynamic state intact');
 				/([a-z]+):(\d+)/ or die "match failed\n";
 				for (1..128) {
 					yield();
+					die "scalar result changed\n" if defined scalar yield();
+					my @around=(17,yield(),19);
+					die "list operands changed\n" unless join(',',@around) eq '17,19';
 					die "task state changed\n" unless $1 eq 'word' && $2 == $id;
 				}
 				$out->send($id);

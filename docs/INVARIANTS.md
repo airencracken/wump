@@ -356,6 +356,13 @@ dispatch/check tables, prototypes and B metadata must agree; regeneration uses
 the pinned upstream generator and rejects unknown opcode input. `Opcode`
 classifies it with thread operations, and compilation must honor opcode masks.
 
+Nullary yield does not change operands before suspension. Void/list execution
+can therefore leave the already-published stack pointer untouched; scalar
+execution obtains fresh stack state after resumption before pushing undef.
+Call context is selected from the current act's opcode, retaining the usual
+block-context fallback for an uncontextualized operation. Scheduling checks
+may cache the act pointer only within their callback-free, non-suspending check.
+
 Enforcement: [lexer and generation](../perl/yield.pl),
 [native operation](../perl/core/wump_core.c), [lexical hints](../perl/lib/Wump.pm).
 Evidence: [compiled form and observable behavior](../tests/perl/native-yield.t),

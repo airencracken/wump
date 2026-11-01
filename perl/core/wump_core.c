@@ -986,15 +986,22 @@ bool Perl_wump_channel_call(pTHX_ CV *cv) {
 }
 
 PP(pp_wumpyield) {
-	dSP;
+	struct wump_perl_task *task = PL_wump_task;
 	wump_schedule_check(aTHX);
-	if (wump_self() == NULL || PL_wump_task == NULL)
+	if (wump_self() == NULL || task == NULL)
 		croak("Wump: yield requires a running task");
-	PUTBACK;
+	OP *op = task->main ? aTHX->Iop : task->Iop;
+	U8 context = op->op_flags & OPf_WANT;
+	if (!context) context = GIMME_V;
+	/* This nullary operation has no stack changes to publish before yield.
+	 * Only scalar context pushes a result, using fresh state after resume. */
 	wump_yield();
-	SPAGAIN;
-	if (GIMME_V == G_SCALAR) XPUSHs(&PL_sv_undef);
-	RETURN;
+	if (context == G_SCALAR) {
+		dSP;
+		XPUSHs(&PL_sv_undef);
+		PUTBACK;
+	}
+	return NORMAL;
 }
 
 static void xs_wump_yield(pTHX_ CV *cv) {

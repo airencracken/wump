@@ -707,7 +707,8 @@ struct wump_mutation *Perl_wump_metadata_begin(pTHX) {
 }
 
 static void wump_schedule_check(pTHX) {
-	if (PL_wump_task && (PL_wump_task->critical || Perl_wump_publish_active(aTHX)))
+	struct wump_perl_task *task = PL_wump_task;
+	if (task && (task->critical || Perl_wump_publish_active(aTHX)))
 		croak("Wump: scheduling inside a native metadata operation is not supported");
 }
 
