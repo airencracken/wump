@@ -8,6 +8,13 @@ Implemented:
   MXCSR, x87 control word, and task-local `errno` at scheduling boundaries.
 - Fixed virtual stacks: 256 KiB for spawned tasks, 1 MiB for the main task,
   a protected guard page below each, and a bounded cache of retired stacks.
+  Each slot keeps up to 32 hot mappings. A runtime-wide overflow cache keeps
+  up to 1,024 cold mappings, releasing stack pages with `MADV_DONTNEED` while
+  retaining the guard and metadata page. On 4 KiB pages the overflow cap is
+  264 MiB of virtual space and at most 4 MiB of resident metadata, excluding
+  kernel mapping metadata and sanitizer bookkeeping. Hot stacks may retain
+  up to about 8 MiB per slot. Discard failure or a full cache causes unmapping;
+  shutdown unmaps both caches. This does not reduce live-task stack reservation.
 - Parallel workers with local FIFO queues, global overflow, half-queue work
   stealing, periodic global-queue polling, and condition-variable sleeping.
   One-slot local dispatch uses exclusive slot ownership to avoid queue mutexes

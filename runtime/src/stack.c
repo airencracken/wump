@@ -57,6 +57,15 @@ wump_g *wump_stack_new(size_t stack_size) {
 	return g;
 }
 
+int wump_stack_discard(wump_g *g) {
+	/* Called on the scheduler stack, after context cleanup and sanitizer
+	 * retirement. Keep the guard and the page holding g; all other pages
+	 * can be faulted back as zeroes when this mapping is reused. */
+	size_t page = (size_t)((char *)g->stack_lo - (char *)g->map);
+	uintptr_t end = (uintptr_t)g / page * page;
+	return madvise(g->stack_lo, end - (uintptr_t)g->stack_lo, MADV_DONTNEED);
+}
+
 void wump_stack_free(wump_g *g) {
 #ifdef WUMP_VALGRIND
 	VALGRIND_STACK_DEREGISTER(g->valgrind_stack);

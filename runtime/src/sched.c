@@ -43,6 +43,9 @@ struct wump_runtime {
 	uint64_t epoch;
 	wump_g *head, *tail;
 	wump_g *all;
+	/* Overflow from P-local caches. Both fields are protected by mu. */
+	wump_g *cold;
+	unsigned ncold;
 	wump_g *main_g;
 	wump_timer **timers;
 	size_t ntimers, timer_cap;
@@ -412,6 +415,19 @@ static void recycle(wump_worker *w, wump_g *g) {
 		w->gcache = g;
 		w->ngcache++;
 	} else {
+		/* Cold mappings retain one metadata page each. Failed page release
+		 * must fall back to unmapping, never retain a deep resident stack. */
+		if (wump_stack_discard(g) == 0) {
+			pthread_mutex_lock(&w->rt->mu);
+			if (w->rt->ncold < WUMP_STACK_COLD_CACHE) {
+				g->next = w->rt->cold;
+				w->rt->cold = g;
+				w->rt->ncold++;
+				pthread_mutex_unlock(&w->rt->mu);
+				return;
+			}
+			pthread_mutex_unlock(&w->rt->mu);
+		}
 		unregister_g(w->rt, g);
 		wump_stack_free(g);
 	}
@@ -535,6 +551,15 @@ static wump_g *new_task(wump_worker *p, wump_fn fn, void *arg, size_t stack_size
 		p->gcache = g->next;
 		p->ngcache--;
 	} else {
+		pthread_mutex_lock(&p->rt->mu);
+		g = p->rt->cold;
+		if (g != NULL) {
+			p->rt->cold = g->next;
+			p->rt->ncold--;
+		}
+		pthread_mutex_unlock(&p->rt->mu);
+	}
+	if (g == NULL) {
 		g = wump_stack_new(stack_size);
 		if (g == NULL) {
 			return NULL;

@@ -39,7 +39,7 @@ PERL_SUITES = entry ordinary active waitgroup preempt tasks parallel xs-parallel
 
 RUNTIME = stack sched chan io error
 OBJECTS = $(addprefix $(BUILD)/,$(addsuffix .o,$(RUNTIME))) $(BUILD)/ctx_x86_64.o
-RUNTIME_PROGRAMS = hello select echo blocking test_runtime test_select test_io test_syscall test_context test_scheduler test_syscall_failures test_failures test_io_failures bench sanitizer_control msan_control ub_control tsan_race
+RUNTIME_PROGRAMS = hello select echo blocking test_runtime test_select test_io test_syscall test_context test_scheduler test_stack_cache test_syscall_failures test_failures test_io_failures bench sanitizer_control msan_control ub_control tsan_race
 shell_quote = '$(subst ','"'"',$(1))'
 WRAPPED = pthread_mutex_init pthread_cond_init pthread_condattr_init pthread_condattr_setclock posix_memalign mmap munmap mprotect pthread_create pthread_join malloc calloc realloc
 IO_WRAPPED = calloc realloc pthread_mutex_init pthread_create epoll_create1 eventfd epoll_ctl epoll_wait fcntl poll __poll_chk read __read_chk write close accept4 connect getsockopt getpeername
@@ -529,18 +529,22 @@ $(BUILD)/test_context: tests/test_context.c $(BUILD)/libwump.a
 $(BUILD)/test_scheduler: tests/test_scheduler.c $(BUILD)/libwump.a
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) -Wl,--wrap=pthread_mutex_lock -Wl,--wrap=pthread_cond_signal -Wl,--wrap=clock_gettime -o $@
 
+$(BUILD)/test_stack_cache: tests/test_stack_cache.c $(BUILD)/libwump.a
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) -Wl,--wrap=mmap -Wl,--wrap=munmap -Wl,--wrap=madvise -o $@
+
 $(BUILD)/test_syscall_failures: tests/test_syscall_failures.c tests/errno_probe.c $(BUILD)/libwump.a
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_syscall_failures.c tests/errno_probe.c $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) $(addprefix -Wl$(comma)--wrap=,$(SYSCALL_WRAPPED)) -o $@
 
 $(BUILD)/test_io_failures: tests/test_io_failures.c tests/errno_probe.c $(BUILD)/libwump.a
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_io_failures.c tests/errno_probe.c $(BUILD)/libwump.a $(LDFLAGS) $(LDLIBS) $(addprefix -Wl$(comma)--wrap=,$(IO_WRAPPED)) -o $@
 
-test: $(BUILD)/test_runtime $(BUILD)/test_select $(BUILD)/test_io $(BUILD)/test_syscall $(BUILD)/test_context $(BUILD)/test_scheduler $(BUILD)/test_failures $(BUILD)/test_io_failures $(BUILD)/test_syscall_failures
+test: $(BUILD)/test_runtime $(BUILD)/test_select $(BUILD)/test_io $(BUILD)/test_syscall $(BUILD)/test_context $(BUILD)/test_scheduler $(BUILD)/test_stack_cache $(BUILD)/test_failures $(BUILD)/test_io_failures $(BUILD)/test_syscall_failures
 	timeout $(TEST_TIMEOUT)s $(BUILD)/test_runtime
 	timeout $(TEST_TIMEOUT)s $(BUILD)/test_select
 	timeout $(TEST_TIMEOUT)s $(BUILD)/test_syscall
 	timeout $(TEST_TIMEOUT)s $(BUILD)/test_context
 	timeout $(TEST_TIMEOUT)s $(BUILD)/test_scheduler
+	timeout $(TEST_TIMEOUT)s $(BUILD)/test_stack_cache
 	timeout $(TEST_LONG_TIMEOUT)s $(BUILD)/test_syscall_failures
 	timeout $(TEST_TIMEOUT)s $(BUILD)/test_io
 	timeout $(TEST_FAILURE_TIMEOUT)s $(BUILD)/test_failures

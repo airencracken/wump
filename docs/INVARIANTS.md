@@ -144,6 +144,22 @@ Evidence: [clock-call budget](../tests/test_scheduler.c),
 [timer/compute fairness](../tests/test_runtime.c),
 [external wakeups during local compute](../tests/test_io.c).
 
+**CTX-10 — Reuse begins only after task retirement.** Completed tasks run
+context cleanup on the scheduler stack before their stack pages can be
+discarded. TSan fibers are destroyed and ASan stack memory is unpoisoned before
+reuse. The owning P alone accesses its 32-entry hot cache; the runtime mutex
+protects the shared 1,024-entry cold cache. Cold mappings release all writable
+pages below the metadata page, preserving both that page and the protected
+guard. Failure to release pages falls back to unmapping. Reuse resets the
+canary, saved errno, context/cancel hooks and initial machine frame. Cache links
+remain independent of the mapping registry, which owns every retained mapping
+through final shutdown. Abandoned tasks must never enter either reuse cache.
+
+Enforcement: [retirement and allocation](../runtime/src/sched.c),
+[page discard](../runtime/src/stack.c).
+Evidence: [reuse, residency, caps, failures and native handoff](../tests/test_stack_cache.c),
+[context cleanup](../tests/test_context.c), [guard page](../tests/test_runtime.c).
+
 ## Values, access and reclamation
 
 **MEM-1 — Reference counts establish lifetime, not mutation safety.** Standard

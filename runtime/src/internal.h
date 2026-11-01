@@ -13,6 +13,7 @@
 #define WUMP_STACK_SIZE (256 * 1024)
 #define WUMP_MAIN_STACK_SIZE (1024 * 1024)
 #define WUMP_STACK_CACHE 32
+#define WUMP_STACK_COLD_CACHE 1024
 #define WUMP_STACK_CANARY UINT64_C(0x77756d702d737461)
 
 #if defined(__SANITIZE_THREAD__)
@@ -108,6 +109,7 @@ void wump_ctx_switch(void **save_sp, void *load_sp);
 void wump_ctx_trampoline(void);
 void *wump_ctx_init(void *stack_top, void (*fn)(void *), void *arg);
 wump_g *wump_stack_new(size_t stack_size);
+int wump_stack_discard(wump_g *g);
 void wump_stack_free(wump_g *g);
 
 wump_g *wump_self(void);
