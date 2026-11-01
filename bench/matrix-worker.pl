@@ -20,6 +20,7 @@ use Encode ();
 use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC);
 use B ();
 our @native_ops;
+our @native_methods;
 BEGIN {
 	if (($ENV{WUMP_MATRIX_MODE} // '') eq 'wump') {
 		eval q{ CHECK {
@@ -33,6 +34,15 @@ BEGIN {
 		};
 		$walk->(B::main_root());
 		@native_ops = sort keys %found;
+		{
+			no strict 'refs';
+			for my $name (qw(close recv send)) {
+				my $method = Wump::Channel->can($name);
+				push @native_methods, "Wump::Channel::$name"
+					if defined &{"Wump::_channel_$name"} && B::svref_2object($method)->XSUB
+					&& $method == \&{"Wump::_channel_$name"};
+			}
+		}
 		} 1 } or die $@;
 	}
 }
@@ -55,6 +65,7 @@ die "coroutines require an active runtime\n" if $primitive && !$active;
 sub emit ($value) { print JSON::PP->new->ascii->canonical->encode($value), "\n" }
 my %identity = (operation => $op, iterations => 0 + $n, jobs => 0 + $jobs, slots => $slots);
 $identity{native_ops} = [@native_ops] if $active;
+$identity{native_methods} = [@native_methods] if $active;
 if ($op eq 'json') {
 	my $ok = eval { JSON::PP::encode_json({n => 1, s => 'word'}); 1 };
 	if (!$ok) {

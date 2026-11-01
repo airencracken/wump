@@ -49,6 +49,8 @@ for my $variant (qw(wump-1 wump-2 wump-4)) {
 	my ($cell) = grep {$_->{operation} eq 'spawn' && $_->{variant} eq $variant} @{$capture->{cells}};
 	is_deeply($cell->{samples}[0]{native_ops}, [qw(wumpact wumpchan wumpyield)],
 		"$variant verifies the worker's compiled public operations");
+	is_deeply($cell->{samples}[0]{native_methods}, [qw(Wump::Channel::close Wump::Channel::recv Wump::Channel::send)],
+		"$variant verifies the resolved native channel entries");
 }
 is(scalar @{$capture->{cells}}, 154, 'all eleven operations and fourteen variants are present');
 is(scalar(map {@{$_->{samples}}} @{$capture->{cells}}), 462, 'all three raw runs are retained');
@@ -166,6 +168,33 @@ for my $op (qw(yield spawn chan sleep)) {
 	}
 }
 
+for my $op (qw(buffered rendezvous)) {
+	for my $mode (qw(wrapper xs native)) {
+		for my $slots (1,4) {
+			for my $n (1,98) {
+				local $ENV{WUMPPROCS}=$slots;
+				($status,$text,$errors)=run($wump,'-I'.dirname($wump).'/lib','-Iperl/lib',
+					'bench/channel-overhead.pl',$op,$mode,$n);
+				is($status,0,"$op/$mode channel probe completes $n exchanges on $slots slots");
+				is($errors,'','channel probe has no diagnostics');
+				my $sample=eval {decode_json($text)};
+				ok(ref($sample) eq 'HASH' && $sample->{operation} eq $op && $sample->{mode} eq $mode
+					&& $sample->{slots}==$slots && $sample->{iterations}==$n && $sample->{completed}==$n
+					&& $sample->{checksum}==$n*($n+1)/2+($op eq 'rendezvous' ? $n : 0)
+					&& $sample->{wall_seconds}>0,'channel probe verifies every reply, count and checksum');
+			}
+		}
+	}
+}
+{
+	open my $out,'>',"$scratch/WumpChannelOverride.pm" or die $!;
+	print {$out} q{require Wump; no warnings 'redefine'; *Wump::Channel::send=\&Wump::_send; 1;} or die $!;
+	close $out or die $!;
+	($status,$text,$errors)=run($wump,'-I'.dirname($wump).'/lib','-Iperl/lib',"-I$scratch",'-MWumpChannelOverride',
+		'bench/channel-overhead.pl','buffered','native',1);
+	ok($status!=0,'a native channel probe rejects a method rebound to ordinary XS');
+	like($errors,qr/native channel send entry is unavailable/,'missing native binding is diagnosed before timing');
+}
 my $sentinel = "$scratch/preserved.json";
 for my $option (qw(runs iterations jobs)) {
 	save($sentinel, {preserve => 1});

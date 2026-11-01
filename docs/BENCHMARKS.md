@@ -215,6 +215,18 @@ remaining channel methods.
 
 ### Perl API wrapper probe
 
+`bench/channel-overhead.pl buffered|rendezvous wrapper|xs|native ITERATIONS`
+adds a separate channel dispatch probe. All modes use method lookup and the
+same ID-backed channel proxies, then select equivalent legacy Perl wrappers,
+direct compatibility XS aliases, or the new core method entries. Buffered work
+counts send/receive pairs on capacity one; rendezvous work counts request/reply
+exchanges between two acts and verifies worker completion. Each reply, total
+count and checksum is checked. Constructor setup and final closes are outside
+work timing. Native mode verifies all three method bindings before execution,
+rejecting an entry rebound to compatibility XS rather than silently labelling
+it native. Method identities in matrix v3 are recorded separately from compiled
+opcodes; archived records without this optional field remain readable.
+
 ```sh
 WUMPPROCS=1 build/perl/perl-5.42.2/perl -Ibuild/perl/perl-5.42.2/lib \
 	-Iperl/lib bench/api-overhead.pl yield public 200000

@@ -53,6 +53,7 @@ for my $op_index (0..$#ops) {
 					wall_seconds => 0.001 * $run, process_seconds => 0.01 + 0.001 * $run, results => \@results);
 			}
 			$sample{native_ops} = [qw(wumpact wumpchan wumpyield)] if $variant =~ /\Awump-[124]\z/;
+			$sample{native_methods} = [qw(Wump::Channel::close Wump::Channel::recv Wump::Channel::send)] if $variant =~ /\Awump-[124]\z/;
 			push @samples, \%sample;
 		}
 		push @{$original->{cells}}, {operation => $op, variant => $variant, samples => \@samples};
@@ -61,7 +62,7 @@ for my $op_index (0..$#ops) {
 {
 	my $legacy = clone();
 	$legacy->{schema} = 'wump-operation-matrix-v2';
-	for my $cell (@{$legacy->{cells}}) { delete $_->{native_ops} for @{$cell->{samples}} }
+	for my $cell (@{$legacy->{cells}}) { delete @{$_}{qw(native_ops native_methods)} for @{$cell->{samples}} }
 	ok(validate_capture($legacy), 'archived v2 function-path captures remain readable');
 	my ($failed) = compare($legacy, clone($legacy), 10);
 	is($failed, 0, 'archived v2 comparisons remain usable');
@@ -69,6 +70,24 @@ for my $op_index (0..$#ops) {
 }
 like(report($original), qr/Public Wump syntax; native operations.*wumpact, wumpchan, wumpyield/,
 	'report records the compiled bindings instead of assuming native execution');
+like(report($original), qr/Native channel method entries: Wump::Channel::close, Wump::Channel::recv, Wump::Channel::send/,
+	'report records actual channel entries separately from opcodes');
+{
+	my $before = clone();
+	for my $cell (@{$before->{cells}}) {
+		$_->{native_methods} = [] for grep {exists $_->{native_methods}} @{$cell->{samples}};
+	}
+	my ($failed,$text) = check(clone(),$before);
+	is($failed,0,'new core channel methods are allowed with matching work');
+	like($text,qr/METHODS none -> Wump::Channel::close,Wump::Channel::recv,Wump::Channel::send/,'method bindings are explicit');
+	($failed,$text) = check($before);
+	is($failed,1,'losing a native channel method fails');
+	like($text,qr/FAIL native method lost: Wump::Channel::recv/,'lost method is identified');
+	for my $cell (@{$before->{cells}}) { delete $_->{native_methods} for @{$cell->{samples}} }
+	ok(validate_capture($before),'archived v3 captures without method metadata remain readable');
+	($failed) = compare($before,clone($before),10);
+	is($failed,0,'archived v3 comparisons remain usable');
+}
 {
 	my $before = clone();
 	for my $cell (@{$before->{cells}}) {
@@ -181,6 +200,10 @@ for my $factor (0.5, 1.1, 1.11) {
 }
 
 for my $case (
+	['missing native method metadata', sub {delete cell($_[0])->{samples}[0]{native_methods}}, qr/inconsistent native methods/],
+	['duplicate native method', sub {push @{cell($_[0])->{samples}[0]{native_methods}}, 'Wump::Channel::send'}, qr/invalid native methods/],
+	['unrecognized native method', sub {cell($_[0])->{samples}[0]{native_methods} = ['Unknown::send']}, qr/invalid native methods/],
+	['unsorted native methods', sub {cell($_[0])->{samples}[0]{native_methods} = [qw(Wump::Channel::send Wump::Channel::close)]}, qr/unsorted native methods/],
 	['missing native bindings', sub {delete cell($_[0])->{samples}[0]{native_ops}}, qr/missing native bindings/],
 	['duplicate native binding', sub {push @{cell($_[0])->{samples}[0]{native_ops}}, 'wumpyield'}, qr/invalid native bindings/],
 	['unverified native binding', sub {cell($_[0])->{samples}[0]{native_ops} = ['other']}, qr/invalid native bindings/],

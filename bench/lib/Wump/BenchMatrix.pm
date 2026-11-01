@@ -48,6 +48,15 @@ sub expected ($op, $n, $id) {
 
 sub validate_result ($r, $op, $variant, $n, $jobs) {
 	ref($r) eq 'HASH' or die "invalid worker result\n";
+	if (exists $r->{native_methods}) {
+		$variant =~ /\Awump-[124]\z/ && ref($r->{native_methods}) eq 'ARRAY' or die "invalid native methods\n";
+		my %seen;
+		for my $name (@{$r->{native_methods}}) {
+			string($name) && $name =~ /\AWump::Channel::(?:close|recv|send)\z/ && !$seen{$name}++
+				or die "invalid native methods\n";
+		}
+		join(',', @{$r->{native_methods}}) eq join(',', sort @{$r->{native_methods}}) or die "unsorted native methods\n";
+	}
 	if (exists $r->{native_ops}) {
 		$variant =~ /\Awump-[124]\z/ && ref($r->{native_ops}) eq 'ARRAY' or die "invalid native bindings\n";
 		my %seen;
@@ -137,7 +146,7 @@ sub validate_capture ($capture) {
 	my @operations = operations();
 	my @variants = variants($capture->{schema});
 	ref($capture->{cells}) eq 'ARRAY' && @{$capture->{cells}} == @operations * @variants or die "incomplete matrix cells\n";
-	my (%seen, %sequence, $bindings);
+	my (%seen, %sequence, $bindings, $methods);
 	my %ops = map {$_ => 1} operations();
 	my %variants = map {$_ => 1} @variants;
 	for my $cell (@{$capture->{cells}}) {
@@ -155,6 +164,9 @@ sub validate_capture ($capture) {
 				my $current = join(',', @{$sample->{native_ops}});
 				$bindings //= $current;
 				$bindings eq $current or die "inconsistent native bindings\n";
+				my $current_methods = exists($sample->{native_methods}) ? join(',', @{$sample->{native_methods}}) : '(unrecorded)';
+				$methods //= $current_methods;
+				$methods eq $current_methods or die "inconsistent native methods\n";
 			}
 			$status //= $sample->{status};
 			$status eq $sample->{status} or die "inconsistent support across samples\n";
@@ -235,6 +247,8 @@ sub report ($capture, $metric = 'work') {
 		my ($cell) = grep {$_->{variant} eq 'wump-1'} @{$capture->{cells}};
 		$text .= "\nPublic Wump syntax; native operations in the compiled worker: "
 			. (join(', ', @{$cell->{samples}[0]{native_ops}}) || 'none (function compatibility paths)') . ".\n";
+		$text .= 'Native channel method entries: ' . (join(', ', @{$cell->{samples}[0]{native_methods}}) || 'none (compatibility wrappers)') . ".\n"
+			if exists $cell->{samples}[0]{native_methods};
 	}
 	return $text;
 }
@@ -264,6 +278,12 @@ sub compare ($before, $after, $limit) {
 			if (!$new{$name}) { $failed = 1; $text .= "FAIL native binding lost: $name\n" }
 		}
 		$text .= 'BINDINGS ' . (join(',', @{$sets[0]}) || 'none') . ' -> ' . (join(',', @{$sets[1]}) || 'none') . "\n";
+		@sets = map {my ($cell) = grep {$_->{variant} eq 'wump-1'} @{$_->{cells}}; $cell->{samples}[0]{native_methods} // []} ($before, $after);
+		%new = map {$_ => 1} @{$sets[1]};
+		for my $name (@{$sets[0]}) {
+			if (!$new{$name}) { $failed = 1; $text .= "FAIL native method lost: $name\n" }
+		}
+		$text .= 'METHODS ' . (join(',', @{$sets[0]}) || 'none') . ' -> ' . (join(',', @{$sets[1]}) || 'none') . "\n";
 	}
 	for my $op (operations()) {
 		for my $variant (grep {/\Awump/} variants($after->{schema})) {
