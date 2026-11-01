@@ -329,6 +329,22 @@ Enforcement: [compiler gate](../perl/active.pl#L55),
 Evidence: [parallel rejection](../tests/perl/parallel.t),
 [embedding](../tests/perl/entry.c), [native independent runtimes](../tests/test_runtime.c).
 
+**COMPAT-4 — Native syntax preserves the scheduling contract.** The lexer
+selects `OP_WUMPYIELD` only with the lexical `Wump/keywords` hint. Qualified
+names, methods, implicit hash keys and scopes without that hint retain normal
+Perl lookup. The opcode has no Perl/XS call frame or mutable global state.
+It checks the same metadata/publication exclusion as the XS path, requires a
+running act, publishes the operand stack before suspension and reselects it
+after resumption. Scalar/list results remain undef/empty. Opcode definitions,
+dispatch/check tables, prototypes and B metadata must agree; regeneration uses
+the pinned upstream generator and rejects unknown opcode input.
+
+Enforcement: [lexer and generation](../perl/yield.pl),
+[native operation](../perl/core/wump_core.c), [lexical hints](../perl/lib/Wump.pm).
+Evidence: [compiled form and observable behavior](../tests/perl/native-yield.t),
+[metadata regeneration](../tests/perl/opcode-regeneration.pl),
+[idempotent source upgrade](../tests/perl/patcher.pl).
+
 ## Maintenance
 
 Every change introducing a mutable field, native cache, callback, escape path

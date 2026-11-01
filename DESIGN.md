@@ -24,9 +24,10 @@ onto real OS threads, Perl code running in parallel on every core.
 - Ordinary single-threaded Perl must not measurably regress against matched
   stock builds across the acceptance workloads. Coroutine gains cannot offset
   an ordinary-Perl regression; an isolated fast loop does not establish parity.
-- Somewhat competitive with Go: runtime primitives (spawn, switch, channel
-  op) within ~2x of Go; Perl compute scales near-linearly with cores.
-  Per core it will stay an interpreter, roughly 20-50x slower than Go.
+- Get reasonably close to Go on runtime primitives (spawn, switch, channel
+  op), while Perl compute scales well across cores. Go is a directional
+  reference, not a fixed passing ratio. Track per-operation improvements and
+  regressions; per-core compute still pays for an interpreter.
 - **Deploy like Go:** `wump build` produces one static executable with
   the interpreter, runtime, every module and the program inside. No
   perlbrew, no cpanm, no local::lib, no system perl on the target (§6).
@@ -2041,3 +2042,86 @@ Ordinary arithmetic remains close to stock in this fixture, while calls,
 allocation and JSON retain substantial unused-fork overhead. Hash updates and
 UTF-8 encoding scale poorly on the measured Wump slots. These individual gaps
 remain visible alongside the stronger arithmetic, string and regex scaling.
+
+## Bounded stack reuse and stock parallel controls (2026-10-31)
+
+The scheduler retains its 32-entry per-P hot stack cache and adds a shared,
+mutex-protected cache of at most 1,024 cold mappings per runtime. Retirement
+runs context cleanup and sanitizer retirement before `MADV_DONTNEED` releases
+the writable stack pages below the metadata page. Guards remain protected.
+Discard failure or a full cache unmaps the stack. All retained mappings stay
+in the independent shutdown registry. On 4 KiB pages, the cold cache reserves
+at most 264 MiB of virtual address space and 4 MiB of resident metadata;
+kernel metadata, sanitizer bookkeeping and the existing hot caches are extra.
+Live task reservations remain unchanged. See CTX-10 in
+[the invariant catalogue](docs/INVARIANTS.md).
+
+The [expanded matrix](bench/operation-matrix-fork-threads-baseline.md) adds
+unmodified stock Perl forks and ithreads with one/two/four workers. Each batch
+partitions the same seeded jobs; timing includes worker creation, cloning,
+pipe/join result transfer and reaping/joining. It does not model shared-heap
+tasks or a persistent prefork pool. Coroutine-only fixtures remain explicit
+N/A for these modes. Schema v2 captures all fourteen variants; v1 records
+remain readable but cannot be compared with v2. Worker failure tests require
+reaping/joining already-started workers before propagating failure.
+
+Five rotated runs at 50,000 iterations/eight jobs on affinity `0,2,4,6` retain
+640 timed and 130 N/A samples. The before/after benchmark checkout is clean
+`4ca06aa`; binary hashes distinguish the preceding scheduler build from the
+new stack-cache build. The [per-cell check](bench/operation-matrix-stack-cache-check.txt)
+passes the unchanged 10% budget. Perl spawn/completion work falls
+12.69%/6.21%/8.08% on one/two/four slots. Four-slot compatibility yield rises
+9.995%, just inside the budget, so this is not evidence of stable yield
+performance under other placements. Ordinary calls, hashes and UTF-8 remain
+large gaps; stock fork/ithread batches scale substantially better here.
+
+The new cache regression fails against the preceding runtime and passes with
+reuse, page-residency checks, caps, discard failure, native handoff, parallel
+completion and zero mapped stacks after shutdown. GCC/Clang runtime tests,
+ten-repeat stress, ASan/LSan/UBSan/TSan with controls, and focused Valgrind
+Memcheck pass. A fresh private Perl passes the project suites, context/legacy
+differentials and 2,919 files / 1,351,306 checks in the standard upstream
+harness. An initial generated-header mismatch was corrected and rebuilt before
+the complete passing run. Whole-Perl sanitizers were not repeated; the earlier
+ithreads clone race remains unresolved. This checkpoint predates the native
+yield experiment below.
+
+The next priority is core execution overhead, with ordinary stock parity and
+useful parallel scaling required alongside primitive improvements. Public
+Perl wrappers plus XS are a bootstrap interface, not the final implementation.
+The matrix's ordinary call loop never calls a Wump API, so API wrappers alone
+cannot explain its slowdown. Native core operations should be measured
+directly, while retaining lexical opt-in and compatibility tests. Deployment
+remains a separate unfinished milestone: one reproducible standalone program
+is still needed before any bundling claim.
+
+## Native yield in the Perl core (2026-10-31)
+
+Bare `yield` and `yield()` now compile to `OP_WUMPYIELD` with the lexical
+`Wump/keywords` hint installed by `use Wump`. The lexer uses Perl's existing
+nullary-operation grammar; `regen/opcodes` gains a real opcode and the pinned
+generator produces opcode numbers, dispatch/check tables, prototypes and B
+metadata together. The core pp function checks the same scheduling exclusion
+as the XS entry, saves/reselects the operand stack across suspension, and
+preserves scalar undef/list-empty results. It does not enter a Perl wrapper
+or XS function. Qualified calls and function references retain the existing
+compatibility path; lexical opt-out, methods and implicit hash keys keep
+ordinary lookup.
+
+The 26-case regression passes on the native build and fails seven
+native-compilation/bypass assertions on the preceding interpreter, while its
+observable behavior assertions still pass there. Replacing both wrapper and
+XS entries with failing stubs proves the new opcode bypasses them. Coverage
+includes operand-stack preservation, nested task state, four-slot scheduling,
+compile-time/argument rejection, deparse round trips and legacy names. Source
+upgrade/idempotence, unknown-opcode input rejection and independent metadata
+regeneration checks pass. The project and differential suites pass as well.
+
+`bench/api-overhead.pl` separates the qualified wrapper, raw XS and native
+yield paths in otherwise matching loops. The common matrix still measures the
+qualified compatibility function, so native timings are recorded separately.
+Removing the Perl wrapper is not the same experiment as removing XS dispatch.
+This is the first native primitive; `act`, channel operations and the complete
+core feature syntax remain unfinished. Ordinary function/aggregate overhead
+still requires core profiling rather than attributing every slowdown to the
+public API boundary.

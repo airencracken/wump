@@ -68,7 +68,8 @@ preserve reference identity. Main return ends the runtime, so applications
 must receive results or explicitly wait for registered work. An uncaught act
 exception stops the process; `eval` catches exceptions within an act.
 
-The current API uses exported functions. The design's full core syntax,
+Bare `yield` compiles to a native core opcode in `use Wump` scope. Other
+task/channel operations still use functions. The design's full core syntax,
 Perl `sel` and deployment tool are pending. See the
 [Perl integration reference](docs/PERL-INTEGRATION.md) for APIs, examples,
 localization, memory rules and explicit restrictions.
@@ -95,7 +96,8 @@ one/two/four slots. Work and whole-process timing stay separate.
 Coroutine-only fixtures are N/A for stock Perl, forks and ithreads. The checker
 flags regressions
 against the saved baseline; it never turns unsupported work into a fast result.
-The [initial matrix](bench/operation-matrix-baseline.md) is a recorded example;
+The [recorded matrix](bench/operation-matrix-fork-threads-baseline.md) includes
+the fork and ithread controls;
 use a local baseline when your machine, CPU mask or controls differ.
 
 Read the [benchmark guide](docs/BENCHMARKS.md) for workload definitions, baseline

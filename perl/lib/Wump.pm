@@ -13,10 +13,11 @@ sub import {
 	my $class = shift;
 	_enable();
 	$^H{'Wump/pocket'} = 1;
+	$^H{'Wump/keywords'} = 1;
 	$class->export_to_level(1, $class, @_);
 }
 
-sub unimport { delete $^H{'Wump/pocket'} }
+sub unimport { delete @^H{'Wump/pocket', 'Wump/keywords'} }
 
 sub act (&) { _act($_[0]); return }
 sub waitgroup () { _waitgroup('Wump::WaitGroup') }

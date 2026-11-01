@@ -15,6 +15,7 @@ sub snapshot {
 	my %files;
 	find({no_chdir => 1, wanted => sub {
 		return unless -f $_ && (/\.(?:c|h|xs|pm|y|act|tab)\z/
+			|| m{/regen/(?:opcodes|op_private|opcode\.pl|regen_lib\.pl)\z}
 			|| m{/(?:Porting/Maintainers\.pl|t/porting/customized\.dat|pod/perldiag\.pod|cpan/Digest-MD5/t/files\.t)\z});
 		open my $fh, '<', $_ or die "$_: $!\n";
 		binmode $fh;
@@ -37,6 +38,16 @@ for my $file (keys %$after) {
 	(my $relative = $file) =~ s/^\Q$source\E\/// or die "unexpected path: $file\n";
 	make_path(dirname("$legacy/$relative"));
 	copy($file, "$legacy/$relative") or die "copy $file: $!\n";
+}
+{
+	my $file = "$legacy/regen/opcodes";
+	open my $input, '<', $file or die $!;
+	my $text = do { local $/; <$input> };
+	close $input or die $!;
+	$text =~ s/\nwumpyield\t[^\n]+\n\z// or die "missing native yield opcode\n";
+	open my $output, '>', $file or die $!;
+	print {$output} $text or die $!;
+	close $output or die $!;
 }
 for my $spec (['pp_hot.c', 'add'], ['pp.c', 'modulo']) {
 	my ($file, $name) = @$spec;
@@ -240,6 +251,7 @@ for my $file (keys %$after) {
 print "ok - upgrading earlier lifecycle, reference loads, deferred ownership and parallel metadata/XS guards preserves the complete generated tree\n";
 for my $case (
 	['perly.y', qr/unexpected pinned grammar/, 'unknown grammar changes cannot be marked as regenerated'],
+	['regen/opcodes', qr/unexpected opcode definitions/, 'unknown opcode definitions cannot acquire generated dispatch tables'],
 	['cpan/MIME-Base64/Base64.xs', qr/unexpected customized source/, 'unknown native changes cannot acquire audited checksums'],
 ) {
 	my ($file, $expected, $message) = @$case;

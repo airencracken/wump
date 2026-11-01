@@ -197,14 +197,21 @@ for my $number (1..4) {
 say scalar $results->recv for 1..4;
 ```
 
-These are exported functions from `Wump`, rather than the design's eventual
-core feature syntax. `act` accepts a block and returns nothing. `chan()` is unbuffered;
+The preview exposes task/channel functions from `Wump` and a native `yield`
+keyword; the design's complete core feature syntax remains unfinished.
+`act` accepts a block and returns nothing. `chan()` is unbuffered;
 `chan(N)` has N slots. `send` copies its scalar, preserving reference identity.
 `recv` returns a value in scalar context, or `(value, ok)` in list context;
 `ok` is false once a closed channel is drained. `undef` remains a valid message.
 `close` wakes waiting tasks; duplicate close and send-after-close throw within
-the task. `yield` and `sleep(SECONDS)` schedule cooperatively. These operations
-require a running task. Compile-time blocks cannot schedule, and importing
+the task. `yield` and `sleep(SECONDS)` schedule cooperatively. Bare `yield` and
+`yield()` compile to a native `wumpyield` opcode in `use Wump` scope, entering
+the scheduler without a Perl wrapper or XS call. Qualified `Wump::yield()` and
+indirect function calls retain the compatibility path. `no Wump` restores
+ordinary name parsing; methods and implicitly quoted hash keys keep their
+existing meaning. Native yield returns undef in scalar context and an empty
+list in list context, preserving surrounding operands across suspension.
+These operations require a running task. Compile-time blocks cannot schedule, and importing
 Wump at runtime without compile-time activation fails explicitly.
 
 ### Wait groups

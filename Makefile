@@ -30,12 +30,12 @@ PERL_PERF_MAX_REGRESSION = 10
 MATRIX_RUNS = 5
 MATRIX_ITERATIONS = 50000
 MATRIX_JOBS = 8
-MATRIX_BASELINE = bench/operation-matrix-baseline.json
+MATRIX_BASELINE = bench/operation-matrix-fork-threads-baseline.json
 MATRIX_CURRENT = $(BUILD)/operation-matrix-current.json
 MATRIX_REPORT = $(BUILD)/operation-matrix-current.md
 MATRIX_MAX_REGRESSION = 10
 SANITIZER_TEST_ARGS = CPPFLAGS='$(CPPFLAGS) -DWUMP_TEST_CASE_TIMEOUT=120' TEST_TIMEOUT=300 TEST_LONG_TIMEOUT=300 TEST_FAILURE_TIMEOUT=300
-PERL_SUITES = entry ordinary active waitgroup preempt tasks parallel xs-parallel encode-parallel bytes-parallel native-integration regex-parallel regex local elements pocket pocket-deparse separators hooks locks shared keys reads read-claims scalar-writes operands stack-loads lvalue-loads reference-loads scalar-references materialization iteration memory publication hidden-roots
+PERL_SUITES = entry ordinary active waitgroup native-yield preempt tasks parallel xs-parallel encode-parallel bytes-parallel native-integration regex-parallel regex local elements pocket pocket-deparse separators hooks locks shared keys reads read-claims scalar-writes operands stack-loads lvalue-loads reference-loads scalar-references materialization iteration memory publication hidden-roots
 
 RUNTIME = stack sched chan io error
 OBJECTS = $(addprefix $(BUILD)/,$(addsuffix .o,$(RUNTIME))) $(BUILD)/ctx_x86_64.o
@@ -143,6 +143,7 @@ perl-test: perl-build perl-source-test
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/ordinary.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/active.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/waitgroup.t
+	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/native-yield.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/preempt.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/tasks.t
 	timeout 180s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/parallel.t
@@ -175,6 +176,7 @@ perl-test: perl-build perl-source-test
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/publication.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/hidden-roots.t
 	perl tests/perl/patcher.pl '$(BUILD)/perl/perl-5.42.2'
+	perl tests/perl/opcode-regeneration.pl '$(BUILD)/perl/perl-5.42.2'
 	perl tests/perl/state-inventory.t '$(BUILD)/perl/perl-5.42.2'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/refcount.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/task-context.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'

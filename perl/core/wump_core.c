@@ -809,6 +809,18 @@ static void xs_wump_close(pTHX_ CV *cv) {
 	XSRETURN_EMPTY;
 }
 
+PP(pp_wumpyield) {
+	dSP;
+	wump_schedule_check(aTHX);
+	if (wump_self() == NULL || PL_wump_task == NULL)
+		croak("Wump: yield requires a running task");
+	PUTBACK;
+	wump_yield();
+	SPAGAIN;
+	if (GIMME_V == G_SCALAR) XPUSHs(&PL_sv_undef);
+	RETURN;
+}
+
 static void xs_wump_yield(pTHX_ CV *cv) {
 	dXSARGS;
 	wump_schedule_check(aTHX);

@@ -119,7 +119,7 @@ noise. Keep production captures large enough for the measured operation.
 ### Baselines and regression checks
 
 ```sh
-make bench-matrix-check MATRIX_BASELINE=bench/operation-matrix-baseline.json \
+make bench-matrix-check MATRIX_BASELINE=bench/operation-matrix-fork-threads-baseline.json \
 	MATRIX_CURRENT=build/operation-matrix-current.json MATRIX_MAX_REGRESSION=10
 ```
 
@@ -168,6 +168,19 @@ fabricated historical samples. Tooling tests cover uneven worker partitions,
 more slots than jobs, failed worker creation, child failure and reaping/joining
 all workers before propagating failure.
 
+The [expanded baseline](../bench/operation-matrix-fork-threads-baseline.md) and
+[raw capture](../bench/operation-matrix-fork-threads-baseline.json) retain five
+runs at 50,000 iterations/eight jobs with affinity `0,2,4,6`. Its 154 cells
+contain 640 timed and 130 explicit N/A samples. The
+[before capture](../bench/operation-matrix-fork-threads-before.json) uses the
+same fixtures and controls with the preceding runtime binary. The
+[comparison](../bench/operation-matrix-stack-cache-check.txt) passes the 10%
+gate: bounded cold-stack reuse reduces Perl spawn/completion time by
+12.69%/6.21%/8.08% on one/two/four slots. Four-slot compatibility yield increases
+9.995%, close to the budget; this checkpoint does not establish its stability
+under other placements. Fork and ithread columns describe independent batches,
+not the shared-heap semantics or memory use of Wump acts.
+
 ### Perl API wrapper probe
 
 ```sh
@@ -175,15 +188,21 @@ WUMPPROCS=1 build/perl/perl-5.42.2/perl -Ibuild/perl/perl-5.42.2/lib \
 	-Iperl/lib bench/api-overhead.pl yield public 200000
 WUMPPROCS=1 build/perl/perl-5.42.2/perl -Ibuild/perl/perl-5.42.2/lib \
 	-Iperl/lib bench/api-overhead.pl yield xs 200000
+WUMPPROCS=1 build/perl/perl-5.42.2/perl -Ibuild/perl/perl-5.42.2/lib \
+	-Iperl/lib bench/api-overhead.pl yield native 200000
 ```
 
 `bench/api-overhead.pl` compares the public Perl wrapper with the same internal
-XS entry for yield or spawn. Spawn retains the same channel methods in both
-modes, isolating only `act`'s wrapper. Both verify the completed count. Rotate
+XS entry for yield or spawn. Yield also has a native opcode mode, using the
+same Perl loop with no wrapper or XS dispatch. Spawn retains the same channel
+methods in both modes, isolating only `act`'s wrapper. All verify the completed count. Rotate
 paired runs on the same binary and CPU mask. Internal entries are diagnostic,
 not a supported application API. Removing this wrapper still leaves an XS
-call, interpreter bookkeeping and the runtime operation; it does not measure
-a hypothetical keyword implementation. Ordinary compute-row overhead cannot
+call, interpreter bookkeeping and the runtime operation. Native-mode timings
+measure the implemented keyword directly. The common matrix's `yield` row
+currently measures qualified `Wump::yield()` through the compatibility path;
+the focused probe distinguishes that from the native operation.
+Ordinary compute-row overhead cannot
 be attributed to Wump API wrappers, which those timed loops never invoke.
 
 ## Existing focused benchmarks

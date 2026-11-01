@@ -144,7 +144,7 @@ for my $n (1, 97, 1025) {
 	}
 }
 for my $op (qw(yield spawn)) {
-	for my $mode (qw(public xs)) {
+	for my $mode (qw(public xs), $op eq 'yield' ? ('native') : ()) {
 		for my $n (1, 1025) {
 			local $ENV{WUMPPROCS} = 1;
 			($status, $text, $errors) = run($wump, '-I' . dirname($wump) . '/lib', '-Iperl/lib',

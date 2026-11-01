@@ -7,14 +7,16 @@ use JSON::PP ();
 
 # Diagnostic ablation: internal XS calls are not a supported public API.
 # Each pair performs the same work, removing only the Perl API wrapper.
-@ARGV == 3 or die "usage: api-overhead.pl yield|spawn public|xs ITERATIONS\n";
+@ARGV == 3 or die "usage: api-overhead.pl yield|spawn public|xs|native ITERATIONS\n";
 my ($op, $mode, $n) = @ARGV;
-$op =~ /\A(?:yield|spawn)\z/ && $mode =~ /\A(?:public|xs)\z/
+$op =~ /\A(?:yield|spawn)\z/ && $mode =~ /\A(?:public|xs|native)\z/
+	&& !($op eq 'spawn' && $mode eq 'native')
 	&& $n =~ /\A[1-9][0-9]*\z/ && $n <= 2000000 or die "invalid probe workload\n";
 my $count = 0;
 my $start = clock_gettime(CLOCK_MONOTONIC);
 if ($op eq 'yield') {
 	if ($mode eq 'public') { for (1..$n) { Wump::yield(); $count++ } }
+	elsif ($mode eq 'native') { for (1..$n) { yield; $count++ } }
 	else { for (1..$n) { Wump::_yield(); $count++ } }
 } else {
 	my $out = Wump::chan();

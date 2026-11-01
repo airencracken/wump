@@ -601,6 +601,8 @@ for my $pair (
 ) {
 	write_file($pair->[1], read_file($pair->[0]));
 }
+require "$FindBin::Bin/yield.pl";
+apply_yield($source);
 require "$FindBin::Bin/ordinary.pl";
 apply_ordinary($source);
 require "$FindBin::Bin/active.pl";
