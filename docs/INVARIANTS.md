@@ -337,7 +337,8 @@ It checks the same metadata/publication exclusion as the XS path, requires a
 running act, publishes the operand stack before suspension and reselects it
 after resumption. Scalar/list results remain undef/empty. Opcode definitions,
 dispatch/check tables, prototypes and B metadata must agree; regeneration uses
-the pinned upstream generator and rejects unknown opcode input.
+the pinned upstream generator and rejects unknown opcode input. `Opcode`
+classifies it with thread operations, and compilation must honor opcode masks.
 
 Enforcement: [lexer and generation](../perl/yield.pl),
 [native operation](../perl/core/wump_core.c), [lexical hints](../perl/lib/Wump.pm).

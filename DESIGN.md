@@ -2117,6 +2117,13 @@ compile-time/argument rejection, deparse round trips and legacy names. Source
 upgrade/idempotence, unknown-opcode input rejection and independent metadata
 regeneration checks pass. The project and differential suites pass as well.
 
+The first full upstream run caught an integration omission: loading `Opcode`
+warned that the new operation was untagged, failing its existing no-warning
+assertion. `wumpyield` is now classified with `:base_thread`, alongside `lock`.
+Both upstream Opcode files pass their 887 checks. The native suite is extended
+to 30 checks, including classification and rejection under an opcode mask;
+the failure was fixed without changing the upstream expectation.
+
 `bench/api-overhead.pl` separates the qualified wrapper, raw XS and native
 yield paths in otherwise matching loops. The common matrix still measures the
 qualified compatibility function, so native timings are recorded separately.

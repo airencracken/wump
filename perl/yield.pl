@@ -33,5 +33,7 @@ sub apply_yield {
 C
 	edit('toke.c', '    /* Wump syntax is lexical:', $hook . '    /* Wump syntax is lexical:');
 	edit('lib/B/Deparse.pm', 'sub pp_stub {', "sub pp_wumpyield { return 'yield()' }\n\nsub pp_stub {");
+	edit('ext/Opcode/Opcode.pm', "    lock\n\n=item :default",
+		"    lock wumpyield\n\n=item :default");
 }
 1;

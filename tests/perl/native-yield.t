@@ -107,4 +107,14 @@ check_program(q{
 	sub yield { print "ordinary function\n" }
 	yield();
 }, 0, qr/ordinary function/, 'programs without Wump retain their yield function');
+check_program(q{
+	use Opcode qw(opset opset_to_ops);
+	die "missing thread classification\n" unless grep {$_ eq 'wumpyield'} opset_to_ops(opset(':base_thread'));
+	print "native scheduling policy verified\n";
+}, 0, qr/native scheduling policy verified/, 'Opcode classifies native yield with thread operations');
+check_program(q{
+	use Wump;
+	BEGIN { require Opcode; Opcode::opmask_add(Opcode::opset('wumpyield')) }
+	yield;
+}, 255, qr/trapped by operation mask/, 'native yield respects Opcode compilation masks');
 done_testing;
