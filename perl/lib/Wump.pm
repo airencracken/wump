@@ -20,6 +20,8 @@ sub import {
 sub unimport { delete @^H{'Wump/pocket', 'Wump/keywords'} }
 
 sub act (&) { _act($_[0]); return }
+# Older private interpreters retain the function path for matched controls.
+_act_intrinsic(\&act) if defined &_act_intrinsic;
 sub waitgroup () { _waitgroup('Wump::WaitGroup') }
 sub add ($;$) { _wg_add(@_ == 1 ? ($_[0], 1) : @_); return }
 sub done ($) { _wg_done(@_); return }

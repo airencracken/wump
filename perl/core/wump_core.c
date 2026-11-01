@@ -707,16 +707,76 @@ static void xs_wump_enable(pTHX_ CV *cv) {
 	XSRETURN_EMPTY;
 }
 
-static void xs_wump_act(pTHX_ CV *cv) {
-	dXSARGS;
-	if (items != 1 || wump_self() == NULL || PL_wump_task == NULL) croak("Wump: act requires a running task and a code reference");
-	struct wump_perl_task *task = wump_perl_task_new(aTHX_ ST(0));
+/* Both call paths retain the same ownership and failed-spawn cleanup. */
+static void wump_perl_spawn(pTHX_ SV *callback) {
+	if (wump_self() == NULL || PL_wump_task == NULL)
+		croak("Wump: act requires a running task and a code reference");
+	struct wump_perl_task *task = wump_perl_task_new(aTHX_ callback);
 	if (wump_go_context(wump_perl_task_start, task, wump_perl_enter, wump_perl_task_free) != 0) {
 		wump_local_clear(aTHX_ task);
 		SvREFCNT_dec(task->entry);
 		Safefree(task);
 		croak("Wump: spawn failed");
 	}
+}
+
+PP(pp_wumpact) {
+	dSP;
+	SV *callback = TOPs;
+	PUTBACK;
+	wump_perl_spawn(aTHX_ callback);
+	SPAGAIN;
+	SP--;
+	if (GIMME_V == G_SCALAR) XPUSHs(&PL_sv_undef);
+	RETURN;
+}
+
+/* Perl already parsed the & prototype and constructed its closure. Lower
+ * only calls through an imported act GV, with the lexical opt-in. Custom
+ * wrappers, explicit Wump::act, ampersand and indirect calls stay ordinary. */
+static OP *wump_ck_act(pTHX_ OP *o, GV *namegv, SV *ckobj) {
+	o = Perl_ck_entersub_args_proto_or_list(aTHX_ o, namegv, ckobj);
+	if (o->op_type != OP_ENTERSUB || (PL_parser && PL_parser->error_count)
+		|| !PL_hintgv || !GvHV(PL_hintgv)) return o;
+	SV **enabled = hv_fetchs(GvHV(PL_hintgv), "Wump/keywords", 0);
+	if (!enabled || !SvTRUE(*enabled)) return o;
+	OP *parent = o, *mark = cUNOPx(o)->op_first;
+	if (!OpHAS_SIBLING(mark)) {
+		parent = mark;
+		if (!(parent->op_flags & OPf_KIDS)) return o;
+		mark = cUNOPx(parent)->op_first;
+	}
+	if (!mark || mark->op_type != OP_PUSHMARK) return o;
+	OP *arg = OpSIBLING(mark);
+	OP *callee = arg ? OpSIBLING(arg) : NULL;
+	if (!callee || OpHAS_SIBLING(callee) || !(callee->op_flags & OPf_KIDS)) return o;
+	OP *gvop = cUNOPx(callee)->op_first;
+	if (!gvop || gvop->op_type != OP_GV) return o;
+	GV *gv = cGVOPx_gv(gvop);
+	if (GvSTASH(gv) == gv_stashpvs("Wump", 0) || !strEQ(GvNAME(gv), "act")) return o;
+	U8 flags = o->op_flags & OPf_WANT;
+	op_sibling_splice(parent, mark, 1, NULL);
+	op_free(o);
+	return newUNOP(OP_WUMPACT, flags, arg);
+}
+
+/* Setup-only entry used while Wump.pm defines its original wrapper. The
+ * checker belongs to that CV, so later replacements do not become intrinsics.
+ * Using the CV itself as ckobj follows Perl's non-owning self-reference rule. */
+static void xs_wump_act_intrinsic(pTHX_ CV *cv) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items != 1 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVCV)
+		croak("Wump: intrinsic registration requires a code reference");
+	CV *target = (CV *)SvRV(ST(0));
+	cv_set_call_checker_flags(target, wump_ck_act, (SV *)target, 0);
+	XSRETURN_EMPTY;
+}
+
+static void xs_wump_act(pTHX_ CV *cv) {
+	dXSARGS;
+	if (items != 1) croak("Wump: act requires a running task and a code reference");
+	wump_perl_spawn(aTHX_ ST(0));
 	XSRETURN_EMPTY;
 }
 
@@ -850,6 +910,7 @@ static void xs_wump_execution_slots(pTHX_ CV *cv) {
 }
 
 void Perl_wump_boot(pTHX) {
+	newXS("Wump::_act_intrinsic", xs_wump_act_intrinsic, __FILE__);
 	Perl_wump_xs_allow(aTHX_ newXS("Wump::execution_slots", xs_wump_execution_slots, __FILE__));
 	Perl_wump_xs_allow(aTHX_ newXS("Wump::_enable", xs_wump_enable, __FILE__));
 	Perl_wump_xs_allow(aTHX_ newXS("Wump::_waitgroup", xs_wump_waitgroup, __FILE__));

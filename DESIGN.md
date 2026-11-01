@@ -2167,3 +2167,26 @@ sample rises 10.39%; a seven-run, two-million-iteration selection-only probe
 shows +0.73%. Both fixtures and all raw samples remain recorded, since the
 changed work size/driver layout does not establish that the initial result
 was noise. No runtime selection change was made to chase that observation.
+
+## Native act continuation (2026-11-01)
+
+The original imported `act` CV now carries a compiler checker that first
+applies Perl's ordinary `&` prototype and closure construction, then lowers
+eligible calls to `OP_WUMPACT`. No new parser grammar is needed. The runtime
+operation calls the same creation/snapshot/failure-cleanup helper as XS,
+without entering the public wrapper or XS. Custom CV wrappers, qualified
+`Wump::act`, indirect/ampersand calls and lexical opt-out keep their behavior.
+The checker uses namespace identity for the qualified path; a regression
+catches a renamed CV incorrectly making that call native. Native callback
+entry keeps the existing scalar context with discarded results.
+
+Forty-four focused checks pass normally and on a separate ASan private Perl
+with stack-use-after-return enabled. They cover compiled form, replaced
+wrappers/XS, contexts, captures, dynamic snapshots, four-slot nested tasks,
+completion/abandonment ownership, deparse, masks, prototype errors and custom
+join wrappers. The project/context/legacy suites also pass. The first full
+upstream run reaches all 2,919 files but fails one IO::Compress ZIP timestamp
+round-trip during the host's DST overlap. Matched stock Perl reproduces the
+same test-46 failure; the unchanged test passes in UTC. Logs are retained and
+final full validation will use a documented UTC environment, without test
+exclusions or changed expectations.

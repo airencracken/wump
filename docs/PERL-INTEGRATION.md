@@ -199,7 +199,12 @@ say scalar $results->recv for 1..4;
 
 The preview exposes task/channel functions from `Wump` and a native `yield`
 keyword; the design's complete core feature syntax remains unfinished.
-`act` accepts a block and returns nothing. `chan()` is unbuffered;
+Imported `act { ... }` and `act(sub { ... })` compile to a native creation
+opcode after Perl's normal prototype checks. Custom wrappers, qualified
+`Wump::act`, ampersand/indirect calls and `no Wump` scopes keep function
+dispatch. Closure capture, local snapshots and cleanup share the existing
+creation implementation; callback results remain discarded from scalar entry
+context. `act` returns nothing. `chan()` is unbuffered;
 `chan(N)` has N slots. `send` copies its scalar, preserving reference identity.
 `recv` returns a value in scalar context, or `(value, ok)` in list context;
 `ok` is false once a closed channel is drained. `undef` remains a valid message.

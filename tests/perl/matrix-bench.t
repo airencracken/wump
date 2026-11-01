@@ -144,7 +144,7 @@ for my $n (1, 97, 1025) {
 	}
 }
 for my $op (qw(yield spawn)) {
-	for my $mode (qw(public xs), $op eq 'yield' ? ('native') : ()) {
+	for my $mode (qw(public xs native)) {
 		for my $n (1, 1025) {
 			for my $slots (1, 4) {
 				local $ENV{WUMPPROCS} = $slots;

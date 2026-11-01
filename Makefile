@@ -35,7 +35,7 @@ MATRIX_CURRENT = $(BUILD)/operation-matrix-current.json
 MATRIX_REPORT = $(BUILD)/operation-matrix-current.md
 MATRIX_MAX_REGRESSION = 10
 SANITIZER_TEST_ARGS = CPPFLAGS='$(CPPFLAGS) -DWUMP_TEST_CASE_TIMEOUT=120' TEST_TIMEOUT=300 TEST_LONG_TIMEOUT=300 TEST_FAILURE_TIMEOUT=300
-PERL_SUITES = entry ordinary active waitgroup native-yield preempt tasks parallel xs-parallel encode-parallel bytes-parallel native-integration regex-parallel regex local elements pocket pocket-deparse separators hooks locks shared keys reads read-claims scalar-writes operands stack-loads lvalue-loads reference-loads scalar-references materialization iteration memory publication hidden-roots
+PERL_SUITES = entry ordinary active waitgroup native-yield native-act preempt tasks parallel xs-parallel encode-parallel bytes-parallel native-integration regex-parallel regex local elements pocket pocket-deparse separators hooks locks shared keys reads read-claims scalar-writes operands stack-loads lvalue-loads reference-loads scalar-references materialization iteration memory publication hidden-roots
 
 RUNTIME = stack sched chan io error
 OBJECTS = $(addprefix $(BUILD)/,$(addsuffix .o,$(RUNTIME))) $(BUILD)/ctx_x86_64.o
@@ -144,6 +144,7 @@ perl-test: perl-build perl-source-test
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/active.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/waitgroup.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/native-yield.t
+	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/native-act.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/preempt.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/tasks.t
 	timeout 180s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/parallel.t

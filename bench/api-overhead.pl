@@ -7,8 +7,9 @@ use JSON::PP ();
 use B ();
 BEGIN {
 	CLOCK_MONOTONIC();
-	die "native yield opcode is unavailable\n"
-		if ($ARGV[1] // '') eq 'native' && B::opnumber('wumpyield') < 0;
+	my $opcode = ($ARGV[0] // '') eq 'spawn' ? 'wumpact' : 'wumpyield';
+	die "native $opcode opcode is unavailable\n"
+		if ($ARGV[1] // '') eq 'native' && B::opnumber($opcode) < 0;
 }
 
 # Diagnostic ablation: internal XS calls are not a supported public API.
@@ -16,7 +17,6 @@ BEGIN {
 @ARGV == 3 or die "usage: api-overhead.pl yield|spawn public|xs|native ITERATIONS\n";
 my ($op, $mode, $n) = @ARGV;
 $op =~ /\A(?:yield|spawn)\z/ && $mode =~ /\A(?:public|xs|native)\z/
-	&& !($op eq 'spawn' && $mode eq 'native')
 	&& $n =~ /\A[1-9][0-9]*\z/ && $n <= 2000000 or die "invalid probe workload\n";
 my $count = 0;
 my $start = clock_gettime(CLOCK_MONOTONIC);
@@ -30,6 +30,8 @@ if ($op eq 'yield') {
 		my $batch = $n - $base < 1024 ? $n - $base : 1024;
 		if ($mode eq 'public') {
 			for (1..$batch) { Wump::act(sub { $out->send(1) }) }
+		} elsif ($mode eq 'native') {
+			for (1..$batch) { act { $out->send(1) } }
 		} else {
 			# Leave channel methods intact to isolate act's wrapper alone.
 			for (1..$batch) { Wump::_act(sub { $out->send(1) }) }

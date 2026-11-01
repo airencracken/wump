@@ -348,6 +348,21 @@ Evidence: [compiled form and observable behavior](../tests/perl/native-yield.t),
 
 ## Maintenance
 
+**COMPAT-5 — Intrinsic lowering follows the original CV, not a name alone.**
+The original imported `act` CV carries a compiler checker. Perl first applies
+its existing prototype/closure rules, then the checker can replace a one-arg
+call with `OP_WUMPACT` under the lexical Wump hint. Qualified `Wump::act`,
+ampersand/indirect calls and custom wrapper CVs retain ordinary dispatch.
+Namespace identity, not the CV's mutable display name, identifies qualified
+compatibility calls. The checker self-reference is non-owning; it must not
+create a CV reference cycle. Native creation retains its argument on the
+operand stack until the common spawn helper owns the callback CV, refreshes
+SP after helper callbacks, and shares XS snapshot/failure cleanup.
+
+Enforcement: [compiler checker and spawn helper](../perl/core/wump_core.c),
+[registration](../perl/lib/Wump.pm), [metadata](../perl/yield.pl).
+Evidence: [native compilation, lifecycle and override checks](../tests/perl/native-act.t).
+
 Every change introducing a mutable field, native cache, callback, escape path
 or suspension point must update its ownership/access classification and name
 the invariant it relies on. Include normal return, exception and abandonment

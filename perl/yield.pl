@@ -3,9 +3,11 @@
 sub apply_yield {
 	my ($source) = @_;
 	my $opcodes = read_file("$source/regen/opcodes");
-	my $entry = "wumpyield\tWump task yield\t\tck_null\t\t0\n";
+	my $yield_entry = "wumpyield\tWump task yield\t\tck_null\t\t0\n";
+	my $act_entry = "wumpact\t\tWump task creation\tck_null\t\t1\tS\n";
+	my $entry = $yield_entry . $act_entry;
 	my $original = $opcodes;
-	$original =~ s/\n\Q$entry\E\z//;
+	$original =~ s/\n(?:\Q$entry\E|\Q$yield_entry\E)\z//;
 	require Digest::SHA;
 	Digest::SHA::sha256_hex($original) eq '9bd5cfd093b1b11ae79a1605a90e33d15685f2d0940a8dd9b0a5f8190a34f6e0'
 		or die "unexpected opcode definitions; audit the pinned transformation\n";
@@ -33,7 +35,18 @@ sub apply_yield {
 C
 	edit('toke.c', '    /* Wump syntax is lexical:', $hook . '    /* Wump syntax is lexical:');
 	edit('lib/B/Deparse.pm', 'sub pp_stub {', "sub pp_wumpyield { return 'yield()' }\n\nsub pp_stub {");
-	edit('ext/Opcode/Opcode.pm', "    lock\n\n=item :default",
-		"    lock wumpyield\n\n=item :default");
+	my $thread_ops = read_file("$source/ext/Opcode/Opcode.pm");
+	my $old_thread_ops = $thread_ops =~ /    lock wumpyield\n\n=item :default/
+		? "    lock wumpyield\n\n=item :default" : "    lock\n\n=item :default";
+	edit('ext/Opcode/Opcode.pm', $old_thread_ops,
+		"    lock wumpyield wumpact\n\n=item :default");
+	my $act_deparse = <<'PERL';
+sub pp_wumpact {
+    my ($self, $op) = @_;
+    return 'act(' . $self->deparse($op->first, 0) . ')';
+}
+PERL
+	edit('lib/B/Deparse.pm', 'sub pp_stub { "()" }',
+		'sub pp_stub { "()" }' . "\n\n" . $act_deparse);
 }
 1;
