@@ -390,3 +390,56 @@ Builds, exact C worker/runner, failed-before coordination logs, sanitizer
 controls and final logs remain under `build/checkpoint-yield-wake/` locally.
 Logs are copied into its `validation-logs/` directory. Tracked machine records
 retain hashes, compiler configuration and complete capture sources.
+
+## Native Perl selection checkpoint (2026-11-01)
+
+Source `80ecd64` adds `sel($cases [, $timeout])`, lowered to the `wumpsel`
+core opcode for imported calls. Qualified and indirect calls retain a shared
+compatibility helper. The C selection algorithm is unchanged. This is the
+Perl-support lane; it adds no mutable interpreter globals or per-run fields.
+The full selection block grammar remains future work.
+
+The new suite passes **131 checks** normally, under ASan with full teardown,
+with leak detection enabled, and under whole-core TSan. It covers native
+lowering and wrapper bypass, deparse and opcode masks, argument validation
+before committing any operation, default/timeout, disabled and duplicate
+cases, scalar/reference identity, successful undef versus closure, result
+lifetimes, normal-channel interoperability, snapshot retention, done-channel
+cancellation, losing-waiter cleanup and abandoned heap/timer selections.
+Rendezvous and closure/cancellation run on one/four slots.
+
+The full private project checks and native embedding/context/legacy fixtures
+pass normally and under ASan. Four-opcode cached trees upgrade exactly to the
+new metadata/deparser; complete-tree patch idempotence, opcode regeneration,
+state inventory and Bison 3.8.2 parser regeneration pass. The unmodified
+upstream harness passes **2,919 files / 1,351,235 checks** in 334 seconds on
+the host's America/Los_Angeles timezone. Counts vary with upstream dynamic
+checks; no tests or expectations were excluded or changed for this feature.
+The full normal C runtime suite, including selection allocation/timer failure
+injection and shutdown, also passes.
+
+TSan additionally passes native-channel (48 checks), parallel (56 checks) and
+the allocator fixture. Its deliberate `Perl_more_bodies` race is detected,
+confirming whole-core instrumentation. The previously documented full-project
+upstream ithreads clone race remains open; that full TSan target was not
+rerun. No whole-upstream sanitizer result is claimed.
+
+The initial ASan rebuild omitted the project's teardown settings and LSan
+reported 64,829 bytes in 40 miniperl initialization allocations. That log is
+preserved. Rebuilding with the normal project ASan settings and full teardown
+passes; miniperl and all 131 selection checks also pass with leak detection
+actually enabled and full teardown. No leak suppression was added.
+
+The [fresh comparison](../bench/operation-matrix-select-check.txt) fails one
+metric: four-slot yield work is +13.18%, over the unchanged +10% budget.
+The [retained-anchor comparison](../bench/operation-matrix-select-anchor-check.txt)
+passes. Both full captures retain all 1,540 samples and exact check outputs;
+this checkpoint does not claim a complete performance pass or replace the
+default anchor.
+
+Raw captures, build products, positive controls, exact runners and logs remain
+under `build/checkpoint-native-select/`; logs are copied to `validation-logs/`.
+The tracked machine record preserves source/binary/archive hashes and the
+capture/validation sources. Primary matrix fixtures and the default baseline
+remain unchanged. Selection has correctness coverage here; it is not yet a
+timed row in the primary common-operations matrix.

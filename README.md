@@ -125,3 +125,8 @@ updates, machine/build requirements and the existing focused benchmarks.
 
 Build products stay under `build/`. Keep fork changes in the tracked patch
 sources under `perl/`; `make clean` removes generated source trees and binaries.
+
+The [native selection checkpoint](bench/operation-matrix-select-current.md)
+adds timed channel waits and cancellation. Its fresh performance check fails
+four-slot yield work (+13.18%); the retained-anchor check passes. The default
+baseline remains unchanged.

@@ -546,3 +546,13 @@ baseline; it does not measure TCP networking.
 on 2026-10-25 with the same toolchain. The machine reports 16 online CPUs;
 these figures do not establish behavior on other hardware or long-running
 workloads.
+
+### Native Perl selection checkpoint
+
+The [selection checkpoint](../bench/operation-matrix-select-current.md) keeps
+the primary workloads unchanged. Its fresh comparison fails four-slot yield
+work at **+13.18%**, above the unchanged 10% budget; its retained-anchor check
+passes. All 1,540 samples and exact reports remain available. The default
+`operation-matrix-callee-baseline.json` remains unchanged. This is a feature
+checkpoint with a measured regression, not a claimed performance pass.
+Selection has correctness coverage but no dedicated primary timing row yet.
