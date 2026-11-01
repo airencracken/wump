@@ -18,7 +18,7 @@ while (<$list>) { chomp; $task{$_} = $. if length && !/^#/ }
 close $list or die $!;
 my %executor = map {$_ => 1} qw(sv_root sv_arenaroot sv_count body_arenas body_roots nomemok hash_rand_bits);
 my %shared = map {$_ => 1} qw(strtab defstash incgv envgv modglobal main_cv main_root main_start beginav endav initav checkav unitcheckav regex_pad regex_padav sub_generation padlist_generation sv_yes sv_no sv_undef sv_zero sv_immortals padname_undef padname_const);
-my %routed = map {$_ => 1} qw(rs ors_sv warnhook diehook dowarn);
+my %routed = map {$_ => 1} qw(rs ors_sv warnhook diehook dowarn dbargs);
 my %phase = map {$_ => 1} qw(parser compiling comppad_name_fill comppad_name_floor min_intro_pending max_intro_pending padix padix_floor constpadix pad_reset_pending eval_begin_nest_depth);
 make_path('docs');
 open my $out, '>', 'docs/state-inventory.tsv' or die $!;
@@ -36,6 +36,10 @@ for my $file (qw(intrpvar.h perlvars.h)) {
 			($owner, $assessment, $evidence, $note) = ('executor-local', 'selected allocator storage', 'perl/apply.pl:315;perl/core/wump_alloc.c:48', 'P-local during execution; root fallback outside execution; merge after all users stop.');
 		} elsif ($scope eq 'I' && $routed{$name}) {
 			($owner, $assessment, $evidence, $note) = ('interpreter-global', 'cell/overlay routing on audited accesses', 'perl/core/wump_magic.c:93;perl/hooks.pl:1', 'Root fallback remains shared; active localized cells own their caches; direct field access is not redirected by this classification.');
+			if ($name eq 'dbargs') {
+				$evidence = 'perl/core/wump_core.c:415;perl/carp.pl:1';
+				$note = 'Active cache resolves the current act-local DB::args binding; Carp localizes each caller_info invocation. Non-owning argument arrays cannot be published; general debugger state remains unaudited.';
+			}
 		} elsif ($scope eq 'I' && $shared{$name}) {
 			($owner, $assessment, $evidence, $note) = ('intentionally-shared', 'bounded guards or phase restriction; not blanket concurrency certification', 'perl/core/wump_core.c:269;perl/core/wump_keys.c:22;perl/refcount.pl:5', 'Code/templates/namespaces/roots remain shared; payload mutation and lazy caches need their own protocol.');
 		} elsif ($scope eq 'I' && $phase{$name}) {

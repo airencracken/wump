@@ -59,7 +59,15 @@ static wump_element *wump_element_hv(pTHX_ HV *hv, const char *key,
 }
 
 static SSize_t wump_element_fill(pTHX_ AV *av, bool inherit) {
-	SSize_t fill = SvRMAGICAL(av) ? mg_size((SV *)av) : AvFILLp(av);
+	/* Marker installation changes the header. Fetch its dispatch flag under
+	 * the metadata mutex, then run any native/user length magic outside it. */
+	bool magical;
+	if (PL_wump_task) {
+		wump_registry_read_lock(aTHX);
+		magical = SvRMAGICAL(av);
+		wump_registry_read_unlock(aTHX);
+	} else magical = SvRMAGICAL(av);
+	SSize_t fill = magical ? mg_size((SV *)av) : AvFILLp(av);
 	if (PL_wump_task) {
 		for (wump_element *slot = PL_wump_task->elements; slot; slot = slot->next) {
 			if (inherit && slot->pocket) continue;
@@ -95,9 +103,19 @@ void Perl_wump_element_structure(pTHX_ SV *aggregate) {
 		croak("Wump: structural mutation with active element bindings is not supported yet");
 }
 
-static void wump_element_mark(pTHX_ SV *origin) {
+static void wump_element_mark_locked(pTHX_ SV *origin) {
 	if (!mg_findext(origin, PERL_MAGIC_ext, &wump_element_vtbl))
 		sv_magicext(origin, NULL, PERL_MAGIC_ext, &wump_element_vtbl, NULL, 0);
+}
+
+static void wump_element_mark(pTHX_ SV *origin) {
+	/* Element bindings are act-local, but their origin header and marker
+	 * are shared with publication and sibling localizations. Attaching
+	 * magic changes flags as well as the magic chain. No callback runs here. */
+	struct wump_mutation *guard = Perl_wump_metadata_begin(aTHX);
+	Perl_wump_memory_check(aTHX_ origin);
+	wump_element_mark_locked(aTHX_ origin);
+	Perl_wump_mutation_end(aTHX_ guard);
 }
 
 static void wump_element_invalidate(pTHX_ struct wump_perl_task *task, SV *origin) {
@@ -163,7 +181,10 @@ static wump_element *wump_element_add(pTHX_ struct wump_perl_task *task, SV *ori
 
 SV **Perl_wump_local_av(pTHX_ AV *av, SSize_t index) {
 	wump_local_check(aTHX_ (SV *)av, 'a');
-	if (SvREADONLY(av)) croak("Wump: cannot localize an element of a read-only array");
+	wump_registry_read_lock(aTHX);
+	bool readonly = SvREADONLY(av);
+	wump_registry_read_unlock(aTHX);
+	if (readonly) croak("Wump: cannot localize an element of a read-only array");
 	if (index < 0) index += Perl_wump_av_fill(av) + 1;
 	if (index < 0) croak("Wump: array index outside the localized view");
 	MEM_WRAP_CHECK_s(index, SV *, "Out of memory during array localization");
@@ -179,7 +200,10 @@ SV **Perl_wump_local_av(pTHX_ AV *av, SSize_t index) {
 }
 
 HE *Perl_wump_local_hv(pTHX_ HV *hv, SV *key) {
-	if (SvREADONLY(hv) || HvNAME_HEK(hv))
+	wump_registry_read_lock(aTHX);
+	bool restricted = SvREADONLY(hv) || HvNAME_HEK(hv);
+	wump_registry_read_unlock(aTHX);
+	if (restricted)
 		croak("Wump: cannot localize an element of a restricted hash or symbol table");
 	/* Canonicalize once, including overloaded/magical key conversion. */
 	STRLEN len;
@@ -274,14 +298,20 @@ STRLEN Perl_wump_hv_used(HV *hv) {
 }
 
 static bool wump_hv_plain(pTHX_ HV *hv) {
-	if (!PL_wump_task || !hv || SvTYPE(hv) != SVt_PVHV
-		|| HvNAME_HEK(hv) || PL_phase == PERL_PHASE_DESTRUCT
+	if (!PL_wump_task || !hv || PL_phase == PERL_PHASE_DESTRUCT
 		|| wump_element_has(aTHX_ (SV *)hv)) return FALSE;
-	for (MAGIC *mg = SvMAGIC(hv); mg; mg = mg->mg_moremagic) {
-		if (!Perl_wump_publish_magic(mg) && !Perl_wump_element_magic(mg)
-			&& mg->mg_type != PERL_MAGIC_backref) return FALSE;
+	/* Logical storage readers do not exclude metadata-only marker changes.
+	 * This scan allocates nothing and never invokes a magic callback. */
+	wump_registry_read_lock(aTHX);
+	bool plain = SvTYPE(hv) == SVt_PVHV && !HvNAME_HEK(hv);
+	if (plain) {
+		for (MAGIC *mg = SvMAGIC(hv); mg; mg = mg->mg_moremagic) {
+			if (!Perl_wump_publish_magic(mg) && !Perl_wump_element_magic(mg)
+				&& mg->mg_type != PERL_MAGIC_backref) { plain = FALSE; break; }
+		}
 	}
-	return TRUE;
+	wump_registry_read_unlock(aTHX);
+	return plain;
 }
 
 bool Perl_wump_hv_readable(pTHX_ HV *hv) {

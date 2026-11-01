@@ -41,6 +41,13 @@ int Perl_wump_runops(pTHX) {
 	return Perl_wump_active_runops(aTHX_ PL_wump_task);
 }
 
+static void wump_element_mark_locked(pTHX_ SV *origin);
+static const MGVTBL wump_debug_args_vtbl = {0};
+
+bool Perl_wump_debug_args_magic(const MAGIC *mg) {
+	return mg->mg_type == PERL_MAGIC_ext && mg->mg_virtual == &wump_debug_args_vtbl;
+}
+
 #include "wump_memory.c"
 #include "wump_publish.c"
 #include "wump_local.c"
@@ -361,6 +368,8 @@ SV **Perl_wump_gv_sv(GV *gv) {
 	if (!task) return &GvGP(gv)->gp_sv;
 	SV **private = S_wump_private_scalar(aTHX_ task, gv);
 	if (private) return private;
+	private = wump_native_cell(aTHX_ gv);
+	if (private) return private;
 	wump_local *binding = wump_local_find(aTHX_ gv, 's', FALSE);
 	if (binding != NULL) return &binding->value;
 	if (PL_wump_task != NULL) {
@@ -378,10 +387,28 @@ SV **Perl_wump_gv_sv(GV *gv) {
 AV **Perl_wump_gv_av(GV *gv) {
 	dTHX;
 	wump_local *binding = wump_local_find(aTHX_ gv, 'a', FALSE);
+	GV *effective = GvEGV(gv) ? GvEGV(gv) : gv;
+	if (PL_wump_task && GvSTASH(effective) == aTHX->Idebstash
+		&& memEQs(GvNAME(effective), GvNAMELEN(effective), "args")) {
+		if (!binding) {
+			binding = wump_local_implicit(aTHX_ gv, 'a', (SV *)newAV());
+		}
+		AV *value = (AV *)binding->value;
+		struct wump_mutation *guard = Perl_wump_metadata_begin(aTHX);
+		if (!mg_findext((SV *)value, PERL_MAGIC_ext, &wump_debug_args_vtbl))
+			sv_magicext((SV *)value, NULL, PERL_MAGIC_ext, &wump_debug_args_vtbl, NULL, 0);
+		Perl_wump_mutation_end(aTHX_ guard);
+		return (AV **)&binding->value;
+	}
 	if (binding != NULL) return (AV **)&binding->value;
 	if (PL_wump_task != NULL && gv == aTHX->Idefgv) gv = PL_defgv;
 	if (PL_wump_task && gv != PL_defgv) Perl_wump_publish(aTHX_ (SV *)GvGP(gv)->gp_av);
 	return &GvGP(gv)->gp_av;
+}
+
+AV **Perl_wump_dbargs_slot(pTHX) {
+	if (!PL_wump_task) return &aTHX->Idbargs;
+	return Perl_wump_gv_av(gv_fetchpvs("DB::args", GV_ADDMULTI, SVt_PVAV));
 }
 
 static void wump_perl_enter(void *arg) {

@@ -103,6 +103,11 @@ static void wump_publish_queue(pTHX_ wump_publish_work *work, SV *value) {
 		|| isGV_with_GP(value)) return;
 	MAGIC *mg = wump_publish_marker(value);
 	if (mg && mg->mg_private) return;
+	if (SvTYPE(value) == SVt_PVAV && !AvREAL((AV *)value)) {
+		for (MAGIC *magic = SvMAGIC(value); magic; magic = magic->mg_moremagic)
+			if (Perl_wump_debug_args_magic(magic))
+				croak("Wump: cannot publish borrowed debugger arguments; copy the values first");
+	}
 	if (PL_wump_task) {
 		/* The creating act's mortal reference must not later clear TEMP on
 		 * a head another act is using. Transfer each temporary ownership to
@@ -120,6 +125,11 @@ static void wump_publish_queue(pTHX_ wump_publish_work *work, SV *value) {
 	}
 	if (SvTYPE(value) == SVt_PVHV)
 		Perl_wump_hv_publish_cursor(aTHX_ (HV *)value);
+	/* First localization must not change a header already being read by
+	 * another act or native API. Install the inert overlay marker before
+	 * this graph is declared shared. Private aggregates can mark on demand. */
+	if (SvTYPE(value) == SVt_PVAV || SvTYPE(value) == SVt_PVHV)
+		wump_element_mark_locked(aTHX_ value);
 	if (work->used == work->capacity) {
 		size_t capacity = work->capacity ? work->capacity * 2 : 32;
 		if (capacity < work->capacity || capacity > SIZE_MAX / sizeof(SV *))

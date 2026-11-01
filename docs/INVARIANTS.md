@@ -216,6 +216,13 @@ completed graph proof. Graph walks must not invoke Perl callbacks. Known SV
 edges and flagged native payloads do not cover arbitrary XS pointers or custom
 regex-engine private storage.
 
+AV/HV element-overlay markers must be installed during initial publication,
+before declaring the aggregate shared. First localization cannot change a
+header already visible to raw native aggregate readers. Marker-aware plain
+storage checks may accept this inert marker; an active element overlay still
+requires its own view handling. Shared argument heads must not have TEMP
+cleared by sort, grep/map or reference construction.
+
 Enforcement: [publication](../perl/core/wump_publish.c),
 [message send](../perl/core/wump_core.c#L761). Evidence:
 [publication](../tests/perl/publication.t), [hidden roots](../tests/perl/hidden-roots.t).
@@ -360,6 +367,36 @@ Single-slot permission is not proof of arbitrary XS reentrancy or affinity.
 Enforcement: [XS gate](../perl/core/wump_memory.c#L117),
 [audits](../perl/xs.pl). Evidence: [XS boundaries](../tests/perl/xs-parallel.t),
 [JSON default-output boundary](../tests/perl/context-compat.t).
+
+`utf8::encode` and `utf8::decode` admit only plain scalar mutation in parallel.
+Their logical writer claim spans conversion and SETMAGIC, including warning
+hooks; no native mutex spans those callbacks. Exceptions unwind the claim and
+the XSUB refreshes its stack pointer after callbacks. This is not permission
+for arbitrary magical inputs or other UTF-8 entries.
+
+**COMPAT-7 — Module scratch state follows invocation lifetime.** JSON::PP's
+mutable encoder/parser scalars have dynamic call-local bindings; its default
+functional codec is constructed before execution. Yielding and nested codecs
+must preserve options, parser cursor, errors and incremental state.
+
+The active `PL_dbargs` cache resolves the current act's `DB::args` binding.
+Carp localizes that scratch array per `caller_info` invocation. Implicit
+task-lifetime bindings stay below lexical save-stack bindings and are not
+inherited. Debugger argument arrays borrow their frame's SVs: they cannot be
+published without copying, and shifted-out slots are undefined in active
+execution. This does not certify the general Perl debugger.
+
+The native builtin scalar heads for `$!`, `$^E`, `$?`, `$^F` and `$.` are also
+act-local on their canonical GV paths; logical values still come from the
+existing errno/status/IO state. This prevents cache-flag races, not concurrent
+ownership of shared filehandles or arbitrary magical aliases.
+
+Evidence: [UTF-8 XS](../tests/perl/utf8-xs.t),
+[ordinary reentrancy](../tests/perl/json-state.t),
+[parallel JSON](../tests/perl/json-parallel.t),
+[caller and Carp](../tests/perl/caller-parallel.t),
+[publication/localization](../tests/perl/element-mark-parallel.t),
+[namespace and class caches](../tests/perl/gv-parallel.t).
 
 **COMPAT-3 — Compiler and embedding limits remain explicit.** Runtime string
 eval/require/do-file and runtime regex compilation are rejected with multiple

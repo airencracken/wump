@@ -61,6 +61,23 @@ print "ok - reapplying patches preserves every source file\n";
 	print "ok - four-opcode trees upgrade selection metadata and deparser exactly once\n";
 }
 
+# Cached trees can contain an earlier diagnostics block or duplicate blocks
+# from an interrupted upgrade. Replace the owned region rather than append.
+{
+	my $file = "$source/pod/perldiag.pod";
+	my $current = read_file_for_test($file);
+	my $old = $current;
+	$old =~ s/(=item Wump:.*?)(?==item 'X' outside of string)/$1$1/s
+		or die "missing Wump diagnostic region\n";
+	open my $output, '>', $file or die $!;
+	print {$output} $old or die $!;
+	close $output or die $!;
+	system 'perl', 'perl/apply.pl', $source;
+	$? == 0 or die "diagnostics upgrade failed: $?\n";
+	read_file_for_test($file) eq $current or die "diagnostics upgrade duplicated entries\n";
+	print "ok - upgrading cached diagnostics replaces the complete owned region\n";
+}
+
 my $legacy = tempdir('wump-key-upgrade-XXXXXX', TMPDIR => 1, CLEANUP => 1);
 for my $file (keys %$after) {
 	(my $relative = $file) =~ s/^\Q$source\E\/// or die "unexpected path: $file\n";
@@ -343,6 +360,7 @@ for my $case (
 	['regen/opcodes', qr/unexpected opcode definitions/, 'unknown opcode definitions cannot acquire generated dispatch tables'],
 	['cpan/MIME-Base64/Base64.xs', qr/unexpected customized source/, 'unknown native changes cannot acquire audited checksums'],
 	['cpan/JSON-PP/lib/JSON/PP.pm', qr/unexpected customized source/, 'unknown JSON state changes cannot acquire audited checksums'],
+	['dist/Carp/lib/Carp.pm', qr/unexpected customized source/, 'unknown Carp scratch changes cannot acquire audited checksums'],
 ) {
 	my ($file, $expected, $message) = @$case;
 	my $original = read_file_for_test("$legacy/$file");

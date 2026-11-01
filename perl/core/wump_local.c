@@ -78,9 +78,25 @@ static wump_local *wump_local_add(pTHX_ struct wump_perl_task *task,
 	return slot;
 }
 
+static wump_local *wump_local_implicit(pTHX_ GV *gv, char kind, SV *value) {
+	wump_local *slot = wump_local_add(aTHX_ PL_wump_task, gv, kind, value);
+	slot->pocket = TRUE;
+	/* Implicit task-lifetime bindings stay below saved lexical bindings,
+	 * whose destructors must still pop in strict LIFO order. */
+	PL_wump_task->locals = slot->next;
+	wump_local **tail = &PL_wump_task->locals;
+	while (*tail) tail = &(*tail)->next;
+	*tail = slot;
+	slot->next = NULL;
+	return slot;
+}
+
 static void wump_local_check(pTHX_ SV *value, char kind) {
 	if (value == NULL) return;
+	struct wump_mutation *guard = Perl_wump_metadata_begin(aTHX);
+	Perl_wump_memory_check(aTHX_ value);
 	bool unsafe = SvGMAGICAL(value) || SvSMAGICAL(value);
+	Perl_wump_mutation_end(aTHX_ guard);
 	if (unsafe) {
 		unsafe = FALSE;
 		for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic) {
@@ -93,7 +109,8 @@ static void wump_local_check(pTHX_ SV *value, char kind) {
 	if (kind != 's' && SvMAGICAL(value)) {
 		for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic) {
 			if (mg->mg_type != PERL_MAGIC_backref && mg->mg_type != PERL_MAGIC_arylen_p
-				&& !Perl_wump_element_magic(mg) && !Perl_wump_publish_magic(mg))
+				&& !Perl_wump_element_magic(mg) && !Perl_wump_publish_magic(mg)
+				&& !Perl_wump_debug_args_magic(mg))
 				unsafe = TRUE;
 		}
 	}
@@ -134,6 +151,30 @@ static char wump_native_magic(pTHX_ SV *value) {
 			&& !Perl_wump_publish_magic(mg)) return 0;
 	}
 	return found;
+}
+
+static SV **wump_native_cell(pTHX_ GV *gv) {
+	/* These builtins read task-selected native state, but their root SV
+	 * caches are mutable too. A private head prevents concurrent GET magic
+	 * from rewriting the same flags. This does not isolate shared IO handles. */
+	if (GvSTASH(gv) != aTHX->Idefstash || GvNAMELEN(gv) != 1) return NULL;
+	char name = GvNAME(gv)[0];
+	if (name != '!' && name != '\005' && name != '?' && name != '\006' && name != '.') return NULL;
+	wump_local *slot = wump_local_find(aTHX_ gv, 's', FALSE);
+	if (slot) return &slot->value;
+	struct wump_mutation *guard = Perl_wump_metadata_begin(aTHX);
+	SV *old = GvGP(gv)->gp_sv;
+	if (!wump_native_magic(aTHX_ old)) {
+		Perl_wump_mutation_end(aTHX_ guard);
+		return NULL;
+	}
+	SV *value = newSV(0);
+	slot = wump_local_implicit(aTHX_ gv, 's', value);
+	/* Cloning builtin magic inspects its owning GV. Publish our private
+	 * slot first so that lookup cannot recursively allocate another cell. */
+	mg_localize(old, value, FALSE);
+	Perl_wump_mutation_end(aTHX_ guard);
+	return &slot->value;
 }
 
 static void wump_errno_restore(pTHX_ void *arg) {

@@ -167,7 +167,17 @@ input snapshots; mutation and iterator entries remain gated.
 `Socket::getnameinfo` accepts plain packed IPv4/IPv6 addresses with explicitly
 numeric host/service flags. Resolver-backed requests and other Socket entries
 remain gated. `utf8::is_utf8` reads the flag under metadata synchronization and
-rejects magical inputs; it does not admit the other `utf8` helpers.
+rejects magical inputs. `utf8::encode` and `utf8::decode` also run in parallel
+on plain scalars, retaining a logical mutation claim through conversion and
+warning callbacks. References, objects and unsupported magic are rejected
+before coercion; the remaining unaudited `utf8` helpers stay gated.
+
+The pinned JSON::PP now keeps encoder/parser options and cursors in dynamic
+call-local bindings. Its default UTF-8 functional API, independent mixed
+codecs, yielding/nested callbacks, parser errors and incremental UTF-8 parsing
+have integration coverage at one, two and four slots. This changes JSON::PP's
+scratch-state implementation too; admitting UTF-8 XSUBs alone was insufficient.
+It does not certify other JSON backends or arbitrary CPAN modules.
 
 The functional Unix path join entries use private argument heads and join
 constants. Reference arguments retain their original referents while overloads
@@ -294,6 +304,17 @@ acts. Linux `$!` and `$^E` use the scheduler's per-act native errno; `$?` has
 task-local status storage. Their `local` bindings restore the enclosing value
 on return and exception unwind. New acts start with their own error and status
 values rather than inheriting those bindings.
+
+Canonical `$!`, `$^E`, `$?`, `$^F` and `$.` accesses use private scalar cache
+heads as well as their existing native value storage. Shared filehandles and
+arbitrary aliases of native magical scalars still require separate review.
+
+Caller argument inspection from package DB uses an act-local `@DB::args` and
+the native cache resolves its current binding. Carp localizes this scratch
+array for each invocation, preserving nested diagnostics. These arrays borrow
+SVs from their call frames: sharing the original array is rejected; copy its
+values before sending them. Shifted-out prefix slots are undefined during
+active inspection. This bounded caller support does not enable the debugger.
 
 Regex match state is task-local. Numbered and named captures, capture offsets,
 `/p` values, `$^R`, named-capture hash iterators, match-once flags, and `/o`

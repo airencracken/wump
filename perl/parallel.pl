@@ -52,6 +52,8 @@ C
 	}
 	edit('scope.c', '            SvTEMP_off(sv);',
 		'            if (!SvIMMORTAL(sv)) SvTEMP_off(sv);');
+	edit('sv_inline.h', '    SvTEMP_off(tmpRef);',
+		'    if (!PL_wump_task || !Perl_wump_is_shared(aTHX_ tmpRef)) SvTEMP_off(tmpRef);');
 	# List repetition keeps aliases. Constants can be shared before graph
 	# publication; avoid rewriting their already-clear TEMP bit. Published
 	# heads retain their flags just as in reference construction below.
@@ -139,6 +141,87 @@ C
             if (Perl_wump_parallel(aTHX)) goto do_sv_ref;
             HV *stash = SvSTASH(rv);
 C
+	# Existing-glob lookup still sets MULTI and initializes value slots. These
+	# metadata writes race even when callers only sort or resolve a known name.
+	# Leave magic-module loading and its possible callbacks outside the guard.
+	edit('gv.c', "            GvMULTI_on(gv);\n            gv_init_svtype(gv, sv_type);", <<'C');
+            /* Wump existing-glob metadata. */
+            struct wump_mutation *wump_guard = Perl_wump_parallel(aTHX)
+                ? Perl_wump_metadata_begin(aTHX) : NULL;
+            GvMULTI_on(gv);
+            gv_init_svtype(gv, sv_type);
+            Perl_wump_mutation_end(aTHX_ wump_guard);
+C
+	# A compiled subroutine may still be stored as a compact CV reference;
+	# the first symbolic lookup expands it in place. Serialize that expansion
+	# with identifier lookups too. Punctuation magic may load a tie module,
+	# and GV_ADDWARN may call a warning hook: neither belongs in this region.
+	my $gv_file = "$source/gv.c";
+	my $gv_text = read_file($gv_file);
+	unless (index($gv_text, 'S_wump_gv_metadata_name(') >= 0) {
+		my $helper = <<'C';
+STATIC bool
+S_wump_gv_metadata_name(const char *name, STRLEN len, I32 flags)
+{
+    if (!len || (flags & GV_ADDWARN)) return FALSE;
+    for (STRLEN i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)name[i];
+        if (!(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z')
+            && !(c >= '0' && c <= '9') && c != '_' && c != ':' && c != '\'')
+            return FALSE;
+    }
+    return TRUE;
+}
+
+C
+		$gv_text =~ s/^(GV \*\n)(Perl_gv_fetchpvn_flags\()/$helper$1$2/m
+			or die "missing glob lookup declaration\n";
+		write_file($gv_file, $gv_text);
+	}
+	memory_guard($source, 'gv.c', 'gv_fetchpvn_flags', 'GV *', 'stash',
+		'Perl_wump_parallel(aTHX) && S_wump_gv_metadata_name(nambeg, full_len, flags)', undef, 1);
+	# Sorting never owns shared argument heads. The act-local scalar bindings
+	# also avoid changing the shared $a/$b globs' INTRO flags.
+	edit('pp_sort.c', '            SvTEMP_off(sv);',
+		'            if (!PL_wump_task || !Perl_wump_is_shared(aTHX_ sv)) SvTEMP_off(sv);');
+	my $grep_file = "$source/pp_ctl.c";
+	my $grep_text = read_file($grep_file);
+	$grep_text =~ s/^(\s*)SvTEMP_off\(src\);/$1if (!PL_wump_task || !Perl_wump_is_shared(aTHX_ src)) SvTEMP_off(src);/mg;
+	write_file($grep_file, $grep_text);
+	# Shifted-out argument slots can point at freed/reused SVs. Actors never
+	# inspect them when constructing the debugger's non-owning alias array.
+	edit('pp_ctl.c', '            SV* sv = AvALLOC(ary)[i];',
+		'            SV* sv = PL_wump_task && i < off ? NULL : AvALLOC(ary)[i];');
+	edit('pp_sort.c', "                GvINTRO_off(PL_firstgv);\n                GvINTRO_off(PL_secondgv);", <<'C');
+                if (!PL_wump_task) {
+                    GvINTRO_off(PL_firstgv);
+                    GvINTRO_off(PL_secondgv);
+                }
+C
+	# A boolean blessed() query reads the class stash header as well as the
+	# referent. Overload-cache initialization can attach magic to that stash.
+	my $blessed_file = "$source/pp.c";
+	my $blessed_text = read_file($blessed_file);
+	my $blessed_start = index($blessed_text, "PP(pp_blessed)\n{");
+	my $blessed_end = index($blessed_text, "\n}\n", $blessed_start);
+	$blessed_start >= 0 && $blessed_end > $blessed_start or die "missing blessed opcode\n";
+	my $blessed_entry = substr($blessed_text, $blessed_start, $blessed_end - $blessed_start);
+	unless (index($blessed_entry, '/* Wump blessed class snapshot. */') >= 0) {
+		my $guard = <<'C';
+    SvGETMAGIC(arg);
+    /* Wump blessed class snapshot. */
+    struct wump_mutation *wump_guard = NULL;
+    if (Perl_wump_parallel(aTHX)) {
+        wump_guard = Perl_wump_metadata_begin(aTHX);
+        Perl_wump_memory_check(aTHX_ arg);
+        if (SvROK(arg)) Perl_wump_memory_check(aTHX_ SvRV(arg));
+    }
+C
+		$blessed_entry =~ s/    SvGETMAGIC\(arg\);\n/$guard/ or die "missing blessed fetch\n";
+		$blessed_entry =~ s/  ret:\n/  ret:\n    Perl_wump_mutation_end(aTHX_ wump_guard);\n/ or die "missing blessed return\n";
+		substr($blessed_text, $blessed_start, $blessed_end - $blessed_start, $blessed_entry);
+		write_file($blessed_file, $blessed_text);
+	}
 	edit('sv.h', "#define HvAMAGIC(hv)\t\t(SvFLAGS(hv) & SVf_AMAGIC)",
 		'#define HvAMAGIC(hv) Perl_wump_stash_amagic((HV *)(hv), 0)');
 	edit('sv.h', "#define HvAMAGIC_on(hv)\t\t(SvFLAGS(hv) |= SVf_AMAGIC)",

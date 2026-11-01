@@ -3,9 +3,10 @@ sub apply_porting {
 	my ($source) = @_;
 	require Digest::SHA;
 	my @customized = (
+		['Carp', 'dist/Carp', 'lib/Carp.pm', 'c72e49d7ad4a782c47f9d1be26d5f4725efa79ce'],
 		['Digest::MD5', 'cpan/Digest-MD5', 'MD5.xs', '7c552068afce187cadd0ed42a9277169d5d8b271'],
 		['Digest::SHA', 'cpan/Digest-SHA', 'SHA.xs', '7e92d6904020634076eb940ac5c8b849414d6685'],
-		['Encode', 'cpan/Encode', 'Encode.xs', 'd590ca69605b1ecc16bf1692113735130f5d7a41'],
+		['Encode', 'cpan/Encode', 'Encode.xs', 'ca9d7ecaa424ef97ff5e762fc121147ae63e1484'],
 		['IO', 'dist/IO', 'IO.xs', '80235249d34a3fd205c4214568d3d58117394017'],
 		['JSON::PP', 'cpan/JSON-PP', 'lib/JSON/PP.pm', '446b21f9dac6cce5896338f05f5571a26bfcecb5'],
 		['MIME::Base64', 'cpan/MIME-Base64', 'Base64.xs', '0aac9224a7175ac874d6f1ded9d9e8bba64d9ded'],
@@ -43,7 +44,16 @@ sub apply_porting {
 	write_file("$source/t/porting/customized.dat", $checksums);
 	my $diagnostics = read_file("$FindBin::Bin/diagnostics.pod");
 	my $anchor = "=item 'X' outside of string\n";
-	edit('pod/perldiag.pod', $anchor, $diagnostics . $anchor);
+	my $pod = read_file("$source/pod/perldiag.pod");
+	my $end = index($pod, $anchor);
+	$end >= 0 or die "missing diagnostic insertion point\n";
+	my $start = index($pod, '=item Wump:');
+	# Replace our whole owned region when upgrading cached trees. Inserting
+	# a new complete block would duplicate every earlier diagnostic entry.
+	$start = $end if $start < 0;
+	$start <= $end or die "unexpected Wump diagnostic placement\n";
+	substr($pod, $start, $end - $start, $diagnostics);
+	write_file("$source/pod/perldiag.pod", $pod);
 	# This test digests MD5.xs as input data using every native digest API.
 	# Its known fixture changed intentionally; retain a fixed expected digest
 	# independently verified with host md5sum and the host Digest::MD5.

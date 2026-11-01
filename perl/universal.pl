@@ -168,13 +168,60 @@ C
 		$entry =~ s/        SvGETMAGIC\(sv\);\n/$query/ or die "missing UTF-8 input fetch\n";
 		substr($text, $start, $end - $start, $entry);
 	}
+	# Both operations mutate the caller's actual head. Keep the logical writer
+	# claim through conversion and SETMAGIC, while allowing supported warning
+	# hooks to reenter or yield without a native mutex held across callbacks.
+	my $utf8_helper = <<'C';
+STATIC struct wump_mutation *
+S_wump_utf8_mutation(pTHX_ SV *value)
+{
+    struct wump_mutation *guard = Perl_wump_mutation_begin(aTHX_ value);
+    bool plain = SvTYPE(value) <= SVt_PVMG && SvTYPE(value) != SVt_INVLIST
+        && !SvROK(value) && !SvOBJECT(value) && !SvVALID(value);
+    if (plain && SvTYPE(value) == SVt_PVMG) {
+        for (MAGIC *magic = SvMAGIC(value); magic; magic = magic->mg_moremagic)
+            if (!Perl_wump_publish_magic(magic)
+                && magic->mg_type != PERL_MAGIC_regex_global
+                && magic->mg_type != PERL_MAGIC_utf8) plain = FALSE;
+    }
+    if (!plain) croak("Wump: parallel UTF-8 mutation requires a plain scalar");
+    return guard;
+}
+
+C
+	my $helper_marker = "XS(XS_utf8_encode); /* prototype to pass -Wmissing-prototypes */";
+	if (index($text, 'S_wump_utf8_mutation(pTHX_') < 0) {
+		$text =~ s/\Q$helper_marker\E/$utf8_helper$helper_marker/ or die "missing UTF-8 encode declaration\n";
+	}
+	for my $name (qw(encode decode)) {
+		$start = index($text, "XS(XS_utf8_$name)\n{");
+		$end = index($text, "\n}\n", $start);
+		$start >= 0 && $end >= 0 or die "missing UTF-8 $name entry\n";
+		$entry = substr($text, $start, $end - $start);
+		unless (index($entry, '/* Wump guarded UTF-8 mutation. */') >= 0) {
+			my $guard = <<'C';
+    /* Wump guarded UTF-8 mutation. */
+    struct wump_mutation *wump_guard = Perl_wump_parallel(aTHX)
+        ? S_wump_utf8_mutation(aTHX_ ST(0)) : NULL;
+C
+			if ($name eq 'encode') {
+				$entry =~ s/    sv_utf8_encode\(ST\(0\)\);/$guard    sv_utf8_encode(ST(0));/ or die "missing UTF-8 encode conversion\n";
+				$entry =~ s/    XSRETURN_EMPTY;/    Perl_wump_mutation_end(aTHX_ wump_guard);\n    XSRETURN_EMPTY;/ or die "missing UTF-8 encode return\n";
+			} else {
+				$entry =~ s/        SvPV_force_nolen\(sv\);/$guard        SvPV_force_nolen(sv);/ or die "missing UTF-8 decode coercion\n";
+				$entry =~ s/        ST\(0\) = boolSV\(RETVAL\);/        Perl_wump_mutation_end(aTHX_ wump_guard);\n        SPAGAIN;\n        ST(0) = boolSV(RETVAL);/ or die "missing UTF-8 decode return\n";
+			}
+			substr($text, $start, $end - $start, $entry);
+		}
+	}
 	$start = index($text, "        XSANY.any_i32 = xsub->ix;");
 	$end = index($text, "\n    } while", $start);
 	$start >= 0 && $end >= 0 or die "missing native entry registration\n";
 	my $registration = <<'C';
         XSANY.any_i32 = xsub->ix;
         if (xsub->xsub == XS_UNIVERSAL_can || xsub->xsub == XS_UNIVERSAL_isa || xsub->xsub == XS_NamedCapture_FETCH
-            || xsub->xsub == XS_utf8_is_utf8 || xsub->xsub == XS_utf8_downgrade)
+            || xsub->xsub == XS_utf8_is_utf8 || xsub->xsub == XS_utf8_downgrade
+            || xsub->xsub == XS_utf8_encode || xsub->xsub == XS_utf8_decode)
             Perl_wump_xs_allow(aTHX_ cv);
 C
 	chomp $registration;

@@ -8,7 +8,7 @@ wump_utf8_magic_only(SV *value)
 {
     if (SvTYPE(value) < SVt_PVMG) return !SvMAGICAL(value);
     for (MAGIC *magic = SvMAGIC(value); magic; magic = magic->mg_moremagic)
-        if (!Perl_wump_publish_magic(magic)) return FALSE;
+        if (!Perl_wump_publish_magic(magic) && !Perl_wump_element_magic(magic)) return FALSE;
     return TRUE;
 }
 

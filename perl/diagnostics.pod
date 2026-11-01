@@ -28,6 +28,17 @@ names and the read-only capture operations.
 (F) A parallel named-capture query targeted a custom regular-expression
 engine. Only the native engine's audited capture storage is supported.
 
+=item Wump: cannot publish borrowed debugger arguments; copy the values first
+
+(F) An act tried to share the debugger's non-owning caller argument array.
+Copy its live values into an ordinary array before sharing them.
+
+=item Wump: parallel UTF-8 mutation requires a plain scalar
+
+(F) Parallel C<utf8::encode> or C<utf8::decode> received a reference,
+object or unsupported magical scalar. Use a plain scalar; native position,
+UTF-8 cache and Wump publication metadata remain supported.
+
 =item Wump: pocket reference alias localization is not supported yet
 
 (F) C<pocket> was applied to reference-alias localization. This form cannot

@@ -116,7 +116,7 @@ if ($mode eq 'many') {
 } else {
 	push @results, exercise($_) for 1..8;
 }
-# Character output avoids the separately tested utf8::encode XS boundary;
+# Character output separates context observations from UTF-8 conversion tests;
 # all observations here are ASCII. This does not change observed Perl state.
 print JSON::PP->new->ascii->encode({results => [sort {$a->[0] <=> $b->[0]} @results],
 	outside => [$dynamic, $_], slots => $mode eq 'plain' ? 0 : Wump::execution_slots()}), "\n";
@@ -172,15 +172,12 @@ for my $slots (1, 2, 4) {
 	my $lib = dirname($private) . '/lib';
 	open my $child, '-|', 'timeout', '60s', $private, "-I$lib", '-Iperl/lib', '-e',
 		q{use v5.42; use Wump; use JSON::PP;
-		my $json = eval { JSON::PP::encode_json({ascii => 'value'}) };
-		if (defined $json) { print "$json\n" }
-		else { print $@ =~ /XS function has not declared parallel safety: utf8::encode/
-			? "unsupported utf8::encode\n" : "unexpected error: $@" }
+		print JSON::PP::encode_json({ascii => 'value'}), "\n";
 		} or die $!;
 	my $output = do {local $/; <$child>};
 	close $child;
-	is($?, 0, "JSON::PP boundary remains catchable with $slots slots");
-	is($output, $slots == 1 ? "{\"ascii\":\"value\"}\n" : "unsupported utf8::encode\n",
-		'JSON::PP default UTF-8 output remains explicitly unsupported on multiple slots');
+	is($?, 0, "JSON::PP succeeds with $slots slots");
+	is($output, "{\"ascii\":\"value\"}\n",
+		'JSON::PP default UTF-8 output agrees with stock on every slot count');
 }
 done_testing;

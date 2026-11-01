@@ -1096,12 +1096,13 @@ SV **Perl_wump_borrow_av(pTHX_ AV *value, SSize_t index) {
 	wump_borrow *borrow = wump_borrow_start(aTHX_ (SV *)value);
 	if (!borrow) croak("Wump: array borrowing requires a published array");
 	if (!borrow->reading) croak("Wump: cannot borrow array storage inside its mutation");
-	if (SvTYPE(value) != SVt_PVAV || !AvREAL(value)) {
+	if (SvTYPE(value) != SVt_PVAV || !AvREAL(value)
+		|| Perl_wump_overlay_active(aTHX_ (SV *)value)) {
 		wump_borrow_read_end(aTHX_ borrow);
 		croak("Wump: array borrowing requires ordinary real storage");
 	}
 	for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic) {
-		if (!Perl_wump_publish_magic(mg)) {
+		if (!Perl_wump_publish_magic(mg) && !Perl_wump_element_magic(mg)) {
 			wump_borrow_read_end(aTHX_ borrow);
 			croak("Wump: magical array borrowing is not supported");
 		}

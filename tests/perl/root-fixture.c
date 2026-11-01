@@ -596,6 +596,28 @@ static XS(xs_opaque_regex) {
 	XSRETURN(1);
 }
 
+static XS(xs_publish_debug_args) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items) croak("Usage: RootFixture::publish_debug_args()");
+	if (AvREAL(PL_dbargs)) croak("fixture expected non-owning debugger arguments");
+	Perl_wump_publish(aTHX_ (SV *)PL_dbargs);
+	XSRETURN_EMPTY;
+}
+
+static XS(xs_root_debug_args) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items) croak("Usage: RootFixture::root_debug_args()");
+	GV *gv = gv_fetchpvs("DB::args", 0, SVt_PVAV);
+	AV *root = GvGP(gv)->gp_av;
+	AV *copy = newAV();
+	for (SSize_t i = 0; root && i <= AvFILLp(root); i++)
+		av_push(copy, newSVsv(AvARRAY(root)[i]));
+	ST(0) = sv_2mortal(newRV_noinc((SV *)copy));
+	XSRETURN(1);
+}
+
 XS_EXTERNAL(boot_RootFixture) {
 	dXSARGS;
 	PERL_UNUSED_VAR(cv);
@@ -604,6 +626,8 @@ XS_EXTERNAL(boot_RootFixture) {
 	newXS("RootFixture::malformed_utf8", xs_malformed_utf8, __FILE__);
 	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::execution_context", xs_execution_context, __FILE__));
 	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::executor_rendezvous", xs_executor_rendezvous, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::publish_debug_args", xs_publish_debug_args, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::root_debug_args", xs_root_debug_args, __FILE__));
 	newXS("RootFixture::metadata_guard", xs_metadata_guard, __FILE__);
 	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::ref_into", xs_ref_into, __FILE__));
 	newXS("RootFixture::opaque_regex", xs_opaque_regex, __FILE__);

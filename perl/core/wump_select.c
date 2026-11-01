@@ -50,11 +50,13 @@ static void wump_selection_free(pTHX_ void *arg) {
 static void wump_selection_plain(pTHX_ SV *value, bool array) {
 	Perl_wump_memory_check(aTHX_ value);
 	bool plain = array ? SvTYPE(value) == SVt_PVAV && AvREAL((AV *)value) && !SvOBJECT(value)
+		&& !Perl_wump_overlay_active(aTHX_ value)
 		: SvTYPE(value) <= SVt_PVMG && SvTYPE(value) != SVt_INVLIST
 			&& !SvVALID(value) && !(SvROK(value) && SvWEAKREF(value));
 	if (plain && SvTYPE(value) >= SVt_PVMG) {
 		for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic) {
-			if (!Perl_wump_publish_magic(mg) && !(array && mg->mg_type == PERL_MAGIC_backref)) plain = FALSE;
+			if (!Perl_wump_publish_magic(mg) && !(array &&
+				(mg->mg_type == PERL_MAGIC_backref || Perl_wump_element_magic(mg)))) plain = FALSE;
 		}
 	}
 	if (!plain) croak("Wump: selection requires plain case arrays and scalar fields");

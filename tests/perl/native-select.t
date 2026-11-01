@@ -124,6 +124,18 @@ for my $cases (\@outer,[\@row],$fields,[$fields],$weak_outer,[bless(['recv',unde
 	like($@,qr/Wump: (?:selection requires|invalid selection)/,'unsupported control magic rejects');
 }
 is($SelectTied::fetches,0,'descriptor validation invokes no tied callbacks');
+{
+	my $cases=[['recv',undef]];
+	local $cases->[0]=['recv',undef];
+	eval {sel($cases,0)};
+	like($@,qr/selection requires plain/,'active outer-array element views reject before selecting');
+}
+{
+	my $row=['recv',undef];
+	local $row->[1]=undef;
+	eval {sel([$row],0)};
+	like($@,qr/selection requires plain/,'active descriptor element views reject before selecting');
+}
 $ch=chan(1); sel([['send',$ch,83]],0);
 is_deeply([sel([['recv',$ch]],0)],[0,83,1],'runtime remains usable after validation failures');
 

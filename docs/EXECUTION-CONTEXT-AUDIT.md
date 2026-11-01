@@ -1,5 +1,13 @@
 # Perl execution-context and compatibility audit
 
+Follow-up on 2026-11-01: the historical JSON admission limit described below
+is superseded by the scoped UTF-8/JSON work in [validation](VALIDATION.md).
+New regressions cover module call state, publication/localization markers,
+namespace metadata, Carp scratch arrays and native builtin cache heads.
+`dbargs` is now classified as interpreter-global storage with active binding
+routing; 233 declarations remain unresolved. The original audit and failed
+captures below remain historical evidence, not current compatibility claims.
+
 Date: 2026-10-31. Audited runtime revision: `f5ce9cf`.
 Base: pinned Perl 5.42.2, Linux x86-64, GCC 14.2.1, matched multiplicity,
 ithreads/op-sharing and 64-bit configuration. Wump acts share an interpreter;

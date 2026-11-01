@@ -3,7 +3,7 @@
 void Perl_wump_av_detach(pTHX_ AV *value) {
 	if (!AvREAL(value)) croak("Wump: borrowing non-real array storage is not supported");
 	for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic)
-		if (!Perl_wump_publish_magic(mg))
+		if (!Perl_wump_publish_magic(mg) && !Perl_wump_element_magic(mg))
 			croak("Wump: borrowing magical array storage is not supported");
 	if (!AvALLOC(value)) return;
 	AV *copy = newAV();

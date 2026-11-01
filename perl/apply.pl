@@ -83,6 +83,8 @@ bool Perl_wump_stash_amg(pTHX_ HV *stash);
 void Perl_wump_panic(pTHX_ SV *error);
 SV **Perl_wump_gv_sv(GV *gv);
 AV **Perl_wump_gv_av(GV *gv);
+AV **Perl_wump_dbargs_slot(pTHX);
+bool Perl_wump_debug_args_magic(const MAGIC *mg);
 void Perl_wump_pm_stamp(pTHX_ PMOP *pm);
 SV **Perl_wump_pm_slot(pTHX_ PMOP *pm);
 REGEXP *Perl_wump_pm_get(pTHX_ PMOP *pm);
@@ -356,11 +358,13 @@ my $magic_cache_macros = <<'C';
 #define PL_warnhook (*(PL_wump_task ? Perl_wump_hook_cache(aTHX_ 'W') : &aTHX->Iwarnhook))
 #undef PL_dowarn
 #define PL_dowarn (*(PL_wump_task ? Perl_wump_warning_cache(aTHX) : &aTHX->Idowarn))
+#undef PL_dbargs
+#define PL_dbargs (*Perl_wump_dbargs_slot(aTHX))
 C
 $vars =~ s/#endif\n\z/$magic_cache_macros#endif\n/;
 my $root_macros = "#ifdef WUMP_ROOT_CONTEXT\n#undef PL_wump_task\n#define PL_wump_task NULL\n";
 my %root_fields;
-for my $name (@vars, qw(sv_root sv_arenaroot sv_count body_arenas body_roots nomemok rs ors_sv diehook warnhook dowarn)) {
+for my $name (@vars, qw(sv_root sv_arenaroot sv_count body_arenas body_roots nomemok rs ors_sv diehook warnhook dowarn dbargs)) {
 	next if $root_fields{$name}++;
 	$root_macros .= "#undef PL_$name\n#define PL_$name (aTHX->I$name)\n";
 }
@@ -560,6 +564,8 @@ require "$FindBin::Bin/xs.pl";
 apply_xs($source);
 require "$FindBin::Bin/json.pl";
 apply_json($source);
+require "$FindBin::Bin/carp.pl";
+apply_carp($source);
 edit('pp_hot.c', "\n                SvTEMP_off(sv);",
 	"\n                if (!PL_wump_task || !Perl_wump_is_shared(aTHX_ sv)) SvTEMP_off(sv);");
 edit('toke.c', "Perl_lex_start(pTHX_ SV *line, PerlIO *rsfp, U32 flags)\n{",
