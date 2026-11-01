@@ -99,6 +99,8 @@ against the saved baseline; it never turns unsupported work into a fast result.
 The [recorded matrix](bench/operation-matrix-fork-threads-baseline.md) includes
 the fork and ithread controls;
 use a local baseline when your machine, CPU mask or controls differ.
+The [native-yield experiment](bench/native-yield-api.md) separately compares
+the Perl wrapper, direct XS and the new core opcode.
 
 Read the [benchmark guide](docs/BENCHMARKS.md) for workload definitions, baseline
 updates, machine/build requirements and the existing focused benchmarks.

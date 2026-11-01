@@ -2138,3 +2138,32 @@ This is the first native primitive; `act`, channel operations and the complete
 core feature syntax remain unfinished. Ordinary function/aggregate overhead
 still requires core profiling rather than attributing every slowdown to the
 public API boundary.
+
+### Native timing checkpoint (2026-11-01)
+
+The [seven-run API experiment](bench/native-yield-api.md), captured on clean
+`fbe0e8a` with affinity `0,2,4,6`, measures native yield at 189.5/641.3 ns on
+one/four slots, versus 598.4/3351.2 ns through the qualified Perl wrapper and
+321.3/1358.4 ns through direct XS. Native work time falls 68.3%/80.9% against
+the wrapper and 41.0%/52.8% against XS. Matched loops retain interpreter and
+scheduler bookkeeping, so this is not a pure ABI-cost measurement.
+
+By contrast, bypassing only `act`'s wrapper saves 3.0%/6.3% in its separate
+spawn/completion probe. Deeper creation/context/publication work remains.
+The current common matrix retains its qualified-yield fixture; the focused
+native record is linked from the README and does not rewrite historical cells.
+
+The full standard upstream rerun passes 2,919 files / 1,351,319 checks after
+fixing Opcode classification. Thirty native checks, parser/opcode regeneration,
+source upgrades, the project/context/legacy suites, 103 matrix unit checks and
+312 matrix/probe integration checks pass. Timing-probe validation caught lazy
+clock-constant resolution and default UTF-8 JSON reporting on four slots;
+the fixture now prepares constants before execution and uses ASCII reporting,
+preserving both existing XS admission restrictions.
+
+The [focused C record](bench/stack-cache-runtime.md) measures cached spawn
+reductions of 35.08%/76.65% on one/four slots. Its short four-slot selection
+sample rises 10.39%; a seven-run, two-million-iteration selection-only probe
+shows +0.73%. Both fixtures and all raw samples remain recorded, since the
+changed work size/driver layout does not establish that the initial result
+was noise. No runtime selection change was made to chase that observation.

@@ -205,6 +205,14 @@ the focused probe distinguishes that from the native operation.
 Ordinary compute-row overhead cannot
 be attributed to Wump API wrappers, which those timed loops never invoke.
 
+The [recorded native-yield experiment](../bench/native-yield-api.md) retains
+seven rotated one/four-slot runs: native yield takes 189.5/641.3 ns versus
+598.4/3351.2 ns through the wrapper. Direct XS takes 321.3/1358.4 ns. The raw
+samples and machine record retain counts, process times, order, hashes and
+the capture runner. The [focused C stack-cache record](../bench/stack-cache-runtime.md)
+also retains every measured workload and a larger selection follow-up;
+these fixtures have different work from the Perl API matrix.
+
 ## Existing focused benchmarks
 
 ### Matched integer benchmark
