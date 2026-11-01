@@ -142,6 +142,63 @@ static void test_external(void) {
 	}
 }
 
+typedef struct busy_external_arg {
+	int fd[2];
+	atomic_int running, published, stop;
+	atomic_uint switches;
+	wump_chan *done;
+} busy_external_arg;
+
+static void *busy_external_writer(void *arg) {
+	busy_external_arg *ctx = arg;
+	while (!atomic_load(&ctx->running)) {
+		struct timespec delay = { .tv_nsec = MS };
+		while (nanosleep(&delay, &delay) != 0) CHECK(errno == EINTR);
+	}
+	atomic_store(&ctx->published, 1);
+	CHECK(write(ctx->fd[1], "b", 1) == 1);
+	return NULL;
+}
+
+static void busy_external_worker(void *arg) {
+	busy_external_arg *ctx = arg;
+	atomic_store(&ctx->running, 1);
+	while (!atomic_load(&ctx->stop)) {
+		if (wump_checkpoint() && atomic_load(&ctx->published))
+			atomic_fetch_add(&ctx->switches, 1);
+	}
+	CHECK(wump_chan_send(ctx->done, NULL) == 0);
+}
+
+static void busy_external_program(void *arg) {
+	busy_external_arg *ctx = arg;
+	wump_io *io = wump_io_open(ctx->fd[0]);
+	ctx->done = wump_chan_make(0, 0);
+	CHECK(io != NULL && ctx->done != NULL);
+	CHECK(wump_go(busy_external_worker, ctx) == 0);
+	char value;
+	/* No timer is armed: the poller's external global publication alone
+	 * must compete promptly with repeated local compute dispatches. */
+	CHECK(wump_io_read(io, &value, 1, -1) == 1 && value == 'b');
+	CHECK(atomic_load(&ctx->switches) < 8);
+	atomic_store(&ctx->stop, 1);
+	CHECK(wump_chan_recv(ctx->done, NULL) == 1);
+	wump_chan_free(ctx->done);
+	CHECK(wump_io_free(io) == 0);
+}
+
+static void test_busy_external(void) {
+	for (int n = 1; n <= 4; n *= 4) {
+		busy_external_arg ctx = {0};
+		CHECK(pipe(ctx.fd) == 0);
+		pthread_t thread;
+		CHECK(pthread_create(&thread, NULL, busy_external_writer, &ctx) == 0);
+		CHECK(wump_run(busy_external_program, &ctx, n) == 0);
+		CHECK(pthread_join(thread, NULL) == 0);
+		CHECK(close(ctx.fd[1]) == 0);
+	}
+}
+
 typedef struct io_arg {
 	wump_io *io, *peer;
 	wump_chan *done;
@@ -580,6 +637,7 @@ int main(int argc, char **argv) {
 	test_case tests[] = {
 		{ "I/O API, ownership transfer, and flag rollback", test_api },
 		{ "external pipe readiness while every worker is idle", test_external },
+		{ "external pipe readiness competes with local compute quanta", test_busy_external },
 		{ "close interrupts both directions and free rejects active users", test_close },
 		{ "combined readiness wait closes exactly once", test_combined },
 		{ "independent read/write waits rearm one-shot epoll", test_duplex },

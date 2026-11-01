@@ -860,12 +860,12 @@ the performance milestone is complete.
 | Design goal | Current evidence | Remaining work |
 | --- | --- | --- |
 | One interpreter, M:N execution | Supported Perl closures run on several slots with private act state and per-slot allocation caches; tests verify interpreter identity and migration. | Generalize the supported paths through the remaining audits. `aTHX` still denotes the shared interpreter, with TLS selecting act storage. |
-| Cheap tasks and runtime primitives | C tasks, guarded stacks, work stealing, channels, selection, timers, epoll and explicit syscall handoff are implemented and tested. | The within-2x-of-Go target is not met by the recorded spawn baseline. Sysmon, million-live-task validation and stack mapping costs remain open; stacks currently use mprotect guards. |
+| Cheap tasks and runtime primitives | C tasks, guarded stacks, work stealing, channels, selection, timers, epoll and explicit syscall handoff are implemented and tested. Owned-slot scheduling and pending-work polling reduce measured one-slot C yield to 61.7 ns and round trips to 242.4 ns in the scheduler checkpoint below. | The within-2x-of-Go target remains unmet: fresh spawn medians are 6.7x/16.8x Go on one/four slots, and echo also exceeds the budget. Sysmon, million-live-task validation and stack mapping costs remain open; stacks currently use mprotect guards. |
 | Perl semantics and language surface | Main-act entry, closure spawning, scalar/reference channels, wait groups, scoped locks, regex state, `local` and `pocket` have focused coverage. | Perl `sel`, core feature/call-form syntax, per-act environment/process integration and remaining magic/weak/object paths need work. |
 | Shared-memory safety | Conservative atomic counters, publication, read claims, private conversion snapshots and pinned storage retirement support audited paths. | General concurrent-read safety, ownership specialization, cheaper reclamation, remaining aggregate/cache/XS audits and a user-facing `perl -race` are unfinished. |
 | Useful network services | The dashboard passes 48 live HTTP/WebSocket checks each on one/four slots; its Unicode job backend verifies results on 1/2/4 slots. Audited encoding and prepared listener cleanup complete the bounded four-slot path. | Automatic Perl I/O/syscall handoff, general XS compatibility, runtime compilation policy and longer network soaks remain separate design gaps. |
 | Performance | The latest matched integer loop takes 0.92x stock time without Wump and 4.25x/2.21x/1.18x with one/two/four slots. Standard historical, fresh and application checkpoint checks pass. The preceding physical-core eight-slot captures beat sequential stock at two work sizes. | Ordinary stock parity fails: seven exploratory fixtures take 1.75–3.54x stock work time, and the full XS macro case takes 2.03x stock process time. These are upstream acceptance blockers. One-slot overhead and the Go runtime target remain unmet. The earlier short unrestricted eight-slot historical gate also fails; placement sensitivity remains open, with no new eight-slot claim in the core-read change. |
-| Compatibility and validation | The latest standard noninteractive upstream harness passes 2,919 files / 1,351,353 checks. Project, 35-suite ASan, targeted Clang/UBSan, native Memcheck and live Mojo checks pass. Changed run/sv units were rebuilt over matching sanitizer archives. TSan passes 34/35 Perl suites and three native drivers with negative controls. | The remaining TSan failure is the previously reproduced threads.pm clone race; full Perl MSan stops in uninstrumented locale dependencies. Helgrind/DRD abort internally on this host. General CPAN compatibility and longer network soaks remain unvalidated. |
+| Compatibility and validation | The scheduler checkpoint's fresh full Perl build passes 2,919 files / 1,351,355 standard upstream checks, the project suites and native drivers. GCC/Clang runtime checks, ten-repeat stress and runtime ASan/UBSan/TSan pass with controls. Earlier whole-Perl sanitizer, Memcheck and live Mojo results remain historical evidence for this change. | The previously reproduced threads.pm clone TSan race is unresolved; whole-Perl sanitizers were not rerun for this runtime change. Full Perl MSan stops in uninstrumented locale dependencies; Helgrind/DRD abort internally on this host. General CPAN compatibility and longer network soaks remain unvalidated. |
 | Deployment and portability | A private Perl fork and standalone C runtime build on Linux x86-64. | Static application bundling, the `wump` tool, dependency locking/cache and arm64 are pending. |
 
 There are three material differences from the proposed architecture. `aTHX`
@@ -1890,3 +1890,104 @@ there is no new performance or parallel-safety conclusion. Forced nested-frame
 migration and the shutdown/unwind phase matrix remain the next audit work.
 See the [audit continuation](docs/EXECUTION-CONTEXT-AUDIT.md#legacy-unused-mode-continuation-2026-10-31)
 for exact scope, commands, results and remaining gaps.
+
+## Owned local scheduling and pending-work polling (2026-10-31)
+
+The scheduler now uses two bounded facts already available in the runtime.
+With one execution slot, only its current native owner can push/pop its local
+FIFO; no thief or concurrently sleeping owner exists. Local queue operations
+omit their mutex and wakeup notification in that configuration. Native syscall
+handoff transfers the slot under the runtime mutex before the replacement
+thread executes. External poller publications, native-call returns and local
+overflow retain the synchronized global path. Multi-slot queues retain their
+locks and notifications.
+
+After expiring timers under the runtime mutex, dispatch also observes whether
+the global queue has work. The immediately following search needs no elapsed
+time read when that queue was empty, except for the unconditional 61-dispatch
+poll. Pending work still receives the 10 ms fairness check. Empty local queues
+always try the global queue, and resetting that lookup's time budget to zero
+allows newly observed work to run immediately. The snapshot is discarded each
+dispatch; timer expiry, shutdown checks, publication epochs and idle/deadlock
+validation remain in place. These are scheduler ownership facts, not proofs
+about mutable Perl values or arbitrary XS.
+
+The profiling control explains why removing queue coordination alone did not
+materially improve this host's one-slot yield time. For 10,000 yields, strace
+records 10,003 `clock_gettime` syscalls; one million yields take about 0.078 s
+user and 1.141 s system time. The elapsed-time check was making a syscall on
+every dispatch here. Perf's flat samples resolve mostly to unknown kernel
+addresses, so no C-symbol attribution is inferred from them. The syscall
+counts and process times establish the clock boundary directly. This host
+effect need not have the same magnitude on a system with fast clock queries.
+
+The new coordination/clock-budget fixture fails on the predecessor. Its warm
+spawn check crosses native ownership transfer; its dispatch check permits
+periodic clock reads while rejecting one per yield. An additional external
+pipe fixture verifies that global I/O wakeups compete with local compute
+quanta without an armed timer; a mutation that ignores pending global work
+fails this fixture. Existing timer fairness, queue overflow, FIFO,
+handoff and wait-detachment checks remain required. CTX-8/CTX-9 in
+[INVARIANTS.md](docs/INVARIANTS.md) record the exclusion and invalidation rules.
+
+Five quiet, rotated runs compare a freshly compiled `2b66dfa` runtime with this
+change and Go 1.27.3 on the same Ryzen 7 PRO 4750U, GCC 14.2.1 `-O2`. One-slot
+processes are pinned to CPU 0; four-slot processes to physical cores
+`0,2,4,6`. No builds or tests overlap timing. The C/Go drivers retain their
+existing workloads and 100,000-iteration setting; setup is outside timing.
+Selected medians, with all workloads retained in the raw record:
+
+| C runtime primitive | Slots | Before ns/op | After ns/op | Go ns/op |
+| --- | --- | --- | --- | --- |
+| Yield | 1 | 1,219.0 | 61.7 | 384.6 |
+| Yield | 4 | 702.9 | 233.4 | 833.6 |
+| Channel round trip | 1 | 2,458.0 | 242.4 | 960.1 |
+| Channel round trip | 4 | 1,695.6 | 1,234.0 | 1,359.6 |
+| Batched spawn/completion | 1 | 8,592.5 | 8,761.2 | 1,313.6 |
+| Batched spawn/completion | 4 | 12,148.0 | 11,966.1 | 713.8 |
+| Socketpair echo | 1 | 14,755.7 | 14,442.7 | 4,523.3 |
+| Socketpair echo | 4 | 31,414.7 | 31,011.2 | 4,598.4 |
+
+A separate Perl fixture measures actual `Wump::yield` and scalar channel round
+trips over 20,000 iterations, checking every reply and worker completion. It
+uses the same affinity and five alternating before/after runs; the candidate
+is a fresh full private build with matching Perl compiler/configuration flags.
+Its fixture source and capture commands are embedded in the machine record.
+
+| Perl primitive | Slots | Before µs/op | After µs/op | Median change |
+| --- | --- | --- | --- | --- |
+| Yield | 1 | 1.7796 | 0.5336 | -70.02% |
+| Yield | 4 | 3.0807 | 2.8993 | -5.89% |
+| Channel round trip | 1 | 10.7960 | 7.7851 | -27.89% |
+| Channel round trip | 4 | 32.2414 | 29.2288 | -9.34% |
+
+The full records also retain small median increases: C selection, sleep and
+one-slot spawn rise roughly 2–5%. No statistical significance is assigned to
+those changes, and no universal speedup is claimed. The within-2x-of-Go goal
+remains unmet for spawn and echo; actual Perl channel overhead remains much
+larger than the standalone C path. Ordinary stock parity, broader Perl/XS
+coroutine support and static deployment are separate unfinished goals.
+
+Spawn diagnostics identify a next bounded performance target: 10,000 batched
+tasks still cause 9,878 mmap, 9,870 mprotect and 9,867 munmap calls on this host,
+as well as 19,997 clock reads while global work is pending. The 32-stack cache
+does not absorb these 1,024-task cohorts. Guarded allocation/reuse and pending
+global-work accounting need their own invariants and tests; weakening guards
+or fairness is not a justified shortcut. The empty-global yield control now
+makes 166 clock syscalls for 10,000 yields, versus 10,003 before.
+
+Fresh verification passes GCC and Clang runtime tests, ten-repeat stress,
+runtime ASan/UBSan/TSan with deliberate-failure controls, and a fresh complete
+Perl build. `perl-test` passes all project suites, patch/inventory validation
+and native drivers. The context differential passes 53 checks and the legacy
+differential 26 top-level checks. The standard noninteractive upstream harness
+passes 2,919 files / 1,351,355 checks in 335 seconds with no new exclusions.
+The archive's scheduler object hash matches the independently tested runtime.
+Whole-Perl sanitizers and the optional Mojo workload were not rerun.
+
+[Runtime samples](bench/scheduler-owner-runtime.csv),
+[Perl samples](bench/scheduler-owner-perl.csv), and the
+[machine/build/validation record](bench/scheduler-owner-machine.json) preserve
+the complete measurements, source/binary hashes and reproduction commands.
+Full logs and the earlier coordination-only control are retained under
+`master/build/checkpoint-runtime-owner/`.

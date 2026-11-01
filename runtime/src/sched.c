@@ -287,24 +287,33 @@ static wump_g *global_pop(wump_runtime *rt) {
 }
 
 static void local_push(wump_worker *w, wump_g *g) {
-	pthread_mutex_lock(&w->q_mu);
+	/* Only the P's current M calls local_push/pop. With one P there are
+	 * no thieves and that same owner cannot be sleeping in find_work.
+	 * Syscall handoff transfers exclusive ownership under rt->mu before
+	 * the replacement M runs; the donor cannot touch this queue again.
+	 * External I/O and native-call returns still use the global queue. */
+	int shared = w->rt->nprocs != 1;
+	if (shared) pthread_mutex_lock(&w->q_mu);
 	if (w->qtail - w->qhead < WUMP_LOCALQ) {
 		w->q[w->qtail++ % WUMP_LOCALQ] = g;
-		pthread_mutex_unlock(&w->q_mu);
-		notify(w->rt);
+		if (shared) {
+			pthread_mutex_unlock(&w->q_mu);
+			notify(w->rt);
+		}
 	} else {
-		pthread_mutex_unlock(&w->q_mu);
+		if (shared) pthread_mutex_unlock(&w->q_mu);
 		global_push(w->rt, g);
 	}
 }
 
 static wump_g *local_pop(wump_worker *w) {
-	pthread_mutex_lock(&w->q_mu);
+	int shared = w->rt->nprocs != 1;
+	if (shared) pthread_mutex_lock(&w->q_mu);
 	wump_g *g = NULL;
 	if (w->qhead != w->qtail) {
 		g = w->q[w->qhead++ % WUMP_LOCALQ];
 	}
-	pthread_mutex_unlock(&w->q_mu);
+	if (shared) pthread_mutex_unlock(&w->q_mu);
 	return g;
 }
 
@@ -343,21 +352,31 @@ static wump_g *steal(wump_worker *w) {
 	return NULL;
 }
 
-static wump_g *find_work(wump_worker *w) {
+static wump_g *find_work(wump_worker *w, int global_pending) {
 	wump_g *g = NULL;
-	int64_t now = wump_now();
 	/* A dispatch can consume a whole compute quantum. Keep the cheap tick
 	 * rule for short tasks, but do not leave expired timers or external
-	 * wakeups behind sixty long-running local dispatches. */
-	if (++w->tick % 61 == 0 || now - w->global_poll >= INT64_C(10000000)) {
-		w->global_poll = now;
-		g = global_pop(w->rt);
+	 * wakeups behind sixty long-running local dispatches. The scheduler
+	 * observed global_pending under rt->mu after expiring timers. An empty
+	 * global queue needs no elapsed-time test; a later external publication
+	 * is observed on the next dispatch (or the empty-local fallback below).
+	 * Keep the unconditional periodic poll for concurrent publication. */
+	int periodic = ++w->tick % 61 == 0;
+	if (periodic || global_pending) {
+		int64_t now = wump_now();
+		if (periodic || now - w->global_poll >= INT64_C(10000000)) {
+			w->global_poll = now;
+			g = global_pop(w->rt);
+		}
 	}
 	if (g == NULL) {
 		g = local_pop(w);
 	}
 	if (g == NULL) {
-		w->global_poll = now;
+		/* No clock was needed for this mandatory global lookup. Reset the
+		 * time budget conservatively: newly observed global work may run
+		 * immediately rather than waiting behind a long stolen dispatch. */
+		w->global_poll = 0;
 		g = global_pop(w->rt);
 	}
 	if (g == NULL) {
@@ -564,8 +583,9 @@ static void schedule(wump_machine *m) {
 		wump_worker *p = m->p;
 		timers_expire_locked(rt);
 		uint64_t epoch = rt->epoch;
+		int global_pending = rt->head != NULL;
 		pthread_mutex_unlock(&rt->mu);
-		wump_g *g = find_work(p);
+		wump_g *g = find_work(p, global_pending);
 		if (g == NULL) {
 			pthread_mutex_lock(&rt->mu);
 			if (epoch == rt->epoch &&

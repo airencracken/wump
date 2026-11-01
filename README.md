@@ -12,6 +12,8 @@ Implemented:
   a protected guard page below each, and a bounded cache of retired stacks.
 - Parallel workers with local FIFO queues, global overflow, half-queue work
   stealing, periodic global-queue polling, and condition-variable sleeping.
+  One-slot local dispatch uses exclusive slot ownership to avoid queue mutexes
+  and wakeup signals, including after a native-call handoff to another thread.
 - Execution slots separated from OS threads, with explicit blocking-call
   handoff, replacement-thread reuse, and slot reacquisition before a task
   returns to normal runtime code.
@@ -1424,6 +1426,15 @@ The Go comparison builds locally with networking and telemetry disabled,
 and keeps its build cache under `build/`. Treat measurements as local
 baselines, not stable performance claims; repeat on an idle machine before
 drawing conclusions.
+
+The [scheduler checkpoint](DESIGN.md#owned-local-scheduling-and-pending-work-polling-2026-10-31)
+removes clock queries for empty global queues and unnecessary one-slot queue
+coordination. Five-run local medians reduce C yield from 1,219 to 62 ns on one
+slot; actual Perl yield falls from 1.78 to 0.53 µs and channel round trips from
+10.80 to 7.79 µs. The full records include unchanged/slower workloads. Spawn
+still takes 6.7x/16.8x Go on one/four slots, and echo also exceeds the 2x goal.
+These are primitive measurements; general Perl compatibility, ordinary stock
+parity and static deployment remain unfinished.
 
 [baseline.csv](bench/baseline.csv) records a 100,000-iteration run on
 2026-10-23 with GCC 14.2.1 and Go 1.26.5 (`GOEXPERIMENT=nodwarf5`,

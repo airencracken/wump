@@ -1,6 +1,9 @@
 # Execution and memory invariants
 
 Last reviewed: 2026-10-31, runtime source `f5ce9cf`, pinned Perl 5.42.2.
+Scheduler continuation: CTX-8/CTX-9 describe the ownership and clock-polling
+change based on `2b66dfa`; its source hashes and validation are recorded in
+[scheduler-owner-machine.json](../bench/scheduler-owner-machine.json).
 
 These are requirements for preserving the current supported behavior, not a
 claim that every Perl or XS path has been proved safe. Enforcement and tests
@@ -110,6 +113,36 @@ environment, native-library state, or pthread identity from those saves.
 Enforcement: [assembly](../runtime/src/ctx_x86_64.S),
 [errno accessors](../runtime/src/error.c). Evidence:
 [context tests](../tests/test_context.c), [handoff tests](../tests/test_syscall.c).
+
+**CTX-8 — Queue exclusion follows execution-slot ownership.** Only the current
+owner of a P may push/pop its local FIFO. With one immutable execution slot,
+there are no thieves and that owner cannot concurrently be asleep in the
+scheduler: local push/pop need neither the queue mutex nor a scheduler wakeup.
+The native thread donating its P must stop touching the local queue before the
+replacement acquires ownership under the runtime mutex. A single P is not a
+promise of a single native thread. Multiple-P queues still need exclusion for
+stealing. External poller wakeups, syscall returns and local overflow must use
+the synchronized global path; they cannot use the single-owner shortcut.
+
+Enforcement: [local queues and handoff](../runtime/src/sched.c).
+Evidence: [coordination contract before/after handoff](../tests/test_scheduler.c),
+[overflow/FIFO/context tests](../tests/test_runtime.c),
+[native-call progress](../tests/test_syscall.c),
+[all-workers-idle external wakeups](../tests/test_io.c).
+
+**CTX-9 — An empty global queue observation has one-dispatch scope.** The
+scheduler expires timers and observes global queue membership under the runtime
+mutex. Only the immediately following work search can use that observation to
+omit an elapsed-time clock read. Periodic global polling remains unconditional;
+an empty local queue always checks the global queue; pending global work keeps
+the elapsed-time fairness rule. The publication epoch and external wakeup
+protocol remain required. No observation may survive a dispatch or be used to
+skip timer expiry, shutdown checks or idle/deadlock validation.
+
+Enforcement: [work search and dispatch](../runtime/src/sched.c).
+Evidence: [clock-call budget](../tests/test_scheduler.c),
+[timer/compute fairness](../tests/test_runtime.c),
+[external wakeups during local compute](../tests/test_io.c).
 
 ## Values, access and reclamation
 

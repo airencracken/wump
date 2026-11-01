@@ -1,0 +1,378 @@
+{
+   "base_revision" : "2b66dfa",
+   "binaries" : {
+      "after_perl" : {
+         "config" : {
+            "archname" : "x86_64-linux-thread-multi",
+            "cc" : "cc",
+            "ccflags" : "-D_REENTRANT -D_GNU_SOURCE -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64",
+            "gccversion" : "14.2.1 20241221",
+            "lddlflags" : "-shared -O2 -L/usr/local/lib -fstack-protector-strong",
+            "ldflags" : " -fstack-protector-strong -L/usr/local/lib",
+            "optimize" : "-O2",
+            "use64bitall" : "define",
+            "useithreads" : "define",
+            "usemultiplicity" : "define",
+            "version" : "5.42.2"
+         },
+         "path" : "/home/marcus/projects/wump/master/build/checkpoint-runtime-owner/integration/perl/perl-5.42.2/perl",
+         "sha256" : "462b3111522b658294a5e145420df931aa5ac159b7e8a1c97d904ab0d5a87c5f"
+      },
+      "after_runtime" : {
+         "path" : "/home/marcus/projects/wump/master/build/checkpoint-runtime-owner/after/bench",
+         "sha256" : "f12ffb9684578a870c53279b57d0407a3e32016377cdada64497c3efbf1633d6"
+      },
+      "before_perl" : {
+         "config" : {
+            "archname" : "x86_64-linux-thread-multi",
+            "cc" : "cc",
+            "ccflags" : "-D_REENTRANT -D_GNU_SOURCE -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64",
+            "gccversion" : "14.2.1 20241221",
+            "lddlflags" : "-shared -O2 -L/usr/local/lib -fstack-protector-strong",
+            "ldflags" : " -fstack-protector-strong -L/usr/local/lib",
+            "optimize" : "-O2",
+            "use64bitall" : "define",
+            "useithreads" : "define",
+            "usemultiplicity" : "define",
+            "version" : "5.42.2"
+         },
+         "path" : "/home/marcus/projects/wump/master/build/perl/perl-5.42.2/perl",
+         "sha256" : "2e8132c0041aeb95ad66a19da14dc1ad5ae066f2a9dc73981a5541b6e7513832"
+      },
+      "before_runtime" : {
+         "path" : "/home/marcus/projects/wump/master/build/checkpoint-runtime-owner/before/bench",
+         "sha256" : "851be673c0ea453b758e790615e90216fb8980666a07d7494bc5412ef73d9726"
+      },
+      "go" : {
+         "path" : "/home/marcus/projects/wump/master/build/checkpoint-runtime-owner/before/go-bench",
+         "sha256" : "5be0c65761450c9f6460a2123423b4a4faff3b9b4648641e52eb0759f540d785"
+      },
+      "stock_perl" : {
+         "config" : {
+            "archname" : "x86_64-linux-thread-multi",
+            "cc" : "cc",
+            "ccflags" : "-D_REENTRANT -D_GNU_SOURCE -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64",
+            "gccversion" : "14.2.1 20241221",
+            "lddlflags" : "-shared -O2 -L/usr/local/lib -fstack-protector-strong",
+            "ldflags" : " -fstack-protector-strong -L/usr/local/lib",
+            "optimize" : "-O2",
+            "use64bitall" : "define",
+            "useithreads" : "define",
+            "usemultiplicity" : "define",
+            "version" : "5.42.2"
+         },
+         "path" : "/home/marcus/projects/wump/master/build/checkpoint-7a16547/stock/perl/perl-5.42.2/perl",
+         "sha256" : "c7688d340a6002b222777a1c93c6892db939629a69266ed8b4e2834e7a0951da"
+      }
+   },
+   "cpu_model" : "AMD Ryzen 7 PRO 4750U with Radeon Graphics",
+   "date_local" : "2026-10-31",
+   "go_version" : "go version go1.27.3-X:nodwarf5 linux/amd64\n",
+   "kernel" : "Linux theshire 6.0.5-gentoo-x86_64 #4 SMP PREEMPT_DYNAMIC Sat Nov 5 23:08:43 PDT 2022 x86_64 AMD Ryzen 7 PRO 4750U with Radeon Graphics AuthenticAMD GNU/Linux\n",
+   "limits" : [
+      "local Linux x86-64 measurements; clock syscall cost is host-dependent",
+      "primitive timings do not certify application throughput, general Perl compatibility or Go parity",
+      "full Perl sanitizers and optional Mojo workload not rerun; runtime sanitizers and fresh ordinary upstream suite are separate evidence",
+      "large-cohort spawn, million-live-task validation, ordinary stock parity and deployment remain open"
+   ],
+   "measurement" : {
+      "cpu_affinity" : {
+         "1" : "0",
+         "4" : "0,2,4,6"
+      },
+      "no_overlapping_builds_or_tests" : true,
+      "perl_iterations" : 20000,
+      "process_startup_excluded" : true,
+      "rotated_variants" : true,
+      "runs" : 5,
+      "runtime_iterations" : 100000
+   },
+   "perl_medians" : {
+      "pingpong:1" : {
+         "change_percent" : -27.889032975176,
+         "execution_slots" : 1,
+         "median_ns_per_op" : {
+            "after" : 7785.1,
+            "before" : 10796
+         },
+         "workload" : "pingpong"
+      },
+      "pingpong:4" : {
+         "change_percent" : -9.34388705205109,
+         "execution_slots" : 4,
+         "median_ns_per_op" : {
+            "after" : 29228.8,
+            "before" : 32241.4
+         },
+         "workload" : "pingpong"
+      },
+      "yield:1" : {
+         "change_percent" : -70.0157338727804,
+         "execution_slots" : 1,
+         "median_ns_per_op" : {
+            "after" : 533.6,
+            "before" : 1779.6
+         },
+         "workload" : "yield"
+      },
+      "yield:4" : {
+         "change_percent" : -5.88827214594084,
+         "execution_slots" : 4,
+         "median_ns_per_op" : {
+            "after" : 2899.3,
+            "before" : 3080.7
+         },
+         "workload" : "yield"
+      }
+   },
+   "profiling" : {
+      "initial_local_only_runtime_samples" : "master/build/checkpoint-runtime-owner/runtime-local-only.csv",
+      "perf_limit" : "Flat samples resolve mostly to unknown kernel addresses; no C-symbol attribution is inferred.",
+      "spawn_10000_after_syscalls" : {
+         "clock_gettime" : 19997,
+         "mmap" : 9878,
+         "mprotect" : 9870,
+         "munmap" : 9867
+      },
+      "yield_1000000_system_seconds_before" : 1.141444,
+      "yield_1000000_user_seconds_before" : 0.077825,
+      "yield_10000_clock_syscalls_after" : 166,
+      "yield_10000_clock_syscalls_before" : 10003
+   },
+   "reproduction" : {
+      "perl_capture_shell" : "#!/bin/bash\nwump_checkpoint=/home/marcus/projects/wump/master/build/checkpoint-runtime-owner\nprintf '%s\\n' 'variant,run,implementation,workload,workers,operations,seconds,ns_per_op' > \"$wump_checkpoint/perl.csv\"\nfor wump_run in 1 2 3 4 5; do\n\tfor wump_slots in 1 4; do\n\t\tif [ \"$wump_slots\" -eq 1 ]; then wump_cpus=0; else wump_cpus=0,2,4,6; fi\n\t\tif [ \"$((wump_run % 2))\" -eq 1 ]; then wump_variants=(before after); else wump_variants=(after before); fi\n\t\tfor wump_variant in \"${wump_variants[@]}\"; do\n\t\t\tcase \"$wump_variant\" in\n\t\t\t\tbefore) wump_perl=/home/marcus/projects/wump/master/build/perl/perl-5.42.2/perl ;;\n\t\t\t\tafter) wump_perl=\"$wump_checkpoint/integration/perl/perl-5.42.2/perl\" ;;\n\t\t\tesac\n\t\t\twump_lib=$(dirname -- \"$wump_perl\")/lib\n\t\t\twump_output=\"$wump_checkpoint/perl-$wump_variant-$wump_run-$wump_slots.csv\"\n\t\t\tWUMPPROCS=\"$wump_slots\" timeout 180s taskset -c \"$wump_cpus\" \"$wump_perl\" \"-I$wump_lib\" -I/home/marcus/projects/wump/master/perl/lib \"$wump_checkpoint/perl-primitives.pl\" 20000 > \"$wump_output\"\n\t\t\twump_result=$?\n\t\t\tif [ \"$wump_result\" -ne 0 ]; then printf 'Perl benchmark failed: %s\\n' \"$wump_output\" >&2; exit \"$wump_result\"; fi\n\t\t\tawk -v variant=\"$wump_variant\" -v run=\"$wump_run\" 'NR > 1 { print variant \",\" run \",\" $0 }' \"$wump_output\" >> \"$wump_checkpoint/perl.csv\"\n\t\t\twump_result=$?\n\t\t\tif [ \"$wump_result\" -ne 0 ]; then exit \"$wump_result\"; fi\n\t\tdone\n\tdone\ndone\n",
+      "perl_fixture_source" : "use v5.42;\nuse strict;\nuse warnings;\nuse Wump;\nuse Time::HiRes qw(clock_gettime CLOCK_MONOTONIC);\nBEGIN { CLOCK_MONOTONIC() }\n\n@ARGV == 1 && $ARGV[0] =~ /\\A[1-9][0-9]*\\z/ && $ARGV[0] <= 1000000 or die \"iterations required\\n\";\nmy $count = $ARGV[0];\nsub report ($name, $start) {\n\tmy $seconds = clock_gettime(CLOCK_MONOTONIC) - $start;\n\tprintf \"perl,%s,%d,%d,%.9f,%.1f\\n\", $name, Wump::execution_slots(), $count,\n\t\t$seconds, $seconds * 1e9 / $count;\n}\nprint \"implementation,workload,workers,operations,seconds,ns_per_op\\n\";\nmy $start = clock_gettime(CLOCK_MONOTONIC);\nyield for 1..$count;\nreport('yield', $start);\nmy ($request, $response, $done) = (chan, chan, chan);\n$start = clock_gettime(CLOCK_MONOTONIC);\nact {\n\tfor (1..$count) {\n\t\tmy $value = $request->recv;\n\t\t$response->send($value + 1);\n\t}\n\t$done->send(1);\n};\nfor my $value (0..$count - 1) {\n\t$request->send($value);\n\tmy $reply = $response->recv;\n\tdie \"incorrect pingpong value\\n\" unless $reply == $value + 1;\n}\ndie \"worker did not complete\\n\" unless $done->recv == 1;\nreport('pingpong', $start);\n",
+      "runtime_capture_shell" : "#!/bin/bash\nwump_checkpoint=/home/marcus/projects/wump/master/build/checkpoint-runtime-owner\nprintf '%s\\n' 'variant,run,implementation,workload,workers,operations,seconds,ns_per_op' > \"$wump_checkpoint/runtime.csv\"\nfor wump_run in 1 2 3 4 5; do\n\tfor wump_slots in 1 4; do\n\t\tif [ \"$wump_slots\" -eq 1 ]; then wump_cpus=0; else wump_cpus=0,2,4,6; fi\n\t\twump_variants=(before after go)\n\t\tfor wump_offset in 0 1 2; do\n\t\t\twump_variant=${wump_variants[$(( (wump_offset + wump_run - 1) % 3 ))]}\n\t\t\tcase \"$wump_variant\" in\n\t\t\t\tgo) wump_binary=\"$wump_checkpoint/before/go-bench\" ;;\n\t\t\t\t*) wump_binary=\"$wump_checkpoint/$wump_variant/bench\" ;;\n\t\t\tesac\n\t\t\twump_output=\"$wump_checkpoint/runtime-$wump_variant-$wump_run-$wump_slots.csv\"\n\t\t\ttimeout 180s taskset -c \"$wump_cpus\" \"$wump_binary\" 100000 \"$wump_slots\" > \"$wump_output\"\n\t\t\twump_result=$?\n\t\t\tif [ \"$wump_result\" -ne 0 ]; then printf 'Benchmark failed: %s\\n' \"$wump_output\" >&2; exit \"$wump_result\"; fi\n\t\t\tawk -v variant=\"$wump_variant\" -v run=\"$wump_run\" 'NR > 1 { print variant \",\" run \",\" $0 }' \"$wump_output\" >> \"$wump_checkpoint/runtime.csv\"\n\t\t\twump_result=$?\n\t\t\tif [ \"$wump_result\" -ne 0 ]; then exit \"$wump_result\"; fi\n\t\tdone\n\tdone\ndone\n",
+      "validation_logs" : "master/build/checkpoint-runtime-owner/"
+   },
+   "runtime_build_flags" : "CC=cc\nAR=ar\nCPPFLAGS=-Iruntime/include -Iruntime/src\nCFLAGS=-O2 -g -std=c11 -Wall -Wextra -Werror -pthread\nLDFLAGS=-pthread\nLDLIBS=-lm\n",
+   "runtime_medians" : {
+      "blocking:1" : {
+         "after_vs_go" : 0.0207091303871754,
+         "change_percent" : -29.30621415009,
+         "execution_slots" : 1,
+         "median_ns_per_op" : {
+            "after" : 7111.3,
+            "before" : 10059.3,
+            "go" : 343389.6
+         },
+         "workload" : "blocking"
+      },
+      "blocking:4" : {
+         "after_vs_go" : 1.72535644495911,
+         "change_percent" : -4.71319461330153,
+         "execution_slots" : 4,
+         "median_ns_per_op" : {
+            "after" : 28607.1,
+            "before" : 30022.1,
+            "go" : 16580.4
+         },
+         "workload" : "blocking"
+      },
+      "cpu:1" : {
+         "after_vs_go" : 1,
+         "change_percent" : 0,
+         "execution_slots" : 1,
+         "median_ns_per_op" : {
+            "after" : 1.5,
+            "before" : 1.5,
+            "go" : 1.5
+         },
+         "workload" : "cpu"
+      },
+      "cpu:4" : {
+         "after_vs_go" : 1,
+         "change_percent" : 0,
+         "execution_slots" : 4,
+         "median_ns_per_op" : {
+            "after" : 0.5,
+            "before" : 0.5,
+            "go" : 0.5
+         },
+         "workload" : "cpu"
+      },
+      "echo:1" : {
+         "after_vs_go" : 3.19295646983397,
+         "change_percent" : -2.12121417486124,
+         "execution_slots" : 1,
+         "median_ns_per_op" : {
+            "after" : 14442.7,
+            "before" : 14755.7,
+            "go" : 4523.3
+         },
+         "workload" : "echo"
+      },
+      "echo:4" : {
+         "after_vs_go" : 6.74391092553932,
+         "change_percent" : -1.28443053729623,
+         "execution_slots" : 4,
+         "median_ns_per_op" : {
+            "after" : 31011.2,
+            "before" : 31414.7,
+            "go" : 4598.4
+         },
+         "workload" : "echo"
+      },
+      "mpmc:1" : {
+         "after_vs_go" : 0.670611439842209,
+         "change_percent" : -52.3141654978962,
+         "execution_slots" : 1,
+         "median_ns_per_op" : {
+            "after" : 34,
+            "before" : 71.3,
+            "go" : 50.7
+         },
+         "workload" : "mpmc"
+      },
+      "mpmc:4" : {
+         "after_vs_go" : 0.695221445221445,
+         "change_percent" : 2.05303678357569,
+         "execution_slots" : 4,
+         "median_ns_per_op" : {
+            "after" : 119.3,
+            "before" : 116.9,
+            "go" : 171.6
+         },
+         "workload" : "mpmc"
+      },
+      "pingpong:1" : {
+         "after_vs_go" : 0.252473700656182,
+         "change_percent" : -90.1383238405208,
+         "execution_slots" : 1,
+         "median_ns_per_op" : {
+            "after" : 242.4,
+            "before" : 2458,
+            "go" : 960.1
+         },
+         "workload" : "pingpong"
+      },
+      "pingpong:4" : {
+         "after_vs_go" : 0.907619888202413,
+         "change_percent" : -27.2234017456947,
+         "execution_slots" : 4,
+         "median_ns_per_op" : {
+            "after" : 1234,
+            "before" : 1695.6,
+            "go" : 1359.6
+         },
+         "workload" : "pingpong"
+      },
+      "select:1" : {
+         "after_vs_go" : 1.46649484536082,
+         "change_percent" : 4.11710887465691,
+         "execution_slots" : 1,
+         "median_ns_per_op" : {
+            "after" : 113.8,
+            "before" : 109.3,
+            "go" : 77.6
+         },
+         "workload" : "select"
+      },
+      "select:4" : {
+         "after_vs_go" : 1.18661257606491,
+         "change_percent" : 1.7391304347826,
+         "execution_slots" : 4,
+         "median_ns_per_op" : {
+            "after" : 117,
+            "before" : 115,
+            "go" : 98.6
+         },
+         "workload" : "select"
+      },
+      "sleep:1" : {
+         "after_vs_go" : 0.846480984773541,
+         "change_percent" : 4.64867045755424,
+         "execution_slots" : 1,
+         "median_ns_per_op" : {
+            "after" : 8300,
+            "before" : 7931.3,
+            "go" : 9805.3
+         },
+         "workload" : "sleep"
+      },
+      "sleep:4" : {
+         "after_vs_go" : 0.515002517200873,
+         "change_percent" : 4.77279710491278,
+         "execution_slots" : 4,
+         "median_ns_per_op" : {
+            "after" : 6137.8,
+            "before" : 5858.2,
+            "go" : 11918
+         },
+         "workload" : "sleep"
+      },
+      "spawn:1" : {
+         "after_vs_go" : 6.66961023142509,
+         "change_percent" : 1.96334012219961,
+         "execution_slots" : 1,
+         "median_ns_per_op" : {
+            "after" : 8761.2,
+            "before" : 8592.5,
+            "go" : 1313.6
+         },
+         "workload" : "spawn"
+      },
+      "spawn:4" : {
+         "after_vs_go" : 16.7639394788456,
+         "change_percent" : -1.4973658215344,
+         "execution_slots" : 4,
+         "median_ns_per_op" : {
+            "after" : 11966.1,
+            "before" : 12148,
+            "go" : 713.8
+         },
+         "workload" : "spawn"
+      },
+      "yield:1" : {
+         "after_vs_go" : 0.160426417056682,
+         "change_percent" : -94.9384741591468,
+         "execution_slots" : 1,
+         "median_ns_per_op" : {
+            "after" : 61.7,
+            "before" : 1219,
+            "go" : 384.6
+         },
+         "workload" : "yield"
+      },
+      "yield:4" : {
+         "after_vs_go" : 0.279990403071017,
+         "change_percent" : -66.7947076397781,
+         "execution_slots" : 4,
+         "median_ns_per_op" : {
+            "after" : 233.4,
+            "before" : 702.9,
+            "go" : 833.6
+         },
+         "workload" : "yield"
+      }
+   },
+   "runtime_source_sha256" : {
+      "runtime/src/sched.c" : "8af339887a24cb02fff6487016d20716da85ad3eb645cc05284b8db54ed626f8",
+      "tests/test_io.c" : "40d6a2ad54dfde68b251d619d8895b34246a8725d29d060d92b073fbb55a2ecf",
+      "tests/test_scheduler.c" : "d3e539a606c45588e4cc4e7b0dac7a2d51738e59c43ef25a82cf7826174b8880"
+   },
+   "validation" : {
+      "clang_runtime" : "pass",
+      "context_differential_checks" : 53,
+      "fresh_full_perl_build" : "pass",
+      "fresh_perl_linked_scheduler_sha256" : "f2654cbfc61ca284bef702586b0c0531ce2224f91b78808eb56f793c25f6f2d7",
+      "full_standard_upstream" : {
+         "files" : 2919,
+         "result" : "pass",
+         "seconds" : 335,
+         "tests" : 1351355
+      },
+      "gcc_runtime" : "pass",
+      "legacy_differential_top_level_checks" : 26,
+      "negative_regression_controls" : [
+         "predecessor fails zero-coordination contract",
+         "local-only change fails dispatch clock-read budget",
+         "ignoring positive global_pending fails the external-I/O compute-fairness fixture"
+      ],
+      "project_perl_target" : "pass: 35 suites, patcher, inventory and native drivers",
+      "runtime_asan" : "pass, including negative controls",
+      "runtime_stress_repeats" : 10,
+      "runtime_tsan" : "pass, including deliberate race control",
+      "runtime_ubsan" : "pass, including negative controls"
+   }
+}
