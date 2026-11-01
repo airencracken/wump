@@ -12,7 +12,7 @@ The standalone C runtime has separate focused benchmarks below.
 ```sh
 make bench-matrix STOCK_PERL=/absolute/path/to/stock/perl
 make bench-matrix-report
-make bench-matrix-check
+make bench-matrix-check MATRIX_BASELINE=/path/to/compatible/earlier-capture.json
 make bench-matrix-test STOCK_PERL=/absolute/path/to/stock/perl
 ```
 
@@ -44,6 +44,10 @@ has the same loop count. Coroutine primitives use the loop count directly,
 independent of the common-job setting. Every job ID/count/checksum is verified
 against an independent 97-value reference; JSON's final payload and every
 channel reply are also checked. Spawn checks ID uniqueness as well as its sum.
+
+Work ns/op is elapsed wall time divided by the total completed operations
+across all jobs. Multi-slot columns therefore describe aggregate throughput,
+not the latency of one operation on one core.
 
 The fixtures compare bounded observable work, not identical instruction mixes
 or allocation counts. Perl uses native AV/HV/string/regex operations and
@@ -139,9 +143,16 @@ Tooling checks run with `make bench-matrix-test`; its unit checks also run in
 `perl-test`. They include regression boundaries, missing/forged results,
 support loss, mismatched builds/affinity and atomic failed captures.
 
+The initial clean capture uses five runs, 50,000 iterations, eight jobs and
+affinity `0,2,4,6` on the recorded Ryzen 7 PRO 4750U. Its 88 cells retain 400
+timed samples and 40 explicit N/A samples. Reproducing that particular record
+requires the same prepared stock/Go controls and affinity; ordinary unpinned
+captures intentionally cannot pass a comparison with it. A baseline self-check
+validates the record, not an improvement over an earlier matrix.
+
 ## Existing focused benchmarks
 
-## Benchmarks
+### Matched integer benchmark
 
 `make perl-baseline-bench` compares matching stock and private Perl 5.42.2
 builds, then Wump with one, two and four slots. It checks compiler flags,
@@ -252,6 +263,8 @@ samples, invoke `perl bench/perl-baseline.pl PRIVATE_PERL STOCK_PERL --runs 5
 runtime overhead; it does not establish general application performance or
 the Unicode dashboard's scaling. See the [design assessment](../DESIGN.md#implementation-assessment-updated-2026-10-31)
 for the remaining acceptance goals.
+
+### C runtime primitives
 
 ```sh
 make bench

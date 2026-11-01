@@ -2030,3 +2030,14 @@ bad/duplicate results, incomplete evidence, unsupported transitions and atomic
 failure. The older performance-check suite passes its 89 checks as well.
 Runtime sources are unchanged; the full upstream and sanitizer suites were
 not repeated for this benchmark/documentation change.
+
+The [initial matrix](bench/operation-matrix-baseline.md) and
+[raw baseline](bench/operation-matrix-baseline.json) now retain a clean
+five-run capture from `f25cfbe`: 50,000 iterations, eight jobs and CPU affinity
+`0,2,4,6`. All 88 cells are present, with 400 timed samples and 40 explicit N/A
+samples. The baseline passes its schema/result and self-comparison checks;
+it is a starting point, not evidence of an improvement over an earlier matrix.
+Ordinary arithmetic remains close to stock in this fixture, while calls,
+allocation and JSON retain substantial unused-fork overhead. Hash updates and
+UTF-8 encoding scale poorly on the measured Wump slots. These individual gaps
+remain visible alongside the stronger arithmetic, string and regex scaling.

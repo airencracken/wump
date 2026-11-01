@@ -86,13 +86,15 @@ and coroutine primitives, retaining unsupported cells and every raw sample.
 ```sh
 make bench-matrix STOCK_PERL=/absolute/path/to/stock/perl
 make bench-matrix-check \
-	MATRIX_BASELINE=bench/operation-matrix-baseline.json
+	MATRIX_BASELINE=/path/to/compatible/earlier-capture.json
 ```
 
 The default columns are stock Perl, the unused fork, Wump on one/two/four slots,
 and Go on one/two/four slots. Work and whole-process timing stay separate.
 Stock Perl's missing coroutine APIs are N/A. The checker flags regressions
 against the saved baseline; it never turns unsupported work into a fast result.
+The [initial matrix](bench/operation-matrix-baseline.md) is a recorded example;
+use a local baseline when your machine, CPU mask or controls differ.
 
 Read the [benchmark guide](docs/BENCHMARKS.md) for workload definitions, baseline
 updates, machine/build requirements and the existing focused benchmarks.
