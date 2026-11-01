@@ -100,14 +100,17 @@ one/two/four slots. Work and whole-process timing stay separate.
 Coroutine-only fixtures are N/A for stock Perl, forks and ithreads. The checker
 flags regressions
 against the saved baseline; it never turns unsupported work into a fast result.
-The [latest recorded matrix](bench/operation-matrix-native-current.md) uses
-public native syntax and includes fork/ithread controls. Its saved comparison
-flags four-slot yield at +11.87%; the default baseline retains the preceding
-build. The [follow-up](bench/native-primitives-yield-followup.md) records the
-remaining investigation. Use a local baseline when your machine, CPU mask or
-controls differ. The [native API experiment](bench/native-primitives-api.md)
-compares wrappers, direct XS and core operations for yield, spawn, channel
-creation and sleep.
+The [latest recorded matrix](bench/operation-matrix-channel-current.md) uses
+public native syntax and includes fork/ithread controls. Channel work takes
+29–33% less time and spawn 9–15% less than the saved anchor; all work/process
+cells pass the unchanged 10% regression budget. Earlier arithmetic/yield
+failures and follow-ups remain linked in that record. The default baseline
+retains the original native-yield build, rerun with the matching fixture.
+Use a local baseline when your machine, CPU mask or controls differ.
+The [channel dispatch probe](bench/native-channel-api.md) compares wrappers,
+direct XS and core entries on the same binary. The
+[earlier API experiment](bench/native-primitives-api.md) covers yield, spawn,
+channel creation and sleep. Ordinary active Perl overhead remains substantial.
 
 Read the [benchmark guide](docs/BENCHMARKS.md) for workload definitions, baseline
 updates, machine/build requirements and the existing focused benchmarks.

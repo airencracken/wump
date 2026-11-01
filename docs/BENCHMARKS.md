@@ -119,7 +119,7 @@ noise. Keep production captures large enough for the measured operation.
 ### Baselines and regression checks
 
 ```sh
-make bench-matrix-check MATRIX_BASELINE=bench/operation-matrix-native-baseline.json \
+make bench-matrix-check MATRIX_BASELINE=bench/operation-matrix-channel-baseline.json \
 	MATRIX_CURRENT=build/operation-matrix-current.json MATRIX_MAX_REGRESSION=10
 ```
 
@@ -196,8 +196,8 @@ Each capture retains 154 cells / 770 samples (640 timed, 130 N/A).
 The [comparison](../bench/operation-matrix-native-check.txt) reports spawn work
 reductions of 1.83%/3.06%/12.73% on one/two/four slots, but **fails** the unchanged
 10% gate for four-slot yield (+11.87%). All other work/process cells remain
-within budget. The default v3 baseline deliberately points to the preceding
-binary; the failing current capture has not replaced it.
+within budget. That historical capture did not replace its baseline. The
+current default reruns that same preceding binary with the channel fixture below.
 
 A separate [interleaved yield follow-up](../bench/native-primitives-yield-followup.md)
 uses seven runs of two million operations on both binaries. It measures
@@ -212,6 +212,40 @@ zero sleep takes 72.7%/79.7% less and spawn/completion 3.9%/13.2% less. Removing
 XS still leaves substantial task creation and messaging work. These are
 separate workloads from the common matrix, with all paths sharing the same
 remaining channel methods.
+
+### Native channel and context checkpoint
+
+The [latest matched matrix](../bench/operation-matrix-channel-current.md)
+passes the unchanged 10% work/process gate against its
+[fixed anchor](../bench/operation-matrix-channel-baseline.md). Channel work
+falls 32.81%/29.06%/31.47%, spawn 14.73%/9.04%/15.18% and yield
+2.41%/2.26%/2.70% on one/two/four slots. The full comparison includes native
+act/constructor work since the anchor as well as channel dispatch, the TEMP
+ownership fix and numeric/yield context refinements. All four captures use
+five runs, 50,000 iterations, eight jobs and CPU mask `0,2,4,6`, retaining
+154 cells / 770 samples each. The baseline remains the original native-yield
+binary; the passing latest build has not replaced it.
+
+The [initial check](../bench/operation-matrix-channel-initial-check.txt) fails
+three arithmetic work cells and one process cell. The
+[numeric-refinement check](../bench/operation-matrix-channel-arithmetic-check.txt)
+passes arithmetic but fails two-slot yield work (+17.15%). Both remain saved.
+Seven-run interleaved [numeric](../bench/native-channel-arithmetic.md) and
+[yield](../bench/native-channel-yield.md) probes retain separate references,
+work sizes, ranges and exact runners; none clears a failed full-matrix result.
+The final capture passes independently. Scheduling variation and different
+binary layouts limit causal claims about small differences.
+
+The [same-binary channel probe](../bench/native-channel-api.md) isolates method
+dispatch: native buffered pairs take 31.4%/29.2% less work time than wrappers
+on one/four slots; request/reply takes 32.3%/35.4% less. The extra reduction
+versus direct XS is 1.6%/1.3% and 4.3%/2.4%, respectively. All paths have the
+same inheritance depth and use method lookup. Most of this dispatch gain is
+removing Perl wrappers; synchronization, publication and ordinary interpreter
+work remain. These measurements do not establish application speed or Go parity.
+Three 84-sample API captures and four 42-sample follow-ups retain all 420 raw
+samples with clean source revisions, binary/configuration hashes and runners.
+The matrix tools' 134 unit and 477 integration checks pass.
 
 ### Perl API wrapper probe
 

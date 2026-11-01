@@ -350,8 +350,9 @@ selects `OP_WUMPYIELD` only with the lexical `Wump/keywords` hint. Qualified
 names, methods, implicit hash keys and scopes without that hint retain normal
 Perl lookup. The opcode has no Perl/XS call frame or mutable global state.
 It checks the same metadata/publication exclusion as the XS path, requires a
-running act, publishes the operand stack before suspension and reselects it
-after resumption. Scalar/list results remain undef/empty. Opcode definitions,
+running act and an already-published operand stack before suspension, and
+reselects stack state when needed after resumption. Scalar/list results remain
+undef/empty. Opcode definitions,
 dispatch/check tables, prototypes and B metadata must agree; regeneration uses
 the pinned upstream generator and rejects unknown opcode input. `Opcode`
 classifies it with thread operations, and compilation must honor opcode masks.

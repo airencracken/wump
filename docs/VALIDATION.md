@@ -259,3 +259,46 @@ sanitizer targets intentionally retain those integration checks; they do
 not silently skip them. Run on a host with local socket access when the
 sandbox denies these operations. Filtered socketpair/pipe checks and syscall
 fixtures do not establish that the TCP/half-close checks passed.
+
+## Native channel and context checkpoint (2026-11-01)
+
+Final code `58e749c` passes the normal project suites, execution-context and
+legacy differentials, source-upgrade/idempotence checks, state inventory,
+C/C++ and embedded-interpreter fixtures, opcode regeneration and Bison 3.8.2
+parser regeneration. The unchanged full upstream harness passes in UTC:
+**2,919 files / 1,351,420 checks**. Native channel tests have 48 checks; native
+yield has 30 and scalar writes 250, including root/child numeric contexts and
+multi-slot scalar/list yields. The preceding interpreter fails eight channel
+entry/bypass assertions; its observable channel behavior checks pass.
+
+A separate fully instrumented ASan interpreter passes the project suites with
+`detect_leaks=0:detect_stack_use_after_return=1` and `PERL_DESTRUCT_LEVEL=2`.
+The three focused suites also pass with leak detection enabled and full
+teardown. This is not a whole-upstream ASan/LSan claim. The first ASan build
+omitted the standard options and stopped on miniperl startup leaks; the
+standard build and focused full-teardown runs pass separately.
+
+Whole-core TSan passes `perl-parallel-test`, its deliberate user-race positive
+control and the same three focused suites with
+`halt_on_error=1:exitcode=66` and full teardown. An earlier parallel run exposed
+a pre-existing TEMP-cleared publication race. The ownership regression fails
+on the preceding interpreter and passes after publication transfers every
+actual temporary-stack owner, including duplicates, into private RV holders.
+The repaired job fixture also passes five stress runs of three samples, eight
+jobs each (120 jobs). This scoped result does not clear the separate upstream
+ithreads failure in the full-project TSan target described above; that complete
+target was not rerun here.
+
+The performance tools pass 134 unit and 477 integration checks. The
+[final matrix comparison](../bench/operation-matrix-channel-check.txt) passes
+the unchanged 10% work/process budget. Earlier failing captures remain in the
+[measurement history](../bench/operation-matrix-channel-current.md), alongside
+all raw samples and separate interleaved probes. Four matrices (3,080 samples)
+and seven focused datasets (420 samples) were revalidated for complete sample
+identities, results, source/binary hashes, pairing and exact saved check text.
+
+Build trees and detailed logs remain locally under
+`build/checkpoint-native-channel/`; final normal, sanitizer and tooling logs
+are copied to its `validation-logs/` directory. The tracked benchmark records
+retain source revisions, binary hashes, configurations and exact capture
+runners; generated binaries and raw profiler memory are not committed.

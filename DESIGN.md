@@ -2285,3 +2285,44 @@ cleanup lock or new mutable state. Both flagged and already-cleared owners
 follow the same existing ownership protocol. Full-teardown focused LSan and
 the TSan parallel target (including the previously failing job fixture), native
 channel suite and deliberate-race control pass after the fix.
+
+### Numeric and yield context refinements
+
+The initial channel capture exposed arithmetic regressions. Bounded numeric
+admission now selects opcode, phase and operand-stack fields from its current
+act once, using interpreter root fields for the main act. The region cannot
+call Perl or suspend; executor allocation and reader selection remain dynamic.
+Root/child numeric tests verify independent sums across yields, including
+modulo boundaries on one/four slots. Native yield now saves context from the
+act-owned opcode and avoids rewriting an unchanged stack pointer; scalar
+context refreshes stack state after resumption before pushing undef.
+The multi-slot yield loop verifies scalar/list results and adjacent operands.
+
+The final project/context/legacy suites, parser regeneration and full upstream
+UTC harness pass: 2,919 files / 1,351,420 checks. The separate whole-project
+ASan run passes with stack-use-after-return enabled and leak detection disabled;
+native channel (48), yield (30) and scalar-write (250) checks additionally pass
+with full-teardown LSan. Whole-core TSan passes the parallel target, its
+deliberate-race control and those three focused suites. This does not clear
+the separate full-project TSan/ithreads limitation documented in validation.
+
+### Saved performance checkpoint
+
+The [final matched matrix](bench/operation-matrix-channel-current.md) passes
+the unchanged 10% regression gate against the original native-yield anchor,
+with channel work down 32.81%/29.06%/31.47%, spawn down
+14.73%/9.04%/15.18% and yield down 2.41%/2.26%/2.70% on one/two/four slots.
+The anchor is rerun with the same new fixture and remains the default baseline.
+This comparison includes native act/constructor changes since that anchor.
+The [same-binary channel probe](bench/native-channel-api.md) isolates dispatch:
+native work falls 29–35% versus wrappers, with another 1–4% versus direct XS.
+
+The initial arithmetic failures and the intermediate two-slot yield failure
+remain recorded with interleaved numeric/yield follow-ups. A final passing
+capture does not establish that earlier failures were noise. Four complete
+matrices retain 3,080 samples, and seven focused datasets retain 420 samples,
+including exact runners, binary/configuration identities and clean source
+revisions. All samples, source hashes, results, pairing and saved comparison
+text were independently revalidated. Matrix tooling passes 134 unit and 477
+integration checks. Active ordinary-Perl overhead, general core syntax/selection,
+Perl I/O and deployment tooling remain unfinished.
