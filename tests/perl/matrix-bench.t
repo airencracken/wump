@@ -44,6 +44,12 @@ is($status, 0, 'all languages and slot counts complete across the 97-value bound
 is($errors, '', 'successful capture emits no diagnostics');
 BAIL_OUT($errors) if $status;
 my $capture = load_capture($path);
+is($capture->{schema}, 'wump-operation-matrix-v3', 'public-syntax capture records the new fixture version');
+for my $variant (qw(wump-1 wump-2 wump-4)) {
+	my ($cell) = grep {$_->{operation} eq 'spawn' && $_->{variant} eq $variant} @{$capture->{cells}};
+	is_deeply($cell->{samples}[0]{native_ops}, [qw(wumpact wumpchan wumpyield)],
+		"$variant verifies the worker's compiled public operations");
+}
 is(scalar @{$capture->{cells}}, 154, 'all eleven operations and fourteen variants are present');
 is(scalar(map {@{$_->{samples}}} @{$capture->{cells}}), 462, 'all three raw runs are retained');
 like($text, qr/Stock Perl.*Wump unused.*Go 4/, 'capture prints the readable matrix');
@@ -143,7 +149,7 @@ for my $n (1, 97, 1025) {
 		ok(eval {validate_result($result, 'spawn', $variant, $n, 1); 1}, 'boundary result passes independent identity/count/checksum validation') or diag($@, $errors);
 	}
 }
-for my $op (qw(yield spawn)) {
+for my $op (qw(yield spawn chan sleep)) {
 	for my $mode (qw(public xs native)) {
 		for my $n (1, 1025) {
 			for my $slots (1, 4) {

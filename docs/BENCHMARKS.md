@@ -161,10 +161,14 @@ requires the same prepared stock/Go controls and affinity; ordinary unpinned
 captures intentionally cannot pass a comparison with it. A baseline self-check
 validates the record, not an improvement over an earlier matrix.
 
-New captures use schema v2 with fourteen variants. Archived v1 captures remain
-readable and comparable with other compatible v1 captures. A v1/v2 comparison
-is rejected: adding process/thread controls requires a fresh baseline, never
-fabricated historical samples. Tooling tests cover uneven worker partitions,
+New captures use schema v3 with fourteen variants and imported public Wump
+syntax. Every active sample records the native operations found in the compiled
+worker; the checker rejects missing/inconsistent bindings and loss of a previous
+binding. This describes the shared worker's compiled branches, not an assertion
+that every operation executes in every row. Archived v1/v2 captures remain
+readable and comparable within their schema. Cross-schema comparisons are
+rejected: changed fixtures require a fresh matched baseline, never fabricated
+historical samples. Tooling tests cover uneven worker partitions,
 more slots than jobs, failed worker creation, child failure and reaping/joining
 all workers before propagating failure.
 
@@ -193,15 +197,17 @@ WUMPPROCS=1 build/perl/perl-5.42.2/perl -Ibuild/perl/perl-5.42.2/lib \
 ```
 
 `bench/api-overhead.pl` compares the public Perl wrapper with the same internal
-XS entry for yield or spawn. Yield also has a native opcode mode, using the
-same Perl loop with no wrapper or XS dispatch. Spawn retains the same channel
-methods in both modes, isolating only `act`'s wrapper. All verify the completed count. Rotate
+XS entry and native core operation for yield, spawn, channel creation/close or
+zero-duration sleep. All three modes use matching Perl loops; spawn retains the
+same channel methods and channel creation retains the same close method.
+Native mode verifies the requested operation exists in the compiled optree,
+rejecting binaries that would silently fall back to function dispatch.
+All verify the completed count. Rotate
 paired runs on the same binary and CPU mask. Internal entries are diagnostic,
 not a supported application API. Removing this wrapper still leaves an XS
 call, interpreter bookkeeping and the runtime operation. Native-mode timings
-measure the implemented keyword directly. The common matrix's `yield` row
-currently measures qualified `Wump::yield()` through the compatibility path;
-the focused probe distinguishes that from the native operation.
+measure the implemented operation directly. Schema v3 of the common matrix
+uses imported public syntax; archived v1/v2 used qualified compatibility calls.
 Ordinary compute-row overhead cannot
 be attributed to Wump API wrappers, which those timed loops never invoke.
 

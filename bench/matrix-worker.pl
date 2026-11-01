@@ -7,6 +7,10 @@ BEGIN {
 	if (($ENV{WUMP_MATRIX_MODE} // '') eq 'wump') {
 		require Wump;
 		Wump->import;
+	} else {
+		# Only inactive, unreachable coroutine branches need declarations.
+		eval 'sub act :prototype(&); sub chan :prototype(;$); sub yield :prototype(); 1'
+			or die $@;
 	}
 	require threads if ($ENV{WUMP_MATRIX_MODE} // '') eq 'ithreads';
 	require POSIX if ($ENV{WUMP_MATRIX_MODE} // '') eq 'fork';
@@ -14,6 +18,24 @@ BEGIN {
 use JSON::PP ();
 use Encode ();
 use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC);
+use B ();
+our @native_ops;
+BEGIN {
+	if (($ENV{WUMP_MATRIX_MODE} // '') eq 'wump') {
+		eval q{ CHECK {
+		my (%found, $walk);
+		$walk = sub ($node) {
+			while ($$node) {
+				$found{$node->name} = 1 if $node->name =~ /^wump(?:act|chan|yield)$/;
+				$walk->($node->first) if $node->can('first');
+				$node = $node->sibling;
+			}
+		};
+		$walk->(B::main_root());
+		@native_ops = sort keys %found;
+		} 1 } or die $@;
+	}
+}
 our $encoder;
 BEGIN { CLOCK_MONOTONIC(); $encoder = Encode::find_encoding('UTF-8') }
 
@@ -32,6 +54,7 @@ die "coroutines require an active runtime\n" if $primitive && !$active;
 
 sub emit ($value) { print JSON::PP->new->ascii->canonical->encode($value), "\n" }
 my %identity = (operation => $op, iterations => 0 + $n, jobs => 0 + $jobs, slots => $slots);
+$identity{native_ops} = [@native_ops] if $active;
 if ($op eq 'json') {
 	my $ok = eval { JSON::PP::encode_json({n => 1, s => 'word'}); 1 };
 	if (!$ok) {
@@ -157,8 +180,8 @@ my @results;
 my $start = clock_gettime(CLOCK_MONOTONIC);
 if (!$primitive) {
 	if ($active) {
-		my $out = Wump::chan(4);
-		for my $id (1..$jobs) { Wump::act(sub { $out->send(compute($id)) }) }
+		my $out = chan(4);
+		for my $id (1..$jobs) { act(sub { $out->send(compute($id)) }) }
 		push @results, scalar $out->recv for 1..$jobs;
 	} elsif ($mode eq 'fork') {
 		@results = fork_jobs();
@@ -167,15 +190,15 @@ if (!$primitive) {
 	} else { push @results, compute($_) for 1..$jobs }
 } elsif ($op eq 'yield') {
 	my $count = 0;
-	for (1..$n) { Wump::yield(); $count++ }
+	for (1..$n) { yield(); $count++ }
 	push @results, [1, $count];
 } elsif ($op eq 'spawn') {
-	my $out = Wump::chan();
+	my $out = chan();
 	my %seen;
 	my $sum = 0;
 	for (my $base = 0; $base < $n; $base += 1024) {
 		my $batch = $n - $base < 1024 ? $n - $base : 1024;
-		for my $id ($base + 1..$base + $batch) { Wump::act(sub { $out->send($id) }) }
+		for my $id ($base + 1..$base + $batch) { act(sub { $out->send($id) }) }
 		for (1..$batch) {
 			my $id = $out->recv;
 			die "duplicate or invalid spawn result\n" unless $id >= 1 && $id <= $n && !$seen{$id}++;
@@ -184,8 +207,8 @@ if (!$primitive) {
 	}
 	push @results, [1, $sum];
 } else {
-	my ($request, $response, $done) = (Wump::chan(), Wump::chan(), Wump::chan());
-	Wump::act(sub {
+	my ($request, $response, $done) = (chan(), chan(), chan());
+	act(sub {
 		for (1..$n) { my $value = $request->recv; $response->send($value + 1) }
 		$done->send(1);
 	});

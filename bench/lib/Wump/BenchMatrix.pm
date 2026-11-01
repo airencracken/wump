@@ -7,9 +7,9 @@ use JSON::PP ();
 our @EXPORT_OK = qw(operations variants primitive expected validate_result validate_metadata validate_capture load_capture median summarize report compare);
 
 sub operations () { return qw(arithmetic calls arrays hashes strings regex utf8 json yield spawn channel) }
-sub variants ($schema = 'wump-operation-matrix-v2') {
+sub variants ($schema = 'wump-operation-matrix-v3') {
 	return qw(stock wump-unused wump-1 wump-2 wump-4 go-1 go-2 go-4) if $schema eq 'wump-operation-matrix-v1';
-	$schema eq 'wump-operation-matrix-v2' or die "unknown matrix schema\n";
+	$schema =~ /\Awump-operation-matrix-v[23]\z/ or die "unknown matrix schema\n";
 	return qw(stock fork-1 fork-2 fork-4 ithreads-1 ithreads-2 ithreads-4 wump-unused wump-1 wump-2 wump-4 go-1 go-2 go-4);
 }
 sub primitive ($op) { return $op =~ /\A(?:yield|spawn|channel)\z/ ? 1 : 0 }
@@ -48,6 +48,15 @@ sub expected ($op, $n, $id) {
 
 sub validate_result ($r, $op, $variant, $n, $jobs) {
 	ref($r) eq 'HASH' or die "invalid worker result\n";
+	if (exists $r->{native_ops}) {
+		$variant =~ /\Awump-[124]\z/ && ref($r->{native_ops}) eq 'ARRAY' or die "invalid native bindings\n";
+		my %seen;
+		for my $name (@{$r->{native_ops}}) {
+			string($name) && $name =~ /\Awump(?:act|chan|sleep|yield)\z/ && !$seen{$name}++
+				or die "invalid native bindings\n";
+		}
+		join(',', @{$r->{native_ops}}) eq join(',', sort @{$r->{native_ops}}) or die "unsorted native bindings\n";
+	}
 	for my $pair ([operation => $op], [iterations => $n], [jobs => $jobs], [slots => slots($variant)]) {
 		my ($key, $value) = @$pair;
 		defined($r->{$key}) && !ref($r->{$key}) && $r->{$key} eq "$value" or die "worker identity mismatch: $key\n";
@@ -82,7 +91,7 @@ sub validate_result ($r, $op, $variant, $n, $jobs) {
 }
 
 sub validate_metadata ($capture) {
-	ref($capture) eq 'HASH' && ($capture->{schema} // '') =~ /\Awump-operation-matrix-v[12]\z/
+	ref($capture) eq 'HASH' && ($capture->{schema} // '') =~ /\Awump-operation-matrix-v[123]\z/
 		&& JSON::PP::is_bool($capture->{complete}) && $capture->{complete} or die "incomplete or unknown matrix schema\n";
 	my $params = $capture->{parameters};
 	ref($params) eq 'HASH' && integer($params->{iterations}, 1, 2000000)
@@ -110,7 +119,7 @@ sub validate_metadata ($capture) {
 		$capture->{binaries}{wump}{config}{$key} eq $capture->{binaries}{stock}{config}{$key} or die "stock/Wump build mismatch: $key\n";
 	}
 	$capture->{binaries}{stock}{config}{useithreads} eq 'define' or die "stock Perl lacks ithreads\n"
-		if $capture->{schema} eq 'wump-operation-matrix-v2';
+		if $capture->{schema} ne 'wump-operation-matrix-v1';
 	my $go = $capture->{binaries}{go}{config};
 	for my $key (qw(version os arch compiler)) { string($go->{$key}) or die "invalid Go build identity\n" }
 	ref($go->{settings}) eq 'ARRAY' or die "missing Go build settings\n";
@@ -128,7 +137,7 @@ sub validate_capture ($capture) {
 	my @operations = operations();
 	my @variants = variants($capture->{schema});
 	ref($capture->{cells}) eq 'ARRAY' && @{$capture->{cells}} == @operations * @variants or die "incomplete matrix cells\n";
-	my (%seen, %sequence);
+	my (%seen, %sequence, $bindings);
 	my %ops = map {$_ => 1} operations();
 	my %variants = map {$_ => 1} @variants;
 	for my $cell (@{$capture->{cells}}) {
@@ -141,6 +150,12 @@ sub validate_capture ($capture) {
 			integer($sample->{sequence}, 1, @operations * @variants * $params->{runs})
 				&& !$sequence{$sample->{sequence}}++ or die "duplicate or invalid execution sequence\n";
 			validate_result($sample, $cell->{operation}, $cell->{variant}, $params->{iterations}, $params->{jobs});
+			if ($capture->{schema} eq 'wump-operation-matrix-v3' && $cell->{variant} =~ /\Awump-[124]\z/) {
+				exists($sample->{native_ops}) or die "missing native bindings\n";
+				my $current = join(',', @{$sample->{native_ops}});
+				$bindings //= $current;
+				$bindings eq $current or die "inconsistent native bindings\n";
+			}
 			$status //= $sample->{status};
 			$status eq $sample->{status} or die "inconsistent support across samples\n";
 			if ($status eq 'ok') {
@@ -216,6 +231,11 @@ sub report ($capture, $metric = 'work') {
 	}
 	$text .= "\n$capture->{parameters}{runs} rotated runs; $capture->{parameters}{iterations} iterations; $capture->{parameters}{jobs} independent jobs for common operations.\n";
 	$text .= "CPU affinity: $capture->{machine}{affinity}. Source: $capture->{source}{revision}" . ($capture->{source}{dirty} ? ' (dirty; diagnostic only).' : ' (clean).') . "\n";
+	if ($capture->{schema} eq 'wump-operation-matrix-v3') {
+		my ($cell) = grep {$_->{variant} eq 'wump-1'} @{$capture->{cells}};
+		$text .= "\nPublic Wump syntax; native operations in the compiled worker: "
+			. (join(', ', @{$cell->{samples}[0]{native_ops}}) || 'none (function compatibility paths)') . ".\n";
+	}
 	return $text;
 }
 
@@ -237,6 +257,14 @@ sub compare ($before, $after, $limit) {
 	$json->encode($before->{binaries}{wump}{config}) eq $json->encode($after->{binaries}{wump}{config}) or die "changed Wump build configuration\n";
 	my ($a, $b) = map {summarize($_)} ($before, $after);
 	my ($failed, $text) = (0, '');
+	if ($after->{schema} eq 'wump-operation-matrix-v3') {
+		my @sets = map {my ($cell) = grep {$_->{variant} eq 'wump-1'} @{$_->{cells}}; $cell->{samples}[0]{native_ops}} ($before, $after);
+		my %new = map {$_ => 1} @{$sets[1]};
+		for my $name (@{$sets[0]}) {
+			if (!$new{$name}) { $failed = 1; $text .= "FAIL native binding lost: $name\n" }
+		}
+		$text .= 'BINDINGS ' . (join(',', @{$sets[0]}) || 'none') . ' -> ' . (join(',', @{$sets[1]}) || 'none') . "\n";
+	}
 	for my $op (operations()) {
 		for my $variant (grep {/\Awump/} variants($after->{schema})) {
 			my ($old, $new) = ($a->{$op}{$variant}, $b->{$op}{$variant});

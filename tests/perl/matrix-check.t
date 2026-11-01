@@ -11,7 +11,7 @@ my %config = (version => 'v5.42.2', archname => 'x86_64-linux-thread-multi',
 	cc => 'cc', gccversion => '14', ccflags => '-O2', ldflags => '', lddlflags => '-shared',
 	optimize => '-O2', usemultiplicity => 'define', useithreads => 'define', use64bitall => 'define');
 my $original = {
-	schema => 'wump-operation-matrix-v2', complete => JSON::PP::true,
+	schema => 'wump-operation-matrix-v3', complete => JSON::PP::true,
 	parameters => {iterations => 2, jobs => 2, runs => 3},
 	source => {revision => 'a' x 40, fixture_sha256 => 'b' x 64, dirty => JSON::PP::false},
 	machine => {cpu_model => 'test CPU', affinity => '0-3', kernel => 'test kernel'},
@@ -52,10 +52,34 @@ for my $op_index (0..$#ops) {
 				%sample = (%sample, status => 'ok', units => $op =~ /\A(?:spawn|yield|channel)\z/ ? 2 : 4,
 					wall_seconds => 0.001 * $run, process_seconds => 0.01 + 0.001 * $run, results => \@results);
 			}
+			$sample{native_ops} = [qw(wumpact wumpchan wumpyield)] if $variant =~ /\Awump-[124]\z/;
 			push @samples, \%sample;
 		}
 		push @{$original->{cells}}, {operation => $op, variant => $variant, samples => \@samples};
 	}
+}
+{
+	my $legacy = clone();
+	$legacy->{schema} = 'wump-operation-matrix-v2';
+	for my $cell (@{$legacy->{cells}}) { delete $_->{native_ops} for @{$cell->{samples}} }
+	ok(validate_capture($legacy), 'archived v2 function-path captures remain readable');
+	my ($failed) = compare($legacy, clone($legacy), 10);
+	is($failed, 0, 'archived v2 comparisons remain usable');
+	ok(!eval {compare($legacy, $original, 10); 1}, 'public-syntax captures require a new compatible baseline');
+}
+like(report($original), qr/Public Wump syntax; native operations.*wumpact, wumpchan, wumpyield/,
+	'report records the compiled bindings instead of assuming native execution');
+{
+	my $before = clone();
+	for my $cell (@{$before->{cells}}) {
+		$_->{native_ops} = ['wumpyield'] for grep {exists $_->{native_ops}} @{$cell->{samples}};
+	}
+	my ($failed, $text) = check(clone(), $before);
+	is($failed, 0, 'new native bindings are allowed with unchanged workloads');
+	like($text, qr/BINDINGS wumpyield -> wumpact,wumpchan,wumpyield/, 'binding changes are explicit');
+	($failed, $text) = check($before);
+	is($failed, 1, 'losing a previously compiled native binding fails');
+	like($text, qr/FAIL native binding lost: wumpact/, 'lost native binding is named');
 }
 sub clone ($value = $original) { return decode_json(encode_json($value)) }
 sub cell ($capture, $op = 'arithmetic', $variant = 'wump-1') {
@@ -157,6 +181,10 @@ for my $factor (0.5, 1.1, 1.11) {
 }
 
 for my $case (
+	['missing native bindings', sub {delete cell($_[0])->{samples}[0]{native_ops}}, qr/missing native bindings/],
+	['duplicate native binding', sub {push @{cell($_[0])->{samples}[0]{native_ops}}, 'wumpyield'}, qr/invalid native bindings/],
+	['unverified native binding', sub {cell($_[0])->{samples}[0]{native_ops} = ['other']}, qr/invalid native bindings/],
+	['inconsistent native bindings', sub {cell($_[0])->{samples}[0]{native_ops} = ['wumpyield']}, qr/inconsistent native bindings/],
 	['missing cell', sub {pop @{$_[0]{cells}}}, qr/incomplete matrix cells/],
 	['duplicate cell', sub {$_[0]{cells}[1] = $_[0]{cells}[0]}, qr/duplicate matrix cell/],
 	['unknown row', sub {$_[0]{cells}[0]{operation} = 'other'}, qr/unknown matrix cell/],

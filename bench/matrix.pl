@@ -77,7 +77,7 @@ chomp $kernel;
 my @fixture_files = ("$FindBin::Bin/matrix.pl", "$FindBin::Bin/matrix-worker.pl", "$FindBin::Bin/matrix-worker.go", "$FindBin::Bin/lib/Wump/BenchMatrix.pm");
 for my $fixture (@fixture_files) { $output_path ne abs_path($fixture) or die "output would replace a benchmark source\n" }
 my $capture = {
-	schema => 'wump-operation-matrix-v2', complete => JSON::PP::true,
+	schema => 'wump-operation-matrix-v3', complete => JSON::PP::true,
 	parameters => {map {$_ => $opts{$_}} qw(runs iterations jobs)},
 	machine => {cpu_model => $model, affinity => $affinity, kernel => $kernel},
 	source => {revision => $revision, dirty => $dirty ? JSON::PP::true : JSON::PP::false,
