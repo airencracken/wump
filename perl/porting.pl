@@ -7,6 +7,7 @@ sub apply_porting {
 		['Digest::SHA', 'cpan/Digest-SHA', 'SHA.xs', '7e92d6904020634076eb940ac5c8b849414d6685'],
 		['Encode', 'cpan/Encode', 'Encode.xs', 'd590ca69605b1ecc16bf1692113735130f5d7a41'],
 		['IO', 'dist/IO', 'IO.xs', '80235249d34a3fd205c4214568d3d58117394017'],
+		['JSON::PP', 'cpan/JSON-PP', 'lib/JSON/PP.pm', '446b21f9dac6cce5896338f05f5571a26bfcecb5'],
 		['MIME::Base64', 'cpan/MIME-Base64', 'Base64.xs', '0aac9224a7175ac874d6f1ded9d9e8bba64d9ded'],
 		['PathTools', 'dist/PathTools', 'Cwd.xs', '4881a8deeb56c7e030b1162c5389be800b4e8a34'],
 		['Scalar::Util', 'cpan/Scalar-List-Utils', 'ListUtil.xs', '9a162277acd73951f4fbe9973b25a5d212388c7e'],

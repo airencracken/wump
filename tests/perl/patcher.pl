@@ -342,6 +342,7 @@ for my $case (
 	['perly.y', qr/unexpected pinned grammar/, 'unknown grammar changes cannot be marked as regenerated'],
 	['regen/opcodes', qr/unexpected opcode definitions/, 'unknown opcode definitions cannot acquire generated dispatch tables'],
 	['cpan/MIME-Base64/Base64.xs', qr/unexpected customized source/, 'unknown native changes cannot acquire audited checksums'],
+	['cpan/JSON-PP/lib/JSON/PP.pm', qr/unexpected customized source/, 'unknown JSON state changes cannot acquire audited checksums'],
 ) {
 	my ($file, $expected, $message) = @$case;
 	my $original = read_file_for_test("$legacy/$file");
