@@ -847,7 +847,11 @@ regex-cache, namespace-mutation or XS audits. Runtime compilation and
 unaudited XS are rejected in multi-slot execution pending the compile gate
 and compatibility policy described above. General network-service usability
 additionally needs the Perl I/O handoff,
-`sel`, and explicit signal/fork behavior. Assess readiness against these gates;
+full selection syntax, and explicit signal/fork behavior. The native
+`sel($cases [, $timeout])` primitive now supports channel selection, timed
+waits and done-channel cancellation; see the
+[API and restrictions](docs/PERL-INTEGRATION.md#channel-selection).
+Assess readiness against these gates;
 the amount of completed infrastructure is not a reliable time estimate.
 
 ### Implementation assessment (updated 2026-10-31)

@@ -33,6 +33,34 @@ push @changed, grep { !exists $after->{$_} } keys %$before;
 die "reapplying patches changed source:\n", join("\n", sort @changed), "\n" if @changed;
 print "ok - reapplying patches preserves every source file\n";
 
+# Upgrade an immediately preceding four-opcode tree, including its Opcode
+# classification and deparser. Comparing the whole snapshot catches duplicate
+# handlers as well as stale generated metadata.
+{
+	my %previous;
+	for my $relative ('regen/opcodes', 'ext/Opcode/Opcode.pm', 'lib/B/Deparse.pm') {
+		my $file = "$source/$relative";
+		my $text = read_file_for_test($file);
+		$previous{$file} = $text;
+		if ($relative eq 'regen/opcodes') {
+			$text =~ s/^wumpsel\t[^\n]+\n//m or die "missing selection opcode\n";
+		} elsif ($relative eq 'ext/Opcode/Opcode.pm') {
+			$text =~ s/ wumpsel\n/\n/ or die "missing selection classification\n";
+		} else {
+			$text =~ s/\nsub pp_wumpsel \{.*?^\}\n//ms or die "missing selection deparser\n";
+		}
+		open my $output, '>', $file or die $!;
+		print {$output} $text or die $!;
+		close $output or die $!;
+	}
+	system 'perl', 'perl/apply.pl', $source;
+	$? == 0 or die "selection upgrade failed: $?\n";
+	for my $file (keys %previous) {
+		read_file_for_test($file) eq $previous{$file} or die "selection upgrade differs: $file\n";
+	}
+	print "ok - four-opcode trees upgrade selection metadata and deparser exactly once\n";
+}
+
 my $legacy = tempdir('wump-key-upgrade-XXXXXX', TMPDIR => 1, CLEANUP => 1);
 for my $file (keys %$after) {
 	(my $relative = $file) =~ s/^\Q$source\E\/// or die "unexpected path: $file\n";
@@ -44,7 +72,7 @@ for my $file (keys %$after) {
 	open my $input, '<', $file or die $!;
 	my $text = do { local $/; <$input> };
 	close $input or die $!;
-	$text =~ s/\nwumpyield\t[^\n]+\n(?:wumpact\t[^\n]+\n)?(?:wumpchan\t[^\n]+\n)?(?:wumpsleep\t[^\n]+\n)?\z// or die "missing native opcodes\n";
+	$text =~ s/\nwumpyield\t[^\n]+\n(?:wumpact\t[^\n]+\n)?(?:wumpchan\t[^\n]+\n)?(?:wumpsleep\t[^\n]+\n)?(?:wumpsel\t[^\n]+\n)?\z// or die "missing native opcodes\n";
 	open my $output, '>', $file or die $!;
 	print {$output} $text or die $!;
 	close $output or die $!;

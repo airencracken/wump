@@ -474,3 +474,34 @@ Do not put private disclosure material or sensitive reproductions in these
 documents or tests. Stop investigation of an independently encountered
 potentially security-sensitive issue and use an authorized private reporting
 channel; the public audit must remain non-revealing.
+
+## Perl channel selection
+
+**SEL-1 — Snapshot control inputs before parking.** Native `sel` copies every
+case's scalar heads under metadata exclusion after checking existing writer
+claims. Control arrays and fields must be plain; snapshotting invokes no tied
+or overloaded callbacks. Resolve every enabled channel and validate every
+case before attempting any channel operation. Publishing send candidates
+precedes exposure to the C runtime. Snapshotting references retains identity;
+it does not deep-copy payload graphs or make their later mutation safe.
+
+**SEL-2 — A winning send has transferred ownership before return.** Its peer
+may already have consumed and freed the message header when `wump_sel`
+returns. Clear the selected send pointer without dereferencing it. Other
+candidate headers and a selected received header remain exclusively owned by
+the selector. Unlink those headers under registry exclusion and defer their
+SV cleanup to normal mortal cleanup outside native locks.
+
+**SEL-3 — Cancel native waiters before freeing Perl selection storage.** The
+runtime cancels every task before unwinding abandoned Perl frames. An
+abandoned selector may have committed without resuming to learn the winner;
+its guard must never dereference candidate message pointers. The run registry
+retains remaining messages until shutdown. Normal selections release their
+snapshots and losing candidates before the caller's next statement. This
+shutdown rule relies on abandonment ending the entire run; individual task
+killing would require a separate ownership protocol.
+
+Enforcement: [native selection](../perl/core/wump_select.c),
+[C selection](../runtime/src/chan.c), [run teardown](../runtime/src/sched.c).
+Evidence: [Perl selection tests](../tests/perl/native-select.t) and
+[C selection tests](../tests/test_select.c).

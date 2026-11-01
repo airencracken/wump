@@ -5,7 +5,7 @@ use warnings;
 no feature 'signatures';
 use Exporter ();
 our @ISA = qw(Exporter);
-our @EXPORT = qw(act chan yield sleep waitgroup add done await);
+our @EXPORT = qw(act chan yield sleep sel waitgroup add done await);
 our $VERSION = '0.001';
 die "Wump requires the private task-aware Perl build\n" unless defined &_enable;
 
@@ -27,6 +27,7 @@ sub await ($) { _wg_wait(@_); return }
 sub chan (;$) { _chan(@_ ? $_[0] : 0) }
 sub yield () { _yield(); return }
 sub sleep ($) { _sleep($_[0]); return }
+sub sel ($;$) { _sel(@_ == 1 ? ($_[0], -1) : @_) }
 
 # Registration is setup only. Older private controls retain their supported
 # call paths; the native timing probe verifies the compiled operation itself.
@@ -34,6 +35,7 @@ if (defined &_intrinsic) {
 	_intrinsic(\&act, 'act');
 	_intrinsic(\&chan, 'chan');
 	_intrinsic(\&sleep, 'sleep');
+	_intrinsic(\&sel, 'sel') if defined &_sel;
 } elsif (defined &_act_intrinsic) {
 	_act_intrinsic(\&act);
 }

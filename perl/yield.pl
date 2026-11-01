@@ -7,7 +7,8 @@ sub apply_yield {
 	my $act_entry = "wumpact\t\tWump task creation\tck_null\t\t1\tS\n";
 	my @entries = ($yield_entry, $act_entry,
 		"wumpchan\tWump channel creation\tck_null\t\t1\tS\n",
-		"wumpsleep\tWump task sleep\t\tck_null\t\t1\tS\n");
+		"wumpsleep\tWump task sleep\t\tck_null\t\t1\tS\n",
+		"wumpsel\t\tWump channel selection\tck_null\t\t2\tS S\n");
 	my $original = $opcodes;
 	my $removed = 0;
 	for my $entry (reverse @entries) { $removed += $original =~ s/\Q$entry\E\z// }
@@ -40,10 +41,10 @@ C
 	edit('toke.c', '    /* Wump syntax is lexical:', $hook . '    /* Wump syntax is lexical:');
 	edit('lib/B/Deparse.pm', 'sub pp_stub {', "sub pp_wumpyield { return 'yield()' }\n\nsub pp_stub {");
 	my $thread_ops = read_file("$source/ext/Opcode/Opcode.pm");
-	my ($old_thread_ops) = $thread_ops =~ /(    lock(?: wumpyield(?: wumpact(?: wumpchan(?: wumpsleep)?)?)?)?\n\n=item :default)/;
+	my ($old_thread_ops) = $thread_ops =~ /(    lock(?: wumpyield(?: wumpact(?: wumpchan(?: wumpsleep(?: wumpsel)?)?)?)?)?\n\n=item :default)/;
 	defined($old_thread_ops) or die "unknown Opcode thread classification\n";
 	edit('ext/Opcode/Opcode.pm', $old_thread_ops,
-		"    lock wumpyield wumpact wumpchan wumpsleep\n\n=item :default");
+		"    lock wumpyield wumpact wumpchan wumpsleep wumpsel\n\n=item :default");
 	my $act_deparse = <<'PERL';
 sub pp_wumpact {
     my ($self, $op) = @_;
@@ -65,5 +66,13 @@ sub pp_wumpsleep {
 }
 PERL
 	edit('lib/B/Deparse.pm', $act_deparse, $act_deparse . $scalar_deparse);
+	my $sel_deparse = <<'PERL';
+
+sub pp_wumpsel {
+    my ($self, $op) = @_;
+    return 'sel(' . $self->deparse($op->first, 0) . ', ' . $self->deparse($op->last, 0) . ')';
+}
+PERL
+	edit('lib/B/Deparse.pm', $scalar_deparse, $scalar_deparse . $sel_deparse);
 }
 1;

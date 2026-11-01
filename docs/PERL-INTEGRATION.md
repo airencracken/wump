@@ -26,6 +26,7 @@ The build does not install or replace system Perl.
 make perl-fetch                 # downloads, verifies SHA512/size, and unpacks
 make perl-build                 # task-aware MULTIPLICITY + USE_ITHREADS build
 make perl-example               # Perl tasks return 1, 4, 9, 16
+make perl-select-example        # Timed receives and done-channel cancellation
 make perl-waitgroup-example     # Functional and object wait groups
 make perl-regex-example         # yielding tasks retain separate regex captures
 make perl-local-example         # spawned tasks inherit separate local bindings
@@ -767,7 +768,7 @@ execution resumes. Explicit yields
 retain their existing behavior in supported callbacks. Ordinary scripts
 without Wump retain the upstream runloop.
 
-This prototype does not implement `sel` or automatic Perl I/O/XS handoff.
+This prototype does not implement automatic Perl I/O/XS handoff.
 Ordinary blocking Perl operations still occupy their execution slot.
 With multiple slots, runtime `eval STRING`, `require`, `do FILE`, and dynamic
 regex compilation are rejected before compiler entry. Load dependencies with
@@ -793,3 +794,60 @@ destructors invoked during task teardown cannot schedule. Task teardown
 releases abandoned Perl frames and their owned values while their C stacks
 are still mapped; it is not cancellation
 that resumes the task's ordinary code.
+
+## Channel selection
+
+Imported `sel($cases [, $timeout])` compiles to `wumpsel` within `use Wump`
+scope. Qualified, indirect and lexical `no Wump` calls use the compatibility
+wrapper with the same selection helper. `CORE::select` keeps its usual meaning.
+This is the primitive for the design's future `sel { ... }` syntax.
+Run `make perl-select-example` for a complete worker shutdown example.
+
+```perl
+my ($index, $value, $ok) = sel([
+	['recv', $work],
+	['recv', $done],
+], 0.5);
+if (!defined $index) {
+	# Timed out.
+} elsif ($index == 1) {
+	# The done channel received a value or was closed.
+} elsif ($ok) {
+	# Process $value, which may itself be undef.
+}
+```
+
+Cases are `['recv', $channel]` or `['send', $channel, $payload]`. An undefined
+channel disables its case without changing later indices. Exactly one ready
+case commits; losing sends deliver nothing and losing receives consume
+nothing. A selector cannot rendezvous with itself. Selection chooses among
+ready cases without a source-order priority guarantee.
+
+The timeout is seconds: omitted or `-1` waits indefinitely, `0` implements a
+nonblocking default, and a positive finite duration sets a deadline. Other
+negative values, undefined values and nonnumeric values reject. An empty or
+all-disabled selection follows the same timeout rule. Indefinite selection
+without any possible wakeup will remain parked.
+
+List context returns `(index, value, ok)`. Index is zero-based; always test
+`defined`, since zero is a valid winner. A successful receive returns its
+payload and true status, including an undefined payload. A closed drained
+receive selects normally with undefined value and false status. A successful
+send returns undefined value and true status. A selected closed send throws.
+Timeout/default returns `(undef, undef, false)`. Scalar context returns only
+the index or undef; void context still commits the operation. Received values
+remain alive through the caller's statement in every context.
+
+All descriptor fields are validated and copied before selection can commit.
+Changing the source descriptors while an act waits does not change its
+pending operation. Control arrays must be real, unblessed arrays with plain
+scalar fields; tied/magical fields and weak control references reject. Payload
+references retain their usual identity and publication rules; this restriction
+does not require their referents to be plain. Cleanup releases normal losing
+candidates at statement end. Abandoned acts are reclaimed during run shutdown,
+which cancels channel waiters and timers before freeing selection buffers.
+
+This adds done-channel cancellation of a wait, not forced termination of an
+act. Applications still need an explicit completion protocol before main
+return. Full selection block syntax, transparent I/O integration and general
+XS compatibility remain separate work.

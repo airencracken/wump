@@ -775,6 +775,36 @@ static OP *wump_ck_sleep(pTHX_ OP *o, GV *namegv, SV *ckobj) {
 	return wump_ck_intrinsic(aTHX_ o, namegv, ckobj, "sleep", OP_WUMPSLEEP, FALSE);
 }
 
+static OP *wump_ck_sel(pTHX_ OP *o, GV *namegv, SV *ckobj) {
+	o = Perl_ck_entersub_args_proto_or_list(aTHX_ o, namegv, ckobj);
+	if (o->op_type != OP_ENTERSUB || (PL_parser && PL_parser->error_count)
+		|| !PL_hintgv || !GvHV(PL_hintgv)) return o;
+	SV **enabled = hv_fetchs(GvHV(PL_hintgv), "Wump/keywords", 0);
+	if (!enabled || !SvTRUE(*enabled)) return o;
+	OP *parent = o, *mark = cUNOPx(o)->op_first;
+	if (!OpHAS_SIBLING(mark)) {
+		parent = mark;
+		if (!(parent->op_flags & OPf_KIDS)) return o;
+		mark = cUNOPx(parent)->op_first;
+	}
+	if (!mark || mark->op_type != OP_PUSHMARK) return o;
+	OP *first = OpSIBLING(mark);
+	if (!first || !OpHAS_SIBLING(first)) return o;
+	OP *second = OpSIBLING(first);
+	bool two = OpHAS_SIBLING(second);
+	OP *callee = two ? OpSIBLING(second) : second;
+	if (!callee || OpHAS_SIBLING(callee) || !(callee->op_flags & OPf_KIDS)) return o;
+	OP *gvop = cUNOPx(callee)->op_first;
+	if (!gvop || gvop->op_type != OP_GV) return o;
+	GV *gv = cGVOPx_gv(gvop);
+	if (GvSTASH(gv) == gv_stashpvs("Wump", 0) || !strEQ(GvNAME(gv), "sel")) return o;
+	U8 flags = o->op_flags & OPf_WANT;
+	first = op_sibling_splice(parent, mark, 1, NULL);
+	second = two ? op_sibling_splice(parent, mark, 1, NULL) : newSVOP(OP_CONST, 0, newSViv(-1));
+	op_free(o);
+	return newBINOP(OP_WUMPSEL, flags, first, second);
+}
+
 static void xs_wump_intrinsic(pTHX_ CV *cv) {
 	dXSARGS;
 	PERL_UNUSED_VAR(cv);
@@ -786,6 +816,7 @@ static void xs_wump_intrinsic(pTHX_ CV *cv) {
 	if (strEQ(name, "act")) checker = wump_ck_act;
 	else if (strEQ(name, "chan")) checker = wump_ck_chan;
 	else if (strEQ(name, "sleep")) checker = wump_ck_sleep;
+	else if (strEQ(name, "sel")) checker = wump_ck_sel;
 	else croak("Wump: unknown intrinsic");
 	cv_set_call_checker_flags(target, checker, (SV *)target, 0);
 	XSRETURN_EMPTY;
@@ -931,6 +962,8 @@ static void xs_wump_close(pTHX_ CV *cv) {
 	XSRETURN_EMPTY;
 }
 
+#include "wump_select.c"
+
 /* Distinct entries retain ordinary XS behavior for call_sv, goto and implicit
  * argument forwarding. Normal entersub dispatch recognizes their addresses
  * only after resolving the actual method CV, preserving overrides and MRO. */
@@ -1069,4 +1102,5 @@ void Perl_wump_boot(pTHX) {
 	Perl_wump_xs_allow(aTHX_ newXS("Wump::_close", xs_wump_close, __FILE__));
 	Perl_wump_xs_allow(aTHX_ newXS("Wump::_yield", xs_wump_yield, __FILE__));
 	Perl_wump_xs_allow(aTHX_ newXS("Wump::_sleep", xs_wump_sleep, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::_sel", xs_wump_select, __FILE__));
 }
