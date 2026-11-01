@@ -2347,3 +2347,30 @@ coverage reconstructs the previous separate snapshots and requires exact
 equality of the complete regenerated tree. Timing and broader validation are
 recorded separately once complete; an unused-mode improvement would not by
 itself establish a general Perl optimization.
+
+### Stash-read races found during validation
+
+The first candidate TSan parallel run fails the existing concurrent-first-call
+test: overload initialization writes the auxiliary flag word while `sv_bless`
+reads its class bit. A new cold-cache blessing/ref fixture additionally fails
+on the preceding interpreter, with `sv_ref` reading stash head flags while
+overload initialization attaches magic. These are separate demonstrated
+reports; the older binary's first ordinary parallel run passed, so that pass
+alone did not clear the race.
+
+Bless now reads its class predicate under the existing metadata mutex and
+releases it before callbacks. Parallel `sv_ref` takes an owned mortal name
+snapshot under an exception-safe metadata guard, then assigns outside the
+guard. The boolean `ref` shortcut follows that path too, retaining false class
+name `0` behavior. The callback destination test overwrites an object whose
+destructor sends a message and yields. No OS mutex spans that cleanup.
+
+The expanded callee fixture has 217 checks with the stock control, including
+reblessing, native-class/nonreference rejection and boolean ref results. The
+blessed-code case captures a private lexical to create a fresh CV: the initial
+fixture accidentally blessed one shared constant CV concurrently and produced
+a separate unsupported-mutation report. That fixture diagnostic is preserved;
+it is not evidence for the stash-read fix. Initial insertion/upgrade failures
+were corrected; complete generated-tree idempotence and old-source upgrades
+pass before the final validation run. Performance and final sanitizer results
+are recorded separately.

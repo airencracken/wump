@@ -16,6 +16,8 @@ my @expected = map {
 	[$id, {
 		(map {$_ => $id + 3} qw(named reference glob forwarded tail recursive symbolic magic)),
 		method => $id * 2, super => $id * 2 + 1, blessed => $id + 5,
+		rebless => $id * 2 + 1, class_error => 1, nonref_error => 1,
+		ref_true => 1, ref_false => 0,
 		overloaded => $id + 7, overload_error => 1, overload_recovered => $id + 7,
 		magic_changed => $id + 9, magic_error => 1, magic_recovered => $id + 9, fetches => 4,
 		scalar => $id, list => [19, $id, $id + 1, 23],

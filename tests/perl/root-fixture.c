@@ -116,6 +116,15 @@ static XS(xs_metadata_guard) {
 	XSRETURN_EMPTY;
 }
 
+static XS(xs_ref_into) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items != 2 || !SvROK(ST(0)) || !SvROK(ST(1)))
+		croak("Usage: RootFixture::ref_into(REFERENCE, SCALAR_REFERENCE)");
+	sv_ref(SvRV(ST(1)), SvRV(ST(0)), TRUE);
+	XSRETURN_EMPTY;
+}
+
 static XS(xs_scalar_publish) {
 	dXSARGS;
 	PERL_UNUSED_VAR(cv);
@@ -596,6 +605,7 @@ XS_EXTERNAL(boot_RootFixture) {
 	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::execution_context", xs_execution_context, __FILE__));
 	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::executor_rendezvous", xs_executor_rendezvous, __FILE__));
 	newXS("RootFixture::metadata_guard", xs_metadata_guard, __FILE__);
+	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::ref_into", xs_ref_into, __FILE__));
 	newXS("RootFixture::opaque_regex", xs_opaque_regex, __FILE__);
 	newXS("RootFixture::constructor_self", xs_constructor_self, __FILE__);
 	newXS("RootFixture::debug_runops", xs_debug_runops, __FILE__);

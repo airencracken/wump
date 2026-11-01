@@ -140,6 +140,56 @@ for my $procs (2, 4) {
 		"concurrent first calls preserve callee state with $procs execution slots");
 }
 
+for my $procs (2, 4) {
+	local $ENV{WUMPPROCS} = $procs;
+	WumpTest::check_program(q{
+		use Wump; use RootFixture;
+		package BlessCacheBase {
+			use overload 'bool' => sub { Wump::yield(); return 1 }, fallback => 1;
+		}
+		BEGIN {
+			no strict 'refs';
+			@{"BlessCache${_}::ISA"} = ('BlessCacheBase') for 1..16;
+		}
+		my $out = chan(12);
+		for my $index (1..16) {
+			my $class = "BlessCache$index";
+			for my $id (1..12) {
+				act {
+					RootFixture::executor_rendezvous();
+					my $value = bless {}, $class;
+					die "wrong class\n" unless ref($value) eq $class;
+					die "boolean overload changed\n" unless $value;
+					$out->send($id);
+				};
+			}
+			my %seen;
+			$seen{scalar $out->recv}++ for 1..12;
+			die "missing blessing\n" unless keys(%seen) == 12;
+			die "duplicate blessing\n" if grep {$_ != 1} values %seen;
+		}
+		print "class predicates and cold overload caches completed\n";
+	}, 0, qr/\Aclass predicates and cold overload caches completed\n\z/,
+		"bless class predicates overlap cold overload caches on $procs slots");
+}
+
+for my $procs (1, 4) {
+	local $ENV{WUMPPROCS} = $procs;
+	WumpTest::check_program(q{
+		use Wump; use RootFixture;
+		package RefDestination {
+			sub DESTROY { $_[0][0]->send('destroyed'); Wump::yield() }
+		}
+		my $events = chan(1);
+		my $destination = bless [$events], 'RefDestination';
+		RootFixture::ref_into(bless({}, 'RefSource'), \$destination);
+		die "reference name changed\n" unless $destination eq 'RefSource';
+		die "destination cleanup missing\n" unless $events->recv eq 'destroyed';
+		print "ref destination cleanup yielded outside metadata exclusion\n";
+	}, 0, qr/\Aref destination cleanup yielded outside metadata exclusion\n\z/,
+		"native ref assignment releases metadata before destination cleanup on $procs slots");
+}
+
 {
 	local $ENV{WUMPPROCS} = 1;
 	WumpTest::check_program(q{

@@ -224,6 +224,14 @@ Enforcement: [claims](../perl/core/wump_memory.c#L458),
 [conversion behavior](../tests/perl/read-cache.c).
 
 **MEM-4 — Bound native exclusion; preserve logical claims through callbacks.**
+
+Class predicates and reference-name lookups share stash flag words with
+overload-cache initialization. Read those fields under metadata exclusion.
+Parallel reference-name assignment must use an owned snapshot and release its
+guard before overwriting a destination that can run user cleanup. Evidence:
+[cold-cache races and yielding destination cleanup](../tests/perl/parallel.t),
+[native ref destination](../tests/perl/root-fixture.c).
+
 A native metadata mutex/short reader announcement cannot span scheduling or
 user callbacks. Logical writer/capture guards can survive supported callbacks
 and must unwind on errors and abandonment. Use the guarded APIs rather than

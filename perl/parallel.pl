@@ -103,6 +103,42 @@ C
 	}
 	# Overload-cache initialization rewrites the stash head's flags. These
 	# macros are also read outside method opcodes, including callee resolution.
+	# It also writes the auxiliary flag word containing the class bit. Bless
+	# must read that predicate under the same guard, ending before callbacks.
+	my $bless_helper = <<'C';
+STATIC bool
+S_wump_bless_is_class(pTHX_ HV *stash)
+{
+    bool parallel = Perl_wump_parallel(aTHX);
+    if (parallel) Perl_wump_memory_lock(aTHX);
+    bool is_class = HvSTASH_IS_CLASS(stash);
+    if (parallel) Perl_wump_memory_unlock(aTHX);
+    return is_class;
+}
+
+C
+	edit('sv.c', "SV*\nPerl_sv_bless", $bless_helper . "SV*\nPerl_sv_bless");
+	edit('sv.c', '    if (HvSTASH_IS_CLASS(stash))',
+		'    if (S_wump_bless_is_class(aTHX_ stash))');
+	# ref() reads the same stash head while an overload table can attach
+	# magic. Capture an owned name before releasing protection; assignment
+	# into an arbitrary API destination may invoke user cleanup afterward.
+	edit('sv.c', "    if (ob && SvOBJECT(sv)) {\n        if (HvHasNAME(SvSTASH(sv)))\n", <<'C');
+    if (ob && SvOBJECT(sv)) {
+        if (Perl_wump_parallel(aTHX)) {
+            struct wump_mutation *guard = Perl_wump_metadata_begin(aTHX);
+            HEK *name = HvNAME_HEK(SvSTASH(sv));
+            SV *snapshot = sv_2mortal(name ? newSVhek(name) : newSVpvs("__ANON__"));
+            Perl_wump_mutation_end(aTHX_ guard);
+            sv_setsv(dst, snapshot);
+        }
+        else if (HvHasNAME(SvSTASH(sv)))
+C
+	edit('pp.c', "        if (SvOBJECT(rv)) {\n            HV *stash = SvSTASH(rv);\n", <<'C');
+        if (SvOBJECT(rv)) {
+            if (Perl_wump_parallel(aTHX)) goto do_sv_ref;
+            HV *stash = SvSTASH(rv);
+C
 	edit('sv.h', "#define HvAMAGIC(hv)\t\t(SvFLAGS(hv) & SVf_AMAGIC)",
 		'#define HvAMAGIC(hv) Perl_wump_stash_amagic((HV *)(hv), 0)');
 	edit('sv.h', "#define HvAMAGIC_on(hv)\t\t(SvFLAGS(hv) |= SVf_AMAGIC)",

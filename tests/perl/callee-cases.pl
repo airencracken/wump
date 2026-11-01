@@ -1,6 +1,9 @@
 use v5.42;
 use strict;
 use warnings;
+use feature 'class';
+no warnings 'experimental::class';
+class CalleeNative {}
 BEGIN {
 	if (($ENV{WUMP_CALLEE_MODE} // 'plain') ne 'plain') {
 		require Wump;
@@ -71,7 +74,18 @@ sub exercise {
 	}
 	$seen{method} = (bless [], 'CalleeBase')->method($id);
 	$seen{super} = (bless [], 'CalleeChild')->method($id);
-	my $blessed = bless sub { $_[0] + 5 }, 'CalleeCode';
+	my $reblessed = bless [], 'CalleeBase';
+	bless $reblessed, 'CalleeChild';
+	$seen{rebless} = $reblessed->method($id);
+	$seen{ref_true} = ref($reblessed) ? 1 : 0;
+	$seen{ref_false} = ref(bless {}, '0') ? 1 : 0;
+	eval { bless [], 'CalleeNative' };
+	$seen{class_error} = $@ =~ /Attempt to bless into a class/ ? 1 : 0;
+	eval { bless $id, 'CalleeBase' };
+	$seen{nonref_error} = $@ =~ /Can't bless non-reference value/ ? 1 : 0;
+	# Capture an act-owned lexical so this is a fresh CV. Blessing the same
+	# constant CV concurrently would mutate a deliberately shared object.
+	my $blessed = bless sub { $_[0] + 5 + ($id - $id) }, 'CalleeCode';
 	$seen{blessed} = $blessed->($id);
 	my $callable = bless [sub { $_[0] + 7 }, 0], 'CalleeCallable';
 	$seen{overloaded} = $callable->($id);

@@ -261,6 +261,28 @@ for my $spec (
 	print {$output} $text or die "$file: $!\n";
 	close $output or die "$file: $!\n";
 }
+{
+	my $file = "$legacy/sv.c";
+	my $text = read_file_for_test($file);
+	$text =~ s/^STATIC bool\nS_wump_bless_is_class\(pTHX_.*?^}\n\n//ms
+		or die "missing protected bless predicate\n";
+	$text =~ s/S_wump_bless_is_class\(aTHX_ stash\)/HvSTASH_IS_CLASS(stash)/
+		or die "missing bless predicate call\n";
+	$text =~ s{        if \(Perl_wump_parallel\(aTHX\)\) \{\n            struct wump_mutation \*guard = Perl_wump_metadata_begin\(aTHX\);\n            HEK \*name = HvNAME_HEK\(SvSTASH\(sv\)\);\n.*?^        else if \(HvHasNAME\(SvSTASH\(sv\)\)\)}{        if (HvHasNAME(SvSTASH(sv)))}ms
+		or die "missing protected ref name\n";
+	open my $out, '>', $file or die $!;
+	print {$out} $text or die $!;
+	close $out or die $!;
+}
+{
+	my $file = "$legacy/pp.c";
+	my $text = read_file_for_test($file);
+	$text =~ s/^            if \(Perl_wump_parallel\(aTHX\)\) goto do_sv_ref;\n//m
+		or die "missing boolean ref name fallback\n";
+	open my $out, '>', $file or die $!;
+	print {$out} $text or die $!;
+	close $out or die $!;
+}
 system 'perl', 'perl/apply.pl', $legacy;
 $? == 0 or die "legacy lifecycle upgrade failed: $?\n";
 my $upgraded = snapshot($legacy);
