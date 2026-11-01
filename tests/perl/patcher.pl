@@ -127,6 +127,27 @@ C
 	local $/;
 	my $text = <$input>;
 	close $input or die "$file: $!\n";
+	# Recreate the previous separate reference/CV head snapshots. Upgrade
+	# must coalesce only the callback-free prefix, preserving the full tree.
+	$text =~ s/^STATIC CV \*\nS_wump_callee_snapshot\(pTHX_.*?^}\n\n//ms
+		or die "missing callee snapshot helper\n";
+	my $previous = <<'C';
+    /* a non-magic-RV -> CV ? */
+    if (LIKELY( (S_wump_callee_flags(aTHX_ sv) & (SVf_ROK|SVs_GMG)) == SVf_ROK)) {
+        cv = MUTABLE_CV(SvRV(sv));  /* might not actually be a CV */
+        if (UNLIKELY((S_wump_callee_flags(aTHX_ (SV *)cv) & SVs_OBJECT))) /* might be overloaded */
+            goto do_ref;
+    }
+    else
+        cv = MUTABLE_CV(sv);
+
+    /* a CV ? */
+    if (UNLIKELY((S_wump_callee_flags(aTHX_ (SV *)cv) & SVTYPEMASK) != SVt_PVCV)) {
+        /* handle all the weird cases */
+        switch (S_wump_callee_flags(aTHX_ sv) & SVTYPEMASK) {
+C
+	$text =~ s{^    U32 wump_value_flags, wump_callee_flags;\n.*?^        switch \(wump_value_flags & SVTYPEMASK\) \{\n}{$previous}ms
+		or die "missing coalesced callee prefix\n";
 	# Restore the previous existing-cell load blocks before exercising the
 	# older read-only/reference upgrades. The new pass must rebuild them all.
 	$text =~ s{    if \(PL_wump_task && CvISXSUB\(cv\)\) \{\n        Perl_wump_xs_check\(aTHX_ cv\);\n        Perl_wump_publish\(aTHX_ \(SV \*\)cv\);\n(?:        if \(Perl_wump_channel_call\(aTHX_ cv\)\) return NORMAL;\n)?    \}}{    if (PL_wump_task && CvISXSUB(cv)) Perl_wump_publish(aTHX_ (SV *)cv);}

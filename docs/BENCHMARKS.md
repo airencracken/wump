@@ -2,6 +2,22 @@
 
 Commands run from the repository root.
 
+## Three optimization lanes
+
+Keep implementation commits and measurements separate where practical:
+
+| Lane | Scope | Evidence |
+| --- | --- | --- |
+| General Perl | Interpreter improvements useful independently of Wump | Matched unmodified Perl versus the same Perl with that change, plus compatibility tests |
+| Wump | Scheduler, task, channel and other Wump runtime improvements | Before/after Wump captures with unchanged fixtures and controls |
+| Perl for Wump | Interpreter changes that make isolation, suspension or parallel execution cheaper | Before/after Wump benefit and Wump-unused cost, measured separately |
+
+The Wump-unused column is still the modified interpreter. A faster unused
+column alone does not establish a general upstream Perl improvement. Changes
+that mix lanes should identify each part and its evidence; avoid attributing
+a combined gain to a single mechanism. Preserve stock behavior outside the
+intentional concurrency semantics and retain every failed regression result.
+
 ## Common operation matrix
 
 The primary matrix compares sequential stock Perl, stock Perl forks and

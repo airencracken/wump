@@ -2326,3 +2326,24 @@ revisions. All samples, source hashes, results, pairing and saved comparison
 text were independently revalidated. Matrix tooling passes 134 unit and 477
 integration checks. Active ordinary-Perl overhead, general core syntax/selection,
 Perl I/O and deployment tooling remain unfinished.
+
+## Perl-for-Wump callee resolution (2026-11-01)
+
+This is the third [optimization lane](docs/BENCHMARKS.md#three-optimization-lanes):
+an interpreter change intended to lower Wump's execution cost. The ordinary
+nonmagical reference/CV path now snapshots the reference, referent and head
+flags inside one existing metadata region, replacing repeated protected flag
+reads. No callback, allocation or suspension occurs there. Magic, overloaded
+dereferencing and autoload retain their existing paths, including fresh reads
+after callbacks. No protection, XS admission or publication rule is removed.
+
+The new callee fixture checks named/code/glob/symbolic calls, inherited and
+`SUPER` methods, blessed and overloaded code, tied targets that grow stacks,
+yield, change targets or throw, exception recovery, recursion/tail/implicit
+forwarding, lvalue calls, contexts and invalid targets. Its 182 checks pass
+against matched stock Perl, the preceding private interpreter and the new
+build across unused, main-act, cooperative and parallel modes. Source upgrade
+coverage reconstructs the previous separate snapshots and requires exact
+equality of the complete regenerated tree. Timing and broader validation are
+recorded separately once complete; an unused-mode improvement would not by
+itself establish a general Perl optimization.

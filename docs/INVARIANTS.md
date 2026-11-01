@@ -95,6 +95,15 @@ Enforcement: [CV preparation](../perl/core/wump_core.c#L247). Evidence:
 [recursive tasks](../tests/perl/tasks.t),
 [differential caller/wantarray](../tests/perl/context-compat.t).
 
+Ordinary callee resolution may snapshot a nonmagical reference, its referent
+and their head flags in one existing metadata region. That region cannot
+allocate, call Perl or suspend. No snapshot may survive magic or overloaded
+dereferencing: those paths must re-read the resulting callee after the
+callback. Autoload, debugger entry, CV publication/preparation, argument and
+return context retain their existing paths. Evidence:
+[callee resolution and callback compatibility](../tests/perl/callee.t),
+[source upgrade/idempotence](../tests/perl/patcher.pl).
+
 **CTX-5 — Restore the correct dynamic scope before calling user cleanup.**
 Bindings are act-owned, their target GP identity is retained independently of
 later aliases, and a popped binding is detached before its value can invoke

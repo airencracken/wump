@@ -182,7 +182,63 @@ C
 	$call =~ s/SvOBJECT\(cv\)/(S_wump_callee_flags(aTHX_ (SV *)cv) \& SVs_OBJECT)/g;
 	$call =~ s/SvTYPE\(cv\)/(S_wump_callee_flags(aTHX_ (SV *)cv) \& SVTYPEMASK)/g;
 	$call =~ s/switch \(SvTYPE\(sv\)\)/switch (S_wump_callee_flags(aTHX_ sv) \& SVTYPEMASK)/g;
-	substr($text, $call_start, $call_end - $call_start, $call);
+	# Resolve the callback-free common case with one coherent snapshot. Keep
+	# the slow path's fresh reads after magic and overloaded dereferencing.
+	unless (index($text, 'S_wump_callee_snapshot(pTHX_') >= 0) {
+		my $helper = <<'C';
+STATIC CV *
+S_wump_callee_snapshot(pTHX_ SV *value, U32 *value_flags, U32 *callee_flags)
+{
+    bool parallel = Perl_wump_parallel(aTHX);
+    if (parallel) Perl_wump_memory_lock(aTHX);
+    U32 flags = SvFLAGS(value);
+    CV *cv = MUTABLE_CV((flags & (SVf_ROK|SVs_GMG)) == SVf_ROK
+        ? SvRV(value) : value);
+    *value_flags = flags;
+    *callee_flags = (SV *)cv == value ? flags : SvFLAGS(cv);
+    if (parallel) Perl_wump_memory_unlock(aTHX);
+    return cv;
+}
+
+C
+		# Insert after replacing the body: insertion changes its source offsets.
+		my $old = <<'C';
+    /* a non-magic-RV -> CV ? */
+    if (LIKELY( (S_wump_callee_flags(aTHX_ sv) & (SVf_ROK|SVs_GMG)) == SVf_ROK)) {
+        cv = MUTABLE_CV(SvRV(sv));  /* might not actually be a CV */
+        if (UNLIKELY((S_wump_callee_flags(aTHX_ (SV *)cv) & SVs_OBJECT))) /* might be overloaded */
+            goto do_ref;
+    }
+    else
+        cv = MUTABLE_CV(sv);
+
+    /* a CV ? */
+    if (UNLIKELY((S_wump_callee_flags(aTHX_ (SV *)cv) & SVTYPEMASK) != SVt_PVCV)) {
+        /* handle all the weird cases */
+        switch (S_wump_callee_flags(aTHX_ sv) & SVTYPEMASK) {
+C
+		my $new = <<'C';
+    U32 wump_value_flags, wump_callee_flags;
+    cv = S_wump_callee_snapshot(aTHX_ sv, &wump_value_flags, &wump_callee_flags);
+    /* No callback or suspension occurs between this snapshot and the
+     * ordinary CV decision. Slow resolution below must read again after
+     * FETCH or overloaded dereferencing, which can change the target. */
+    if ((wump_value_flags & (SVf_ROK|SVs_GMG)) == SVf_ROK
+        && UNLIKELY(wump_callee_flags & SVs_OBJECT))
+        goto do_ref;
+
+    /* a CV ? */
+    if (UNLIKELY((wump_callee_flags & SVTYPEMASK) != SVt_PVCV)) {
+        /* handle all the weird cases */
+        switch (wump_value_flags & SVTYPEMASK) {
+C
+		$call =~ s/\Q$old\E/$new/ or die "missing callee snapshot upgrade anchor\n";
+		substr($text, $call_start, $call_end - $call_start, $call);
+		$text =~ s/^PP\(pp_entersub\)/$helper . 'PP(pp_entersub)'/me
+			or die "missing callee snapshot helper anchor\n";
+	} else {
+		substr($text, $call_start, $call_end - $call_start, $call);
+	}
 	write_file($file, $text);
 	# Foreach aliases an element; clearing its TEMP flag is a write to a
 	# published head even when the flag was already clear.
