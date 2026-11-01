@@ -899,6 +899,10 @@ The next acceptance priorities are:
    certify stock parity. Record source/build identity and raw samples, separate
    startup from work, and compare coroutine primitives with Go independently
    from Perl application throughput. One-slot overhead remains a primary goal.
+   The [common-operation matrix](docs/BENCHMARKS.md#common-operation-matrix)
+   makes these comparisons repeatable across ordinary operations and coroutine
+   primitives. Go is a directional reference; historical Wump regressions are
+   gated per operation without a fixed Go speed cutoff.
 3. Extend the passing bounded four-slot HTTP/WebSocket path with longer soaks
    and more dependency stacks, retaining admission/cancellation bounds,
    responsive health checks, clean shutdown and the compiler/XS gates.
@@ -1991,3 +1995,38 @@ Whole-Perl sanitizers and the optional Mojo workload were not rerun.
 the complete measurements, source/binary hashes and reproduction commands.
 Full logs and the earlier coordination-only control are retained under
 `master/build/checkpoint-runtime-owner/`.
+
+## Repeatable operation matrix and documentation (2026-10-31)
+
+`bench/matrix.pl` now records common operations under stock Perl, the unused
+fork, Wump on one/two/four slots and Go on one/two/four slots. The eight common
+rows cover arithmetic, calls, arrays, hashes, strings, regex captures, UTF-8
+and JSON. Three primitive rows cover yield, batched spawn/completion and
+unbuffered channel round trips. The standalone C driver remains separate;
+Wump's matrix measurements execute the Perl interface.
+
+The [benchmark guide](docs/BENCHMARKS.md) defines the work and units. Independent
+job IDs/checksums and channel replies are verified, variants rotate between
+runs, and work/process timing stays separate. Raw records retain build flags,
+binary hashes, source/fingerprint, CPU/kernel/affinity and execution order.
+Plain Perl's unavailable primitives and the observed multi-slot JSON XS gate
+remain explicit N/A cells. An arbitrary error cannot become an unsupported
+case. Failed runs preserve existing captures through atomic publication.
+
+The checker compares every Wump cell with an earlier compatible capture using
+a configurable regression budget (10% by default), with at least three runs
+and clean benchmark source. A single slow operation or loss of supported work
+cannot hide in an aggregate. Go ratios show the distance to the reference;
+matching Go is not a passing requirement. Fixture/control/toolchain changes
+require a deliberate new baseline. This matrix has different work from the
+older integer and native-runtime checkpoints; those records remain separate.
+
+The README is now a short build/API/status entry point. Existing detailed
+reference paragraphs moved into Perl integration, C runtime, validation and
+benchmark guides, with relative links adjusted. Local links and preservation
+of the previous reference material were checked. The new tooling passes 96
+unit checks and 147 real-binary integration checks, including cohort overflow,
+bad/duplicate results, incomplete evidence, unsupported transitions and atomic
+failure. The older performance-check suite passes its 89 checks as well.
+Runtime sources are unchanged; the full upstream and sanitizer suites were
+not repeated for this benchmark/documentation change.

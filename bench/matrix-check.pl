@@ -1,0 +1,12 @@
+use v5.42;
+use strict;
+use warnings;
+use FindBin;
+use lib "$FindBin::Bin/lib";
+use Wump::BenchMatrix qw(load_capture compare);
+use Getopt::Long 'GetOptions';
+my $limit = 10;
+GetOptions('max-regression=f' => \$limit) && @ARGV == 2 or die "usage: matrix-check.pl BEFORE.json AFTER.json [--max-regression 10]\n";
+my ($failed, $text) = compare(load_capture($ARGV[0]), load_capture($ARGV[1]), $limit);
+print $text;
+exit($failed ? 1 : 0);

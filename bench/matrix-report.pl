@@ -1,0 +1,10 @@
+use v5.42;
+use strict;
+use warnings;
+use FindBin;
+use lib "$FindBin::Bin/lib";
+use Wump::BenchMatrix qw(load_capture report);
+use Getopt::Long 'GetOptions';
+my $metric = 'work';
+GetOptions('metric=s' => \$metric) && @ARGV == 1 or die "usage: matrix-report.pl CAPTURE.json [--metric work|process]\n";
+print report(load_capture($ARGV[0]), $metric);

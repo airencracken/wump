@@ -27,6 +27,13 @@ PERL_FULL_TEST_TIMEOUT = 1800
 PERL_PERF_BASELINE = bench/perl-scalar-after.jsonl
 PERL_PERF_CURRENT = $(BUILD)/perl-baseline-current.jsonl
 PERL_PERF_MAX_REGRESSION = 10
+MATRIX_RUNS = 5
+MATRIX_ITERATIONS = 50000
+MATRIX_JOBS = 8
+MATRIX_BASELINE = bench/operation-matrix-baseline.json
+MATRIX_CURRENT = $(BUILD)/operation-matrix-current.json
+MATRIX_REPORT = $(BUILD)/operation-matrix-current.md
+MATRIX_MAX_REGRESSION = 10
 SANITIZER_TEST_ARGS = CPPFLAGS='$(CPPFLAGS) -DWUMP_TEST_CASE_TIMEOUT=120' TEST_TIMEOUT=300 TEST_LONG_TIMEOUT=300 TEST_FAILURE_TIMEOUT=300
 PERL_SUITES = entry ordinary active waitgroup preempt tasks parallel xs-parallel encode-parallel bytes-parallel native-integration regex-parallel regex local elements pocket pocket-deparse separators hooks locks shared keys reads read-claims scalar-writes operands stack-loads lvalue-loads reference-loads scalar-references materialization iteration memory publication hidden-roots
 
@@ -50,6 +57,26 @@ perl-mojo-cpu-bench: perl-build
 	perl bench/mojo-cpu.pl '$(abspath $(BUILD))/perl/perl-5.42.2/perl'
 
 STOCK_PERL = $(BUILD)/stock/perl/perl-5.42.2/perl
+.PHONY: bench-matrix bench-matrix-test bench-matrix-check bench-matrix-check-test bench-matrix-report
+$(BUILD)/matrix-go: bench/matrix-worker.go | $(BUILD)
+	GOTOOLCHAIN=local GOPROXY=off GOTELEMETRY=off GOCACHE=$(abspath $(BUILD)/matrix-go-cache) go build -trimpath -o $@ $<
+
+bench-matrix: perl-build $(BUILD)/matrix-go
+	perl bench/matrix.pl '$(abspath $(BUILD))/perl/perl-5.42.2/perl' '$(abspath $(STOCK_PERL))' '$(abspath $(BUILD))/matrix-go' --output '$(MATRIX_CURRENT)' --runs '$(MATRIX_RUNS)' --iterations '$(MATRIX_ITERATIONS)' --jobs '$(MATRIX_JOBS)' >'$(MATRIX_REPORT).tmp'
+	mv -- '$(MATRIX_REPORT).tmp' '$(MATRIX_REPORT)'
+
+bench-matrix-check:
+	perl bench/matrix-check.pl '$(MATRIX_BASELINE)' '$(MATRIX_CURRENT)' --max-regression '$(MATRIX_MAX_REGRESSION)'
+
+bench-matrix-report:
+	perl bench/matrix-report.pl '$(MATRIX_CURRENT)'
+
+bench-matrix-check-test:
+	perl tests/perl/matrix-check.t
+
+bench-matrix-test: perl-build $(BUILD)/matrix-go bench-matrix-check-test
+	perl tests/perl/matrix-bench.t '$(abspath $(BUILD))/perl/perl-5.42.2/perl' '$(abspath $(STOCK_PERL))' '$(abspath $(BUILD))/matrix-go'
+
 .PHONY: perl-baseline-bench perl-baseline-test perl-perf-test perl-perf-check perl-perf-check-test
 .PHONY: perl-state-inventory-test perl-context-compat-test perl-legacy-compat-test
 perl-state-inventory-test: perl-build
@@ -109,6 +136,7 @@ perl-source-test:
 	bash tests/perl/source.sh
 
 perl-test: perl-build perl-source-test
+	perl tests/perl/matrix-check.t
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/baseline-check.t
 	$(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib tests/perl/root-fixture.pl '$(BUILD)/perl/perl-5.42.2' '$(BUILD)'
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/entry.t
