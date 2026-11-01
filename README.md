@@ -69,7 +69,7 @@ must receive results or explicitly wait for registered work. An uncaught act
 exception stops the process; `eval` catches exceptions within an act.
 
 Bare `yield` and imported `act`, `chan` and `sleep` compile to native core
-operations in `use Wump` scope. Qualified calls and custom wrappers retain
+operations in `use Wump` scope. Qualified `Wump::` calls and custom wrappers retain
 compatibility dispatch. Channel methods and wait groups still use functions.
 The design's full core syntax,
 Perl `sel` and deployment tool are pending. See the
@@ -98,11 +98,14 @@ one/two/four slots. Work and whole-process timing stay separate.
 Coroutine-only fixtures are N/A for stock Perl, forks and ithreads. The checker
 flags regressions
 against the saved baseline; it never turns unsupported work into a fast result.
-The [recorded matrix](bench/operation-matrix-fork-threads-baseline.md) includes
-the fork and ithread controls;
-use a local baseline when your machine, CPU mask or controls differ.
-The [native-yield experiment](bench/native-yield-api.md) separately compares
-the Perl wrapper, direct XS and the new core opcode.
+The [latest recorded matrix](bench/operation-matrix-native-current.md) uses
+public native syntax and includes fork/ithread controls. Its saved comparison
+flags four-slot yield at +11.87%; the default baseline retains the preceding
+build. The [follow-up](bench/native-primitives-yield-followup.md) records the
+remaining investigation. Use a local baseline when your machine, CPU mask or
+controls differ. The [native API experiment](bench/native-primitives-api.md)
+compares wrappers, direct XS and core operations for yield, spawn, channel
+creation and sleep.
 
 Read the [benchmark guide](docs/BENCHMARKS.md) for workload definitions, baseline
 updates, machine/build requirements and the existing focused benchmarks.

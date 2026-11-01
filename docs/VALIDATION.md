@@ -40,6 +40,47 @@ dependency and interactive-test skips remain visible in the log. This ordinary
 Perl compatibility check complements the project's explicit Wump/parallel
 suites; it does not exercise every library with Wump enabled.
 
+### Native primitive checkpoint (2026-11-01)
+
+Native yield/act/channel/sleep checks pass normally (30 + 44 + 84 checks).
+The preceding interpreter fails 11 of the new constructor/timer suite's native
+compilation, bypass and mask assertions, demonstrating the added paths.
+The complete project suite, context/legacy stock differentials, source upgrade
+and idempotence, parser/opcode regeneration and state-inventory checks pass.
+The current matrix tooling passes 119 unit and 400 integration checks, including
+all three API paths for four operations on one/four slots and cohort boundaries.
+The full ordinary upstream harness passes 2,919 files / 1,351,255 checks with
+`TZ=UTC` and no new exclusions or changed expectations.
+
+The first local-time upstream run failed IO::Compress's ZIP timestamp round-trip
+test 46 during the host's November 1 daylight-saving overlap. The unchanged
+test reproduces the same failure on matched stock Perl; both stock and Wump
+pass its 230 checks under `TZ=UTC`. Set the environment explicitly when
+reproducing this checkpoint:
+
+```sh
+TZ=UTC make perl-test perl-context-compat-test perl-legacy-compat-test \
+	perl-upstream-full-test bench-matrix-test perl-parser-test \
+	STOCK_PERL=/absolute/path/to/stock/perl
+```
+
+A separate instrumented private Perl passes the complete project suite with
+`ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=1` and
+`PERL_DESTRUCT_LEVEL=2`; all focused native checks also pass. This does not
+include a whole-upstream sanitizer, leak-checking or new TSan run. Standalone
+ASan fake-stack/migration and five deliberate-error controls pass with
+`-fsanitize=address,pointer-compare,pointer-subtract` and invalid-pointer-pair
+detection enabled. An address-only control invocation first failed the pointer
+comparison control; rebuilding with its required instrumentation resolved the
+configuration error without changing expectations.
+
+The [performance comparison](../bench/operation-matrix-native-check.txt) has
+one failing cell: four-slot yield work time (+11.87%). The
+[interleaved follow-up](../bench/native-primitives-yield-followup.md) measures
++6.86% with larger work; that does not clear the original failure. The default
+baseline retains the preceding interpreter so subsequent checks keep reporting
+the regression. Correctness passes and performance status are separate evidence.
+
 `make test` runs isolated, timeout-bounded cases covering argument errors,
 stack guards, ABI registers, floating-point state, errno, real four-worker
 parallelism, queue overflow, stack reuse, FIFO ordering, randomized buffer

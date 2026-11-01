@@ -2210,5 +2210,31 @@ The complete project suite also passes under ASan with leak detection disabled;
 this is separate from the normal full upstream run and does not constitute a
 whole-upstream sanitizer or new TSan run. Standalone ASan positive controls and
 five deliberate-error controls pass with pointer-compare/subtract instrumentation.
-The address-only control build correctly failed those two controls before being
-rebuilt with their required instrumentation; no test expectation was weakened.
+The address-only invocation failed the pointer-comparison control, prompting
+a rebuild with the required flags; all five then pass. No expectation was weakened.
+
+### Public syntax and performance evidence
+
+Matrix v3 uses imported public calls and records the actual native operations
+in its compiled worker. The same new fixture is rerun on both binaries, while
+v1/v2 records remain usable with their original schema. Its 119 unit and 400
+integration checks pass, including native-binding loss, atomic failures and
+fork/ithread worker cleanup. The compiler-reporting CHECK block is installed
+only in active mode, preserving the failure fixture's runtime `do` path without
+late-CHECK warnings.
+
+The [API dispatch experiment](bench/native-primitives-api.md) records seven
+rotated runs for four operations and three paths on one/four slots. Native
+channel creation/close reduces wrapper work by 33.1%/31.9%; zero sleep by
+72.7%/79.7%; spawn/completion by 3.9%/13.2%. Allocation, snapshots, publication,
+channel methods and synchronization remain beneath the call boundary.
+
+The [matched public matrix](bench/operation-matrix-native-current.md) reduces
+spawn work 1.83%/3.06%/12.73% on one/two/four slots. Its regression check fails
+four-slot yield at +11.87%; other work/process cells stay within the unchanged
+10% budget. The [larger interleaved follow-up](bench/native-primitives-yield-followup.md)
+measures +0.11%/+6.86% on one/four slots. The cause remains unresolved; a
+different fixture cannot erase the original failure. The default baseline is
+the preceding interpreter's v3 capture, keeping that regression visible.
+General compute overhead, native channel methods/selection, Perl I/O integration
+and deployment tooling remain open work.

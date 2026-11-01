@@ -348,9 +348,11 @@ Evidence: [compiled form and observable behavior](../tests/perl/native-yield.t),
 
 **COMPAT-5 — Intrinsic lowering follows the original CV, not a name alone.**
 The original imported `act`, `chan` and `sleep` CVs carry compiler checkers.
+These are interpreter-owned compiler metadata, installed during module setup
+and never admitted for modification through parallel XS dispatch.
 Perl first applies its existing prototype/closure rules, then the checker can
 replace eligible calls with their unary core operations under the lexical
-Wump hint. An omitted channel capacity becomes a zero constant. Qualified calls,
+Wump hint. An omitted channel capacity becomes a zero constant. Qualified `Wump::` calls,
 ampersand/indirect calls and custom wrapper CVs retain ordinary dispatch.
 Namespace identity, not the CV's mutable display name, identifies qualified
 compatibility calls. The checker self-reference is non-owning; it must not

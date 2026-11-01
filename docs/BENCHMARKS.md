@@ -119,7 +119,7 @@ noise. Keep production captures large enough for the measured operation.
 ### Baselines and regression checks
 
 ```sh
-make bench-matrix-check MATRIX_BASELINE=bench/operation-matrix-fork-threads-baseline.json \
+make bench-matrix-check MATRIX_BASELINE=bench/operation-matrix-native-baseline.json \
 	MATRIX_CURRENT=build/operation-matrix-current.json MATRIX_MAX_REGRESSION=10
 ```
 
@@ -184,6 +184,34 @@ gate: bounded cold-stack reuse reduces Perl spawn/completion time by
 9.995%, close to the budget; this checkpoint does not establish its stability
 under other placements. Fork and ithread columns describe independent batches,
 not the shared-heap semantics or memory use of Wump acts.
+
+### Native syntax checkpoint
+
+The first matched v3 [baseline](../bench/operation-matrix-native-baseline.md)
+and [current capture](../bench/operation-matrix-native-current.md) retain the
+same five-run parameters, controls and affinity as the expanded v2 record.
+Both rerun the public-syntax fixture on clean `bc96e17`: the preceding binary
+compiles native yield; the new binary also compiles native act/channel creation.
+Each capture retains 154 cells / 770 samples (640 timed, 130 N/A).
+The [comparison](../bench/operation-matrix-native-check.txt) reports spawn work
+reductions of 1.83%/3.06%/12.73% on one/two/four slots, but **fails** the unchanged
+10% gate for four-slot yield (+11.87%). All other work/process cells remain
+within budget. The default v3 baseline deliberately points to the preceding
+binary; the failing current capture has not replaced it.
+
+A separate [interleaved yield follow-up](../bench/native-primitives-yield-followup.md)
+uses seven runs of two million operations on both binaries. It measures
++0.11%/+6.86% on one/four slots. Its different fixture/work size does not
+invalidate the original failure or establish that it was noise. No scheduler
+change or threshold adjustment was made to chase the measurement.
+
+The [four-operation API record](../bench/native-primitives-api.md) retains 168
+same-binary samples, compiler/binary/source identities and the exact runner.
+Native channel creation/close takes 33.1%/31.9% less work time than its wrapper;
+zero sleep takes 72.7%/79.7% less and spawn/completion 3.9%/13.2% less. Removing
+XS still leaves substantial task creation and messaging work. These are
+separate workloads from the common matrix, with all paths sharing the same
+remaining channel methods.
 
 ### Perl API wrapper probe
 
