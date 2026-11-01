@@ -135,7 +135,7 @@ noise. Keep production captures large enough for the measured operation.
 ### Baselines and regression checks
 
 ```sh
-make bench-matrix-check MATRIX_BASELINE=bench/operation-matrix-channel-baseline.json \
+make bench-matrix-check MATRIX_BASELINE=bench/operation-matrix-callee-baseline.json \
 	MATRIX_CURRENT=build/operation-matrix-current.json MATRIX_MAX_REGRESSION=10
 ```
 
@@ -213,7 +213,7 @@ The [comparison](../bench/operation-matrix-native-check.txt) reports spawn work
 reductions of 1.83%/3.06%/12.73% on one/two/four slots, but **fails** the unchanged
 10% gate for four-slot yield (+11.87%). All other work/process cells remain
 within budget. That historical capture did not replace its baseline. The
-current default reruns that same preceding binary with the channel fixture below.
+channel checkpoint reruns that same preceding binary with the fixture below.
 
 A separate [interleaved yield follow-up](../bench/native-primitives-yield-followup.md)
 uses seven runs of two million operations on both binaries. It measures
@@ -239,8 +239,9 @@ falls 32.81%/29.06%/31.47%, spawn 14.73%/9.04%/15.18% and yield
 act/constructor work since the anchor as well as channel dispatch, the TEMP
 ownership fix and numeric/yield context refinements. All four captures use
 five runs, 50,000 iterations, eight jobs and CPU mask `0,2,4,6`, retaining
-154 cells / 770 samples each. The baseline remains the original native-yield
-binary; the passing latest build has not replaced it.
+154 cells / 770 samples each. That checkpoint retains the original native-yield
+anchor. The callee checkpoint below uses the completed channel build as its
+new before binary.
 
 The [initial check](../bench/operation-matrix-channel-initial-check.txt) fails
 three arithmetic work cells and one process cell. The
@@ -262,6 +263,41 @@ work remain. These measurements do not establish application speed or Go parity.
 Three 84-sample API captures and four 42-sample follow-ups retain all 420 raw
 samples with clean source revisions, binary/configuration hashes and runners.
 The matrix tools' 134 unit and 477 integration checks pass.
+
+### Perl-for-Wump callee checkpoint
+
+This is lane three: adapting the interpreter to lower Wump execution cost.
+The ordinary reference/CV call path now takes one protected snapshot rather
+than repeated flag snapshots. Separate correctness fixes protect stash class
+and name reads during overload-cache initialization. The standalone scheduler
+and channel implementation is unchanged; these are not upstream-only Perl
+patches or a separate Wump runtime optimization.
+
+The [full matrix](../bench/operation-matrix-callee-current.md) measures calls
+13.73%/18.30% faster on two/four slots, with one-slot/unused calls nearly flat
+(-0.38%/-0.33%). Its [comparison](../bench/operation-matrix-callee-check.txt)
+**fails** two-slot yield work at +21.19%; all other work/process metrics stay
+within the unchanged 10% budget. The preceding native-channel/context build,
+rerun with matching fixtures/controls, is the default baseline. The candidate
+does not replace that anchor. Both captures retain all 770 samples.
+
+The seven-run [call probe](../bench/perl-callee-calls.md) uses 500,000 iterations
+and eight jobs, retaining 63 samples including unchanged stock controls.
+Calls improve 14.89%/17.77% on two/four slots; one-slot and unused improve
+2.62%/2.54%. These larger samples are separate from the 50,000-iteration
+matrix. Each iteration includes modulo, increment call and accumulation work;
+this is not an isolated lock or ABI cost. An unused-mode improvement does not
+establish an upstream Perl benefit. Four slots still take longer than two.
+
+The [yield follow-up](../bench/perl-callee-yield.md) retains another 28 samples
+using the exact matrix worker at 50,000/two million yields on two slots. It
+measures +4.18%/+2.23%. Generated core/active-dispatch sources and selected
+object `.text` sections match, while final relocations/layout may differ.
+Neither observation clears the original failure or proves noise; its cause
+remains unresolved. The complete 1,540 matrix and 91 focused samples retain
+source/binary identities, configurations and exact capture runners. Tooling
+passes 134 unit and 477 integration checks. No sample or threshold was changed
+to obtain a passing comparison.
 
 ### Perl API wrapper probe
 

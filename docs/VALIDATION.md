@@ -302,3 +302,50 @@ Build trees and detailed logs remain locally under
 are copied to its `validation-logs/` directory. The tracked benchmark records
 retain source revisions, binary hashes, configurations and exact capture
 runners; generated binaries and raw profiler memory are not committed.
+
+## Callee and stash checkpoint (2026-11-01)
+
+Final code `d048fe5` passes the project suites, context/legacy differentials,
+native C/C++/embedding fixtures, inventory, full-tree idempotence, upgrades
+from separate callee snapshots/unguarded stash reads, opcode regeneration and
+Bison 3.8.2 parser regeneration. The unchanged UTC upstream harness passes
+**2,919 files / 1,351,251 checks**, with no exclusions or expectation changes.
+The callee fixture has 217 checks with matched stock Perl, or 186 across the
+six private unused/main/cooperative/parallel configurations. The parallel
+suite has 56 checks, including cold overload caches and a native `sv_ref`
+destination whose destructor sends a message and yields.
+
+The whole project passes on a separate ASan interpreter with
+`detect_leaks=0:detect_stack_use_after_return=1` and `PERL_DESTRUCT_LEVEL=2`.
+The focused 186-check callee suite and four-slot yielding-destination case
+also pass with leak detection enabled and full teardown. This is not a
+whole-upstream sanitizer claim.
+
+Whole-core TSan passes `perl-parallel-test` and the callee suite with
+`halt_on_error=1:exitcode=66` and full teardown. Two additional 56-check
+parallel runs pass, as does the deliberate user-race positive control. The
+separate full-project upstream-ithreads TSan failure described above remains
+open; that full target was not rerun.
+
+The first candidate TSan run exposed a `sv_bless` class-predicate read racing
+with overload-cache updates. The new cold-cache case separately fails on the
+preceding interpreter in `sv_ref` name lookup during magic attachment.
+Class reads are now protected; ref names are owned snapshots and their guard
+ends before assignment can run user cleanup. The initial callee fixture also
+accidentally blessed a shared constant CV concurrently. It now captures a
+private lexical to create a fresh CV; that unsupported-mutation diagnostic is
+retained separately from the actual stash races. Intermediate source-patcher
+failures were fixed before final validation; no failing check was suppressed.
+
+Performance tooling passes 134 unit and 477 integration checks. The
+[saved full comparison](../bench/operation-matrix-callee-check.txt) **fails**
+one metric: two-slot yield work, +21.19% versus the unchanged 10% budget.
+The [interleaved diagnostics](../bench/perl-callee-yield.md) do not clear it;
+the cause remains unresolved and the preceding build remains the default
+timing baseline. All 1,540 matrix and 91 focused samples were revalidated for
+identities, results, source/binary hashes, pairing and exact comparison text.
+
+Builds, profiler sections, exact runners and detailed successful/failed logs
+remain locally under `build/checkpoint-callee/`; logs are copied into its
+`validation-logs/` directory. Machine records retain the capture runners.
+Raw profiler memory and generated binaries remain outside the tracked files.

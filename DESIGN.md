@@ -2312,7 +2312,7 @@ The [final matched matrix](bench/operation-matrix-channel-current.md) passes
 the unchanged 10% regression gate against the original native-yield anchor,
 with channel work down 32.81%/29.06%/31.47%, spawn down
 14.73%/9.04%/15.18% and yield down 2.41%/2.26%/2.70% on one/two/four slots.
-The anchor is rerun with the same new fixture and remains the default baseline.
+That checkpoint reruns the original anchor with the same new fixture.
 This comparison includes native act/constructor changes since that anchor.
 The [same-binary channel probe](bench/native-channel-api.md) isolates dispatch:
 native work falls 29–35% versus wrappers, with another 1–4% versus direct XS.
@@ -2374,3 +2374,32 @@ it is not evidence for the stash-read fix. Initial insertion/upgrade failures
 were corrected; complete generated-tree idempotence and old-source upgrades
 pass before the final validation run. Performance and final sanitizer results
 are recorded separately.
+
+### Final callee checkpoint evidence
+
+Final code `d048fe5` passes the project, context/legacy differential, complete
+source upgrade/idempotence and parser/opcode regeneration checks. The full
+unchanged upstream harness passes in UTC: 2,919 files / 1,351,251 checks.
+The expanded stock/private callee differential passes 217 checks; its private
+six-mode run passes 186. The project suite passes under ASan with
+stack-use-after-return and full teardown, leak detection disabled. Focused
+LSan passes the callee suite and yielding reference-destination cleanup.
+Whole-core TSan passes the parallel target, focused callee suite, two further
+56-check parallel runs and the deliberate-race positive control. The separate
+full-project TSan/ithreads limitation is unchanged and was not rerun here.
+
+The [full matrix](bench/operation-matrix-callee-current.md) shows calls down
+13.73%/18.30% on two/four slots, but fails two-slot yield work at +21.19%
+against the unchanged 10% budget. The preceding channel build remains the
+default performance anchor. The [larger interleaved call probe](bench/perl-callee-calls.md)
+shows -14.89%/-17.77%, with -2.62%/-2.54% on one slot/unused. These are
+separate work sizes; the common matrix's one-slot/unused calls are nearly flat.
+The [yield follow-up](bench/perl-callee-yield.md) records +4.18%/+2.23% at two
+sizes. Generated yield/core sources and selected object `.text` sections match,
+but that does not clear the full-matrix failure or explain its cause.
+
+All 1,540 matrix and 91 focused samples, identities, results, source/binary
+hashes, pair provenance and exact saved comparison text were revalidated.
+Matrix tooling passes 134 unit and 477 integration checks. Explaining the
+two-slot yield regression and lowering remaining metadata/call-frame overhead
+remain open; this is a call improvement, not whole-matrix acceptance.
