@@ -283,7 +283,8 @@ sub compare ($before, $after, $limit) {
 		for my $name (@{$sets[0]}) {
 			if (!$new{$name}) { $failed = 1; $text .= "FAIL native method lost: $name\n" }
 		}
-		$text .= 'METHODS ' . (join(',', @{$sets[0]}) || 'none') . ' -> ' . (join(',', @{$sets[1]}) || 'none') . "\n";
+		$text .= 'METHODS ' . (join(',', @{$sets[0]}) || 'none') . ' -> ' . (join(',', @{$sets[1]}) || 'none') . "\n"
+			if @{$sets[0]} || @{$sets[1]};
 	}
 	for my $op (operations()) {
 		for my $variant (grep {/\Awump/} variants($after->{schema})) {
