@@ -2403,3 +2403,24 @@ hashes, pair provenance and exact saved comparison text were revalidated.
 Matrix tooling passes 134 unit and 477 integration checks. Explaining the
 two-slot yield regression and lowering remaining metadata/call-frame overhead
 remain open; this is a call improvement, not whole-matrix acceptance.
+
+## Solitary yield notification continuation (2026-11-01)
+
+This is the Wump runtime lane, separate from the preceding interpreter changes.
+Multi-slot local enqueue previously signalled a worker for every yielded task,
+including a sole continuation whose scheduler was already running. The owner
+can consume that continuation itself. Its saved stack is still enqueued and
+dispatched normally; queue locks, timer expiry, global polling and shutdown
+checks remain. Additional queued work, new spawns and channel readiness still
+notify. External/native-call returns and overflow keep the global epoch path.
+The queue-depth decision occurs while holding its mutex, and a live owner is
+excluded from idle accounting; no sleeping consumer is required in this case.
+
+The scheduler regression counts notifications across native threads, verifies
+every yield's context-entry hook and errno, and repeats on one/two/four slots
+before and after native-call handoff. It also requires a new single queued
+spawn to notify on multiple slots. The preceding runtime fails the solitary
+notification assertion; the revised normal runtime and integration suites
+pass. Sanitizer and timing results are recorded after completion. This change
+targets concrete coordination overhead; it does not explain away the earlier
+two-slot yield regression or change its recorded gate result.

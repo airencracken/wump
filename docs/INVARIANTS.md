@@ -149,6 +149,14 @@ promise of a single native thread. Multiple-P queues still need exclusion for
 stealing. External poller wakeups, syscall returns and local overflow must use
 the synchronized global path; they cannot use the single-owner shortcut.
 
+A saved continuation queued by its own live scheduler may omit notification
+when it is the only task in that local queue. Check depth under the queue
+mutex on multiple slots. The owner has not entered idle accounting and will
+search for work again, so a sleeper is not needed to consume that continuation.
+New spawns, channel readiness, additional local work and global overflow must
+retain their publication/wakeup protocol. This omits no context switch,
+dispatch hook, timer expiry, global poll or shutdown/deadlock check.
+
 Enforcement: [local queues and handoff](../runtime/src/sched.c).
 Evidence: [coordination contract before/after handoff](../tests/test_scheduler.c),
 [overflow/FIFO/context tests](../tests/test_runtime.c),

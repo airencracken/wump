@@ -19,6 +19,9 @@ Implemented:
   stealing, periodic global-queue polling, and condition-variable sleeping.
   One-slot local dispatch uses exclusive slot ownership to avoid queue mutexes
   and wakeup signals, including after a native-call handoff to another thread.
+  With multiple slots, a saved continuation that is its owner's only queued
+  work avoids notifying an idle thief. Queue locks remain; new work, backlogs
+  and external readiness retain their wakeups.
 - Execution slots separated from OS threads, with explicit blocking-call
   handoff, replacement-thread reuse, and slot reacquisition before a task
   returns to normal runtime code.

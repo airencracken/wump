@@ -289,7 +289,7 @@ static wump_g *global_pop(wump_runtime *rt) {
 	return g;
 }
 
-static void local_push(wump_worker *w, wump_g *g) {
+static void local_push(wump_worker *w, wump_g *g, int continuation) {
 	/* Only the P's current M calls local_push/pop. With one P there are
 	 * no thieves and that same owner cannot be sleeping in find_work.
 	 * Syscall handoff transfers exclusive ownership under rt->mu before
@@ -300,8 +300,13 @@ static void local_push(wump_worker *w, wump_g *g) {
 	if (w->qtail - w->qhead < WUMP_LOCALQ) {
 		w->q[w->qtail++ % WUMP_LOCALQ] = g;
 		if (shared) {
+			/* The owner is already on its scheduler stack after saving a
+			 * yielding task. If that is its only queued work, it can resume
+			 * it without advertising the same continuation to an idle thief.
+			 * New work and a backlog still notify; overflow stays global. */
+			int advertise = !continuation || w->qtail - w->qhead > 1;
 			pthread_mutex_unlock(&w->q_mu);
-			notify(w->rt);
+			if (advertise) notify(w->rt);
 		}
 	} else {
 		if (shared) pthread_mutex_unlock(&w->q_mu);
@@ -681,7 +686,7 @@ static void schedule(wump_machine *m) {
 			m->park_arg = NULL;
 			unlock(unlock_arg);
 		} else if (state == G_RUNNABLE) {
-			local_push(p, g);
+			local_push(p, g, 1);
 		} else {
 			assert(state == G_DEAD);
 			context_free(g);
@@ -732,7 +737,7 @@ void wump_park(void (*unlock)(void *), void *arg) {
 
 void wump_ready(wump_g *g) {
 	g->state = G_RUNNABLE;
-	local_push(current_machine()->p, g);
+	local_push(current_machine()->p, g, 0);
 }
 
 void wump_yield(void) {
@@ -779,7 +784,7 @@ int wump_go_context(wump_fn fn, void *arg, void (*enter)(void *), void (*cleanup
 	g->context_enter = enter;
 	g->context_free = cleanup;
 	g->context_arg = arg;
-	local_push(p, g);
+	local_push(p, g, 0);
 	return 0;
 }
 
