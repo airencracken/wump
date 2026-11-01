@@ -226,4 +226,35 @@ WumpTest::check_program(q{
 
 my $stats = RootFixture::memory_stats();
 is_deeply([@$stats[0, 1]], [0, 0], 'scalar mutations leave no lifetime pins or retired storage');
+for my $slots (1,4) {
+	WumpTest::check_program("BEGIN { \$ENV{WUMPPROCS}=$slots }\n" . q{
+		use Wump;
+		sub expected {
+			my $start=$_[0]%97;
+			my $first=97-$start;
+			$first=9 if $first>9;
+			my $rest=9-$first;
+			return 479568+$first*(2*$start+$first-1)/2+$rest*($rest-1)/2;
+		}
+		sub calculate {
+			my ($id)=@_;
+			my $sum=0;
+			for my $i (0..9999) {
+				$sum+=($i+$id)%97;
+				yield if $i%211==0;
+			}
+			return $sum;
+		}
+		die "bad main numeric context" unless calculate(3)==expected(3);
+		my $out=chan(8);
+		for my $id (1,2,3,4,5,95,96,97) { act { $out->send([$id,calculate($id)]) } }
+		my %seen;
+		for (1..8) {
+			my ($id,$sum)=@{scalar $out->recv};
+			die "bad child numeric context" if $seen{$id}++ || $sum!=expected($id);
+		}
+		print "numeric root and child contexts verified\n";
+	},0,qr/numeric root and child contexts verified/,
+		"cached numeric admission preserves root/child fields across yields on $slots slots");
+}
 done_testing;

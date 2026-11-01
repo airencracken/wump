@@ -359,10 +359,17 @@ static bool wump_numeric_source(pTHX_ SV *value) {
 bool Perl_wump_numeric_enter(pTHX_ SV *target) {
 #if defined(PERL_PRESERVE_IVUV) && !defined(PERL_RC_STACK)
 	struct wump_perl_task *task = PL_wump_task;
-	if (!task || !target || !aTHX->Iwump_memory || !PL_curstackinfo
-		|| PL_phase == PERL_PHASE_DESTRUCT || TAINT_get
+	if (!task || !target || !aTHX->Iwump_memory) return FALSE;
+	/* Admission cannot invoke Perl or suspend. Select this C invocation's
+	 * act-owned fields once, rather than repeatedly re-entering TLS getters.
+	 * The main act uses the interpreter's root fields, as the accessors do. */
+	const bool main = task->main != 0;
+	if (!(main ? aTHX->Icurstackinfo : task->Icurstackinfo)
+		|| (main ? aTHX->Iphase : task->Iphase) == PERL_PHASE_DESTRUCT || TAINT_get
 		|| (PL_signals & PERL_SIGNALS_UNSAFE_FLAG)) return FALSE;
-	if (PL_op->op_type != OP_ADD && PL_op->op_type != OP_MODULO) return FALSE;
+	OP *op = main ? aTHX->Iop : task->Iop;
+	if (!op || (op->op_type != OP_ADD && op->op_type != OP_MODULO)) return FALSE;
+	const OPCODE operation = op->op_type;
 	struct wump_numeric_reader *reader = NULL, *candidate = NULL;
 	if (!wump_metadata_depth) {
 		struct wump_perl_allocator *pool = S_wump_pool_context(aTHX);
@@ -394,12 +401,13 @@ bool Perl_wump_numeric_enter(pTHX_ SV *target) {
 	svtype kind = SvTYPE(target);
 	if ((kind != SVt_IV && kind != SVt_PVIV && kind != SVt_PVNV) || SvOBJECT(target)
 		|| (SvFLAGS(target) & (SVf_THINKFIRST | SVf_IVisUV | SVf_OOK))) goto fallback;
-	SV *left = PL_stack_sp[-1], *right = PL_stack_sp[0];
+	SV **stack = main ? aTHX->Istack_sp : task->Istack_sp;
+	SV *left = stack[-1], *right = stack[0];
 	if (!left || !right || !wump_numeric_source(aTHX_ left)
 		|| !wump_numeric_source(aTHX_ right)) goto fallback;
 	IV lhs = SvIVX(left), rhs = SvIVX(right);
 	if (lhs < 0 || rhs < 0) goto fallback;
-	if (PL_op->op_type == OP_ADD) {
+	if (operation == OP_ADD) {
 		if (lhs > IV_MAX / 2 || rhs > IV_MAX / 2) goto fallback;
 	} else if (!rhs) goto fallback;
 	if (!reader && candidate) {

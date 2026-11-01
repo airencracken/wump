@@ -59,6 +59,13 @@ Enforcement: [dispatch hook](../perl/core/wump_core.c#L387),
 [actual parallel execution](../tests/perl/parallel.t).
 
 **CTX-3 — Distinguish stack storage, stack addresses and value lifetimes.**
+Bounded numeric admission may read opcode, phase and operand-stack fields from
+the act owned by its C invocation, selecting interpreter fields for the main
+act. It performs no Perl callbacks or coroutine suspension before leaving the
+numeric region. Executor allocation/reader state still selects the current
+executor dynamically. This does not permit caching native TLS addresses or
+keeping stack addresses across callback-capable operations.
+
 Operand/context/mark/save/scope/temporary stacks belong to the act. A live SV
 reference does not keep an SV** stack address stable through stack growth.
 Core and XS callers must obey native SP refresh rules across callbacks and
