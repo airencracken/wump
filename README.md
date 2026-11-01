@@ -100,19 +100,16 @@ one/two/four slots. Work and whole-process timing stay separate.
 Coroutine-only fixtures are N/A for stock Perl, forks and ithreads. The checker
 flags regressions
 against the saved baseline; it never turns unsupported work into a fast result.
-The [latest recorded matrix](bench/operation-matrix-callee-current.md) uses
-public native syntax and includes fork/ithread controls. Calls take 14–18%
-less work time on two/four slots than the preceding channel build, but the
-unchanged 10% gate **fails two-slot yield work at +21.19%**. The default baseline
-retains that preceding build. The [call probe](bench/perl-callee-calls.md)
-reports unused and active modes separately; the
-[yield investigation](bench/perl-callee-yield.md) keeps the failure open.
-Use a local baseline when your machine, CPU mask or controls differ. Work is
-tracked in [three optimization lanes](docs/BENCHMARKS.md#three-optimization-lanes).
-The [preceding channel checkpoint](bench/operation-matrix-channel-current.md)
-and [dispatch probe](bench/native-channel-api.md) retain its earlier gains.
-The [earlier API experiment](bench/native-primitives-api.md) covers yield, spawn,
-channel creation and sleep. Ordinary active Perl overhead remains substantial.
+The [latest recorded matrix](bench/operation-matrix-yield-current.md) includes
+fork/ithread controls. Yield work takes 39%/70% less time on two/four slots
+than the preceding build. Both the matched comparison and the unchanged
+10% gate against the retained channel/context anchor pass. The
+[runtime probe](bench/scheduler-yield.md) measures C and Perl separately.
+The [earlier call checkpoint](bench/operation-matrix-callee-current.md) retains
+its gains and failed yield capture; the new result does not erase that history.
+Work is tracked in [three optimization lanes](docs/BENCHMARKS.md#three-optimization-lanes).
+Use a local baseline when your machine, CPU mask or controls differ.
+Ordinary active Perl overhead remains substantial.
 
 Read the [benchmark guide](docs/BENCHMARKS.md) for workload definitions, baseline
 updates, machine/build requirements and the existing focused benchmarks.

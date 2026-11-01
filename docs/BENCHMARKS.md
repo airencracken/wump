@@ -299,6 +299,38 @@ source/binary identities, configurations and exact capture runners. Tooling
 passes 134 unit and 477 integration checks. No sample or threshold was changed
 to obtain a passing comparison.
 
+### Solitary continuation checkpoint
+
+This is the Wump runtime lane. A scheduler that has saved a yielded task no
+longer advances the wakeup epoch or signals another worker when that task is
+its sole local continuation. Its live owner will search the queue again;
+queue exclusion and the full dispatch remain. New spawns, channel readiness,
+backlogs, overflow, timers and external/native-call returns retain their
+notification paths. No Perl patch source changed in this checkpoint.
+
+The [fresh runtime comparison](../bench/operation-matrix-yield-check.txt)
+passes the unchanged 10% work/process budget: two/four-slot yield work falls
+39.43%/70.07%, with one-slot +1.14%. The separate
+[unchanged-anchor comparison](../bench/operation-matrix-yield-anchor-check.txt)
+also passes, with yield -36.56%/-71.53% and the preceding call gains retained.
+That second comparison spans earlier interpreter changes; its call gains
+are not attributed to this runtime change. The default anchor remains
+`operation-matrix-callee-baseline.json`; the fresh control is saved separately.
+The prior +21.19% failure remains archived. This new checkpoint meets the
+budget without claiming to explain the original timing change.
+
+The [seven-run C/Perl probe](../bench/scheduler-yield.md) retains 84 rotated
+samples at two million yields each. C work falls 48.41%/63.49% on two/four
+slots; Perl falls 32.52%/69.60%. One-slot changes are +0.93%/+0.96%.
+Each sample has one yielding task; slots configure the scheduler. Work timing
+includes the loop counter; process timing also includes startup and teardown.
+The exact C worker, compiler flags, source/binary/archive hashes and runner
+are in the machine record. Counts, identities and pair provenance were
+revalidated, along with all 1,540 fresh matrix samples and both check texts.
+Different work sizes/surfaces are not pooled. Matrix tools pass 134 unit and
+477 integration checks. These are host-specific coordination results, not
+application throughput or a many-yielder scaling claim.
+
 ### Perl API wrapper probe
 
 `bench/channel-overhead.pl buffered|rendezvous wrapper|xs|native ITERATIONS`

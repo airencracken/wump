@@ -1,0 +1,88 @@
+{
+   "affinity" : "0,2,4,6",
+   "baseline_revision" : "ba5a73a30734af0cfbd36ed44a768df75b88e9dd",
+   "binaries" : {
+      "after_c" : {
+         "path" : "/home/marcus/projects/wump/master/build/checkpoint-yield-wake/yield-after",
+         "sha256" : "dd791bd4fd865236f11d396c45f374b833962cd9a37ad5f031f6c579adcda4e5"
+      },
+      "after_perl" : {
+         "config" : {
+            "archname" : "x86_64-linux-thread-multi",
+            "cc" : "cc",
+            "ccflags" : "-D_REENTRANT -D_GNU_SOURCE -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64",
+            "gccversion" : "14.2.1 20241221",
+            "lddlflags" : "-shared -O2 -L/usr/local/lib -fstack-protector-strong",
+            "ldflags" : " -fstack-protector-strong -L/usr/local/lib",
+            "optimize" : "-O2",
+            "use64bitall" : "define",
+            "useithreads" : "define",
+            "usemultiplicity" : "define",
+            "version" : "5.42.2"
+         },
+         "path" : "/home/marcus/projects/wump/master/build/checkpoint-yield-wake/integration/perl/perl-5.42.2/perl",
+         "sha256" : "980cc184312d41c2aeae8f16579279dd52eb709be61ea2270866d1c5a5e724b9"
+      },
+      "before_c" : {
+         "path" : "/home/marcus/projects/wump/master/build/checkpoint-yield-wake/yield-before",
+         "sha256" : "7f7473a31ef7101a700f4cfb3e52c776f122abfb09968b3475cc0deb4fb7a488"
+      },
+      "before_perl" : {
+         "config" : {
+            "archname" : "x86_64-linux-thread-multi",
+            "cc" : "cc",
+            "ccflags" : "-D_REENTRANT -D_GNU_SOURCE -fwrapv -fno-strict-aliasing -pipe -fstack-protector-strong -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64",
+            "gccversion" : "14.2.1 20241221",
+            "lddlflags" : "-shared -O2 -L/usr/local/lib -fstack-protector-strong",
+            "ldflags" : " -fstack-protector-strong -L/usr/local/lib",
+            "optimize" : "-O2",
+            "use64bitall" : "define",
+            "useithreads" : "define",
+            "usemultiplicity" : "define",
+            "version" : "5.42.2"
+         },
+         "path" : "/home/marcus/projects/wump/master/build/checkpoint-callee/integration/perl/perl-5.42.2/perl",
+         "sha256" : "a7c995a3d201fa67a307652b6b3e7a4ae7aeb6f803c71842d12eec547e31e8bd"
+      }
+   },
+   "c_compiler" : "cc (Gentoo 14.2.1_p20241221 p7) 14.2.1 20241221\nCopyright (C) 2024 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+   "c_flags" : [
+      "-O2",
+      "-g",
+      "-std=c11",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      "-pthread",
+      "-Iruntime/include"
+   ],
+   "c_link_flags" : [
+      "-pthread",
+      "-lm"
+   ],
+   "cpu_model" : "AMD Ryzen 7 PRO 4750U with Radeon Graphics",
+   "iterations" : 2000000,
+   "kernel" : "Linux 6.0.5-gentoo-x86_64 x86_64 GNU/Linux",
+   "runner_source" : "use v5.42;\nuse strict;\nuse warnings;\nuse JSON::PP ();\nuse Digest::SHA 'sha256_hex';\nuse File::Basename 'dirname';\nuse File::Temp 'tempfile';\nuse Cwd 'abs_path';\nuse Time::HiRes qw(clock_gettime CLOCK_MONOTONIC);\nuse IPC::Open3 'open3';\nuse lib 'bench/lib';\nuse Wump::BenchMatrix 'validate_result';\n@ARGV==5 or die 'usage: capture-yield.pl BEFORE_PERL AFTER_PERL BEFORE_C AFTER_C METADATA';\nmy ($old_perl,$new_perl,$old_c,$new_c,$metadata)=@ARGV;\nsub contents ($path) {open my $in,'<',$path or die \"$path: $!\"; local $/; my $text=<$in>; close $in or die $!; return $text}\nsub capture (@command) {\n\tmy ($errors)=tempfile(UNLINK=>1);\n\tmy ($input,$output);\n\tmy $pid=open3($input,$output,'>&'.fileno($errors),@command);\n\tclose $input or die $!;\n\tmy $text=do {local $/; <$output>}; close $output or die $!;\n\twaitpid($pid,0)==$pid or die $!; my $status=$?;\n\tseek $errors,0,0 or die $!;\n\tmy $diagnostics=do {local $/; <$errors>};\n\t!$status && !length($diagnostics) or die \"failed ($status): @command\\n$diagnostics\";\n\treturn $text;\n}\nfor my $key(qw(PERL5OPT PERL5LIB PERLLIB PERL_UNICODE PERL_HASH_SEED PERL_PERTURB_KEYS PERLIO PERL_DESTRUCT_LEVEL)) {delete $ENV{$key}}\nlocal $ENV{LC_ALL}='C'; local $ENV{LANG}='C'; local $ENV{TZ}='UTC';\ncapture('git','status','--porcelain') eq '' or die 'dirty source';\nmy $revision=capture('git','rev-parse','HEAD'); chomp $revision;\nmy $affinity=contents('/proc/self/status'); $affinity=~/^Cpus_allowed_list:\\s*(\\S+)/m or die 'affinity';\n$1 eq '0,2,4,6' or die 'wrong CPU mask';\nmy @sources=qw(runtime/src/sched.c runtime/src/internal.h runtime/include/wump.h tests/test_scheduler.c bench/matrix-worker.pl bench/lib/Wump/BenchMatrix.pm perl/lib/Wump.pm);\nmy $root=dirname($old_c);\nmy $worker=\"$root/yield-worker.c\";\nmy @archives=('/home/marcus/projects/wump/master/build/checkpoint-callee/integration/libwump.a',\"$root/integration/libwump.a\");\nmy %hashes=map {$_=>sha256_hex(contents($_))} ($old_perl,$new_perl,$old_c,$new_c,$worker,@archives,@sources);\nmy %binaries;\nfor my $pair ([before_perl=>$old_perl],[after_perl=>$new_perl],[before_c=>$old_c],[after_c=>$new_c]) {\n\tmy ($role,$path)=@$pair;\n\tmy $value={path=>abs_path($path),sha256=>$hashes{$path}};\n\tif ($role=~/_perl\\z/) {\n\t\t$value->{config}=JSON::PP::decode_json(capture($path,'-I'.dirname($path).'/lib','-MConfig','-MJSON::PP','-e',q{print JSON::PP::encode_json({map {$_=>$Config::Config{$_}//''} qw(version archname cc gccversion ccflags ldflags lddlflags optimize usemultiplicity useithreads use64bitall)})}));\n\t}\n\t$binaries{$role}=$value;\n}\nJSON::PP->new->canonical->encode($binaries{before_perl}{config}) eq JSON::PP->new->canonical->encode($binaries{after_perl}{config}) or die 'config mismatch';\nmy $compiler=capture('cc','--version');\nmy $cpu=contents('/proc/cpuinfo'); $cpu=~/^model name\\s*:\\s*(.+)$/m or die 'CPU'; my $cpu_model=$1;\nmy $kernel=capture('uname','-srmo'); chomp $kernel;\nmy $sequence=0; my $n=2000000;\nfor my $run (1..7) {\n\tmy @surfaces=$run%2 ? ('c','perl') : ('perl','c');\n\tmy @slots=(1,2,4); my $offset=($run-1)%3;\n\t@slots=(@slots[$offset..$#slots],@slots[0..$offset-1]);\n\tfor my $surface (@surfaces) {\n\t\tfor my $slots (@slots) {\n\t\t\tfor my $role ($run%2 ? ('before','after') : ('after','before')) {\n\t\t\t\tmy $binary=$binaries{\"${role}_$surface\"}{path};\n\t\t\t\tlocal $ENV{WUMP_MATRIX_MODE}='wump'; local $ENV{WUMPPROCS}=$slots; local $ENV{WUMP_MATRIX_SLOTS}=$slots;\n\t\t\t\tmy @command=$surface eq 'c' ? ($binary,$n,$slots)\n\t\t\t\t\t: ($binary,'-I'.dirname($binary).'/lib','-Iperl/lib','bench/matrix-worker.pl','yield',$n,8);\n\t\t\t\tmy $start=clock_gettime(CLOCK_MONOTONIC);\n\t\t\t\tmy $v=JSON::PP::decode_json(capture('taskset','-c','0,2,4,6','timeout','90s',@command));\n\t\t\t\tmy $elapsed=clock_gettime(CLOCK_MONOTONIC)-$start;\n\t\t\t\tif ($surface eq 'perl') {\n\t\t\t\t\tvalidate_result($v,'yield',\"wump-$slots\",$n,8);\n\t\t\t\t\tjoin(',',@{$v->{native_ops}}) eq 'wumpact,wumpchan,wumpyield'\n\t\t\t\t\t\t&& join(',',@{$v->{native_methods}}) eq 'Wump::Channel::close,Wump::Channel::recv,Wump::Channel::send' or die 'lost native bindings';\n\t\t\t\t} else {\n\t\t\t\t\t$v->{operation} eq 'yield' && $v->{iterations}==$n && $v->{units}==$n\n\t\t\t\t\t\t&& $v->{completed}==$n && $v->{slots}==$slots or die 'bad C completion';\n\t\t\t\t}\n\t\t\t\t$v->{status} eq 'ok' && $v->{wall_seconds}>0 && $v->{wall_seconds}<=$elapsed or die 'bad timing';\n\t\t\t\tprint JSON::PP->new->canonical->encode({%$v,surface=>$surface,role=>$role,run=>$run,\n\t\t\t\t\tsequence=>++$sequence,process_seconds=>$elapsed}),\"\\n\";\n\t\t\t}\n\t\t}\n\t}\n}\n$sequence==84 or die 'incomplete capture';\nfor my $path(keys %hashes) {sha256_hex(contents($path)) eq $hashes{$path} or die \"changed $path\"}\ncapture('git','status','--porcelain') eq '' or die 'source changed';\nopen my $out,'>',\"$metadata.tmp\" or die $!;\nprint {$out} JSON::PP->new->canonical->pretty->encode({source_revision=>$revision,baseline_revision=>q{ba5a73a30734af0cfbd36ed44a768df75b88e9dd},source_dirty=>JSON::PP::false,\n\tbinaries=>\\%binaries,sha256=>\\%hashes,cpu_model=>$cpu_model,kernel=>$kernel,affinity=>'0,2,4,6',\n\truns=>7,iterations=>$n,samples=>$sequence,c_compiler=>$compiler,\n\tc_flags=>['-O2','-g','-std=c11','-Wall','-Wextra','-Werror','-pthread','-Iruntime/include'],c_link_flags=>['-pthread','-lm'],\n\tworker_source=>contents($worker),runner_source=>contents(__FILE__)}) or die $!;\nclose $out or die $!;\nrename \"$metadata.tmp\",$metadata or die $!;\n",
+   "runs" : 7,
+   "samples" : 84,
+   "sha256" : {
+      "/home/marcus/projects/wump/master/build/checkpoint-callee/integration/libwump.a" : "2a9f4f0ff1bf2d6210e4c5dc09bbaa8bffd7e63f6cdd0841807528322987ee40",
+      "/home/marcus/projects/wump/master/build/checkpoint-callee/integration/perl/perl-5.42.2/perl" : "a7c995a3d201fa67a307652b6b3e7a4ae7aeb6f803c71842d12eec547e31e8bd",
+      "/home/marcus/projects/wump/master/build/checkpoint-yield-wake/integration/libwump.a" : "3c1aff10239a1db9f73592de7b403bdecddffaa7c769a777a843774453298837",
+      "/home/marcus/projects/wump/master/build/checkpoint-yield-wake/integration/perl/perl-5.42.2/perl" : "980cc184312d41c2aeae8f16579279dd52eb709be61ea2270866d1c5a5e724b9",
+      "/home/marcus/projects/wump/master/build/checkpoint-yield-wake/yield-after" : "dd791bd4fd865236f11d396c45f374b833962cd9a37ad5f031f6c579adcda4e5",
+      "/home/marcus/projects/wump/master/build/checkpoint-yield-wake/yield-before" : "7f7473a31ef7101a700f4cfb3e52c776f122abfb09968b3475cc0deb4fb7a488",
+      "/home/marcus/projects/wump/master/build/checkpoint-yield-wake/yield-worker.c" : "dcc644eb6c4535eff70482401aaaca7919381b5c9999eeea376bc8575d8c4e8b",
+      "bench/lib/Wump/BenchMatrix.pm" : "ccd67dae0a2e8bf83c487e7179e97b0533e260ca2954c151d06d5d010357c403",
+      "bench/matrix-worker.pl" : "f95731a382e9aa9b201049bb7ddaa47dd487779b664c93617e87e6fb5aff6004",
+      "perl/lib/Wump.pm" : "b5be657380f059d17928f956c352da7aef848f57649f9c8abaf95f1936192fe4",
+      "runtime/include/wump.h" : "7cd1796850c992e0bd8b35c64ee54c1c079eaf85b8738cdef1d4b9062ffc4762",
+      "runtime/src/internal.h" : "29bb8b78cc206c9a008ef4071babc646e6bc0839b81b3cbe0d2a76b4d2ff130d",
+      "runtime/src/sched.c" : "f3e28933366b185d2ade5e5465991989c0be0b4dfc822d5d046e66ed0070ecd7",
+      "tests/test_scheduler.c" : "0dbcffabbcbf1754d0b15811b389cce06a0fd6116ccf6fb467e02a89c390c324"
+   },
+   "source_dirty" : false,
+   "source_revision" : "e97e00bafab3fae4aa06329ca56146d00136841a",
+   "worker_source" : "#define _POSIX_C_SOURCE 200809L\n#include <errno.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <time.h>\n#include \"wump.h\"\n\ntypedef struct sample {\n\tunsigned iterations;\n\tint slots;\n\tvolatile uint64_t completed;\n\tdouble seconds;\n} sample;\n\nstatic double now(void) {\n\tstruct timespec value;\n\tif (clock_gettime(CLOCK_MONOTONIC, &value)) { perror(\"clock_gettime\"); exit(1); }\n\treturn (double)value.tv_sec + (double)value.tv_nsec / 1e9;\n}\nstatic unsigned number(const char *text) {\n\tchar *end;\n\terrno = 0;\n\tunsigned long value = strtoul(text, &end, 10);\n\tif (errno || !*text || *end || value < 1 || value > 2000000) {\n\t\tfprintf(stderr, \"invalid positive integer\\n\"); exit(1);\n\t}\n\treturn (unsigned)value;\n}\nstatic void run_sample(void *arg) {\n\tsample *value = arg;\n\tvalue->slots = wump_nprocs();\n\tdouble start = now();\n\tfor (unsigned i = 0; i < value->iterations; i++) {\n\t\twump_yield();\n\t\tvalue->completed++;\n\t}\n\tvalue->seconds = now() - start;\n}\nint main(int argc, char **argv) {\n\tif (argc != 3) { fprintf(stderr, \"usage: yield-worker ITERATIONS SLOTS\\n\"); return 1; }\n\tsample value = { .iterations = number(argv[1]) };\n\tunsigned slots = number(argv[2]);\n\tif (slots != 1 && slots != 2 && slots != 4) { fprintf(stderr, \"invalid slots\\n\"); return 1; }\n\tif (wump_run(run_sample, &value, (int)slots)) { perror(\"wump_run\"); return 1; }\n\tif (value.completed != value.iterations || value.slots != (int)slots || value.seconds <= 0) return 1;\n\tprintf(\"{\\\"status\\\":\\\"ok\\\",\\\"operation\\\":\\\"yield\\\",\\\"iterations\\\":%u,\\\"slots\\\":%d,\\\"units\\\":%u,\\\"completed\\\":%llu,\\\"wall_seconds\\\":%.17g}\\n\",\n\t\tvalue.iterations, value.slots, value.iterations, (unsigned long long)value.completed, value.seconds);\n\treturn 0;\n}\n"
+}

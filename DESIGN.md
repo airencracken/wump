@@ -2424,3 +2424,33 @@ notification assertion; the revised normal runtime and integration suites
 pass. Sanitizer and timing results are recorded after completion. This change
 targets concrete coordination overhead; it does not explain away the earlier
 two-slot yield regression or change its recorded gate result.
+
+### Validated scheduler and performance result
+
+Final code `e97e00b` passes GCC/Clang runtime suites, runtime stress, and GCC
+ASan/LSan/UBSan/TSan suites with their repository positive controls. The
+private Perl project, context/legacy differentials and parser/opcode upgrade
+checks pass. The unchanged full UTC upstream harness passes 2,919 files /
+1,351,318 checks. The whole private project passes under ASan with
+stack-use-after-return and full teardown, leak detection disabled. Native
+yield (30) and callee (186) checks additionally pass with LSan. Whole-core
+TSan passes the parallel target and both focused suites; the allocator
+positive control also detects its deliberate race inside Perl. This does
+not clear the separate full-project upstream-ithreads TSan limitation.
+
+The [fresh runtime matrix](bench/operation-matrix-yield-current.md) passes the
+unchanged 10% gate, with two/four-slot yield work down 39.43%/70.07% and
+one-slot +1.14%. It also passes against the unchanged pre-regression anchor:
+yield -36.56%/-71.53%, with earlier call gains retained. That anchor comparison
+includes the preceding interpreter changes; the fresh control isolates this
+runtime change. The original +21.19% failure remains archived, and its timing
+cause is not established by this optimization.
+
+The [separate C/Perl probe](bench/scheduler-yield.md) measures one yielding task
+at two million iterations: C -48.41%/-63.49%, Perl -32.52%/-69.60% on two/four
+slots, with one-slot +0.93%/+0.96%. Queue locking, every dispatch hook and the
+new-work notification contract remain tested. All 1,540 fresh matrix and 84
+focused samples, results, source/binary/archive hashes, pair provenance and
+exact saved comparisons were revalidated. Tooling passes 134 unit and 477
+integration checks. General Perl/metadata overhead, broader native integration
+and deployment tooling remain open.

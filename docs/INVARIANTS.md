@@ -4,6 +4,8 @@ Last reviewed: 2026-10-31, runtime source `f5ce9cf`, pinned Perl 5.42.2.
 Scheduler continuation: CTX-8/CTX-9 describe the ownership and clock-polling
 change based on `2b66dfa`; its source hashes and validation are recorded in
 [scheduler-owner-machine.json](../bench/scheduler-owner-machine.json).
+The solitary-continuation extension to CTX-8 is recorded in
+[scheduler-yield-machine.json](../bench/scheduler-yield-machine.json).
 
 These are requirements for preserving the current supported behavior, not a
 claim that every Perl or XS path has been proved safe. Enforcement and tests
@@ -149,9 +151,10 @@ promise of a single native thread. Multiple-P queues still need exclusion for
 stealing. External poller wakeups, syscall returns and local overflow must use
 the synchronized global path; they cannot use the single-owner shortcut.
 
-A saved continuation queued by its own live scheduler may omit notification
-when it is the only task in that local queue. Check depth under the queue
-mutex on multiple slots. The owner has not entered idle accounting and will
+A saved continuation queued by its own live scheduler may omit its wakeup
+notification and epoch increment when it is the only task in that local queue.
+Check depth under the queue mutex on multiple slots. The owner has not
+entered idle accounting and will
 search for work again, so a sleeper is not needed to consume that continuation.
 New spawns, channel readiness, additional local work and global overflow must
 retain their publication/wakeup protocol. This omits no context switch,

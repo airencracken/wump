@@ -349,3 +349,44 @@ Builds, profiler sections, exact runners and detailed successful/failed logs
 remain locally under `build/checkpoint-callee/`; logs are copied into its
 `validation-logs/` directory. Machine records retain the capture runners.
 Raw profiler memory and generated binaries remain outside the tracked files.
+
+## Solitary continuation checkpoint (2026-11-01)
+
+Final code `e97e00b` passes GCC and Clang runtime suites, runtime stress, and
+the full GCC C ASan/LSan/UBSan/TSan targets with their positive controls.
+The notification regression fails against the preceding runtime and passes
+afterward. It measures across native threads on one/two/four slots, before
+and after a native-call handoff, verifies every context-entry hook and errno,
+and separately requires a new single queued spawn to notify. Main context
+cleanup must run exactly once. Existing overflow, parallelism, timer/global
+fairness, external-I/O, failure-injection and shutdown checks remain enabled.
+
+The private project suite, context/legacy differentials, state inventory,
+C/C++/embedding fixtures, complete-tree upgrade/idempotence, opcode and Bison
+3.8.2 parser regeneration checks pass. The unchanged UTC full upstream harness
+passes **2,919 files / 1,351,318 checks**, without exclusions or expectation
+changes. The whole private project also passes under ASan with
+`detect_leaks=0:detect_stack_use_after_return=1` and `PERL_DESTRUCT_LEVEL=2`.
+Focused native-yield (30) and callee (186) checks pass with leak detection
+enabled and full teardown.
+
+Whole-core TSan passes `perl-parallel-test` and those two focused suites with
+`halt_on_error=1:exitcode=66` and full teardown. The allocator fixture passes
+and its deliberate race inside `Perl_more_bodies` is detected, checking core
+instrumentation as well as the separate C user-race control. The previously
+documented full-project upstream-ithreads TSan limitation remains open; that
+full target was not rerun. No whole-upstream sanitizer result is claimed.
+
+Both [fresh before/after](../bench/operation-matrix-yield-check.txt) and
+[retained-anchor](../bench/operation-matrix-yield-anchor-check.txt) performance
+checks pass the unchanged 10% work/process budget. The prior failed capture
+remains archived. All 1,540 fresh matrix and 84 focused C/Perl samples were
+revalidated for identities, completion counts, source/binary/archive hashes,
+pair provenance and exact check output. The tools pass 134 unit and 477
+integration checks. The focused probe has one yielding task, not several
+concurrent yielders; the full matrix provides the separate common workloads.
+
+Builds, exact C worker/runner, failed-before coordination logs, sanitizer
+controls and final logs remain under `build/checkpoint-yield-wake/` locally.
+Logs are copied into its `validation-logs/` directory. Tracked machine records
+retain hashes, compiler configuration and complete capture sources.
