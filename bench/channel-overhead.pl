@@ -16,6 +16,13 @@ BEGIN { CLOCK_MONOTONIC() }
 	package Wump::Bench::XSChannel;
 	our @ISA = ('Wump::Channel');
 	BEGIN { *send=\&Wump::_send; *recv=\&Wump::_recv; *close=\&Wump::_close }
+	package Wump::Bench::NativeChannel;
+	our @ISA = ('Wump::Channel');
+	BEGIN {
+		if (defined &Wump::_channel_send) {
+			*send=\&Wump::_channel_send; *recv=\&Wump::_channel_recv; *close=\&Wump::_channel_close;
+		}
+	}
 }
 
 @ARGV == 3 or die "usage: channel-overhead.pl buffered|rendezvous wrapper|xs|native ITERATIONS\n";
@@ -29,12 +36,13 @@ CHECK {
 			my $method = Wump::Channel->can($name);
 			die "native channel $name entry is unavailable\n"
 				unless defined &{"Wump::_channel_$name"} && B::svref_2object($method)->XSUB
-				&& $method == \&{"Wump::_channel_$name"};
+				&& $method == \&{"Wump::_channel_$name"}
+				&& Wump::Bench::NativeChannel->can($name) == $method;
 		}
 	}
 }
 my $class = $mode eq 'wrapper' ? 'Wump::Bench::WrapperChannel'
-	: $mode eq 'xs' ? 'Wump::Bench::XSChannel' : 'Wump::Channel';
+	: $mode eq 'xs' ? 'Wump::Bench::XSChannel' : 'Wump::Bench::NativeChannel';
 sub channel ($capacity,$class) {
 	my $owner = Wump::chan($capacity);
 	my $id = $$owner;
