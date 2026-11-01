@@ -2266,3 +2266,22 @@ build omitted the repository's documented ASan options and stopped on miniperl
 startup leaks without full teardown; rebuilding with the standard ASan build
 environment succeeds. That build diagnostic is separate from the focused
 full-teardown LSan result. Further timing and TSan evidence follows separately.
+
+### Cleared TEMP ownership regression
+
+The whole-core TSan parallel target exposed a race between `free_tmps` clearing
+TEMP and another act reading a callee head under the metadata mutex. The
+temporary reference still existed after argument/assignment handling had
+cleared its TEMP flag. Publication's flag-gated ownership transfer missed that
+case, so later cleanup still wrote the shared head. The native ownership
+regression fails on the preceding interpreter as well, establishing that this
+publication defect predates native channel dispatch.
+
+Publication now examines actual temporary-stack membership independently of
+TEMP and transfers every matching ownership to private RV holders, including
+duplicates. Cleanup drops those holders without touching shared head flags;
+the regression verifies exact final refcount and value. This adds no global
+cleanup lock or new mutable state. Both flagged and already-cleared owners
+follow the same existing ownership protocol. Full-teardown focused LSan and
+the TSan parallel target (including the previously failing job fixture), native
+channel suite and deliberate-race control pass after the fix.

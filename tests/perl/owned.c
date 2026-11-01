@@ -119,6 +119,25 @@ int main(int argc, char **argv, char **env) {
 	CHECK(SvREFCNT(temporary) == 1 && SvIV(temporary) == 123);
 	LEAVE;
 	SvREFCNT_dec(temporary);
+	ENTER;
+	SAVETMPS;
+	SV *cleared = sv_2mortal(newSViv(456));
+	SvREFCNT_inc(cleared);
+	SSize_t first_mortal_slot = PL_tmps_ix;
+	sv_2mortal(SvREFCNT_inc(cleared));
+	/* Argument/assignment paths may clear TEMP while its temporary reference
+	 * is still owned by this stack. Publication must transfer that ownership
+	 * too, or free_tmps later writes a head another executor is reading. */
+	SvTEMP_off(cleared);
+	SSize_t mortal_slot = PL_tmps_ix;
+	CHECK(PL_tmps_stack[mortal_slot] == cleared);
+	Perl_wump_publish(aTHX_ cleared);
+	CHECK(PL_tmps_stack[first_mortal_slot] != cleared);
+	CHECK(PL_tmps_stack[mortal_slot] != cleared);
+	FREETMPS;
+	CHECK(SvREFCNT(cleared) == 1 && SvIV(cleared) == 456);
+	LEAVE;
+	SvREFCNT_dec(cleared);
 	Perl_wump_task_activate(aTHX_ NULL);
 	perl_destruct(interp);
 	perl_free(interp);

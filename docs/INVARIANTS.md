@@ -64,11 +64,20 @@ reference does not keep an SV** stack address stable through stack growth.
 Core and XS callers must obey native SP refresh rules across callbacks and
 separately retain values/referents they still use.
 
+`SvTEMP` is not a membership test for the temporary stack: argument/assignment
+handling can clear it while temporary references remain. Publication must
+transfer every matching temporary reference to a private RV holder before the
+head becomes shared, even with TEMP already clear and with duplicate temporary
+references. Ordinary cleanup then drops the holders without writing shared
+head flags. Refcounts and values must balance on normal and exceptional cleanup.
+
 Enforcement: [task fields](../perl/taskvars), generated core accessors and
 audited load/capture patches. Evidence: [active callbacks](../tests/perl/active.t),
 [forced stack growth](../tests/perl/scalar-lookup.c),
 [stack values](../tests/perl/stack-loads.t),
 [referents](../tests/perl/reference-loads.t).
+The [native ownership fixture](../tests/perl/owned.c) checks both TEMP-set and
+TEMP-cleared publication, including duplicate temporary owners.
 
 **CTX-4 — Call-frame privacy must preserve lexical identity.** Ordinary locals,
 arguments and recursive depth are isolated per act/CV frame. Captured and

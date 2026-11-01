@@ -103,11 +103,13 @@ static void wump_publish_queue(pTHX_ wump_publish_work *work, SV *value) {
 		|| isGV_with_GP(value)) return;
 	MAGIC *mg = wump_publish_marker(value);
 	if (mg && mg->mg_private) return;
-	if (PL_wump_task && SvTEMP(value)) {
+	if (PL_wump_task) {
 		/* The creating act's mortal reference must not later clear TEMP on
 		 * a head another act is using. Transfer each temporary ownership to
-		 * a private RV before the value becomes shared. */
-		SvTEMP_off(value);
+		 * a private RV before the value becomes shared. TEMP may already
+		 * have been cleared by argument/assignment handling without removing
+		 * the temporary reference; membership is determined by the stack. */
+		if (SvTEMP(value)) SvTEMP_off(value);
 		for (SSize_t i = PL_tmps_ix; i >= 0; i--) {
 			if (PL_tmps_stack[i] != value) continue;
 			SV *holder = newSV_type(SVt_IV);
