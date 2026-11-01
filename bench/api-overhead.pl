@@ -4,6 +4,12 @@ use warnings;
 use Wump;
 use Time::HiRes qw(clock_gettime CLOCK_MONOTONIC);
 use JSON::PP ();
+use B ();
+BEGIN {
+	CLOCK_MONOTONIC();
+	die "native yield opcode is unavailable\n"
+		if ($ARGV[1] // '') eq 'native' && B::opnumber('wumpyield') < 0;
+}
 
 # Diagnostic ablation: internal XS calls are not a supported public API.
 # Each pair performs the same work, removing only the Perl API wrapper.
@@ -37,5 +43,5 @@ if ($op eq 'yield') {
 }
 my $elapsed = clock_gettime(CLOCK_MONOTONIC) - $start;
 die "incomplete probe\n" unless $count == $n;
-print JSON::PP::encode_json({operation => $op, mode => $mode, iterations => 0 + $n,
+print JSON::PP->new->ascii->canonical->encode({operation => $op, mode => $mode, iterations => 0 + $n,
 	slots => Wump::execution_slots(), completed => $count, wall_seconds => $elapsed}), "\n";

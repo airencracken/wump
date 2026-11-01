@@ -2124,6 +2124,12 @@ Both upstream Opcode files pass their 887 checks. The native suite is extended
 to 30 checks, including classification and rejection under an opcode mask;
 the failure was fixed without changing the upstream expectation.
 
+After that fix, the standard full harness passes 2,919 files / 1,351,319
+checks. Project suites, context/legacy differentials, parser regeneration,
+source upgrade/idempotence and opcode regeneration pass. Whole-Perl sanitizer
+runs were not repeated for this opcode change; the instrumented runtime-cache
+checks above remain separate evidence.
+
 `bench/api-overhead.pl` separates the qualified wrapper, raw XS and native
 yield paths in otherwise matching loops. The common matrix still measures the
 qualified compatibility function, so native timings are recorded separately.

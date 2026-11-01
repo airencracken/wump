@@ -146,14 +146,16 @@ for my $n (1, 97, 1025) {
 for my $op (qw(yield spawn)) {
 	for my $mode (qw(public xs), $op eq 'yield' ? ('native') : ()) {
 		for my $n (1, 1025) {
-			local $ENV{WUMPPROCS} = 1;
-			($status, $text, $errors) = run($wump, '-I' . dirname($wump) . '/lib', '-Iperl/lib',
-				'bench/api-overhead.pl', $op, $mode, $n);
-			is($status, 0, "$op/$mode API probe completes $n operations");
-			is($errors, '', 'API probe has no diagnostics');
-			my $value = eval {decode_json($text)};
-			is_deeply($value && [@{$value}{qw(operation mode iterations slots completed)}],
-				[$op, $mode, $n, 1, $n], 'probe retains its identity and verifies the completion count');
+			for my $slots (1, 4) {
+				local $ENV{WUMPPROCS} = $slots;
+				($status, $text, $errors) = run($wump, '-I' . dirname($wump) . '/lib', '-Iperl/lib',
+					'bench/api-overhead.pl', $op, $mode, $n);
+				is($status, 0, "$op/$mode API probe completes $n operations on $slots slots");
+				is($errors, '', 'API probe has no diagnostics');
+				my $value = eval {decode_json($text)};
+				is_deeply($value && [@{$value}{qw(operation mode iterations slots completed)}],
+					[$op, $mode, $n, $slots, $n], 'probe retains its identity and verifies the completion count');
+			}
 		}
 	}
 }
