@@ -223,6 +223,23 @@ list in list context, preserving surrounding operands across suspension.
 These operations require a running task. Compile-time blocks cannot schedule, and importing
 Wump at runtime without compile-time activation fails explicitly.
 
+Channel `send`, `recv` and `close` have direct core entries. The interpreter
+first performs normal method resolution, including subclasses, `SUPER` and
+replacement methods. It recognizes only the three original channel entry
+addresses, after the existing XS admission/publication checks, and invokes
+their common helpers before Perl wrapper or XS call-frame setup. Method calls
+remain `entersub` operations; this is runtime dispatch, not static receiver-type
+inference or a new reserved method name. Custom methods retain their bodies.
+This path also avoids allocating a private Perl method pad for each new act.
+
+The compatibility XS entries share the same payload copying, reference
+publication, registry validation, exceptions and channel lifetime code. Implicit
+`@_` forwarding, tail calls, debugger/lvalue handling and refcounted-stack
+builds retain the upstream adapter where needed. The tested build uses the
+ordinary unrefcounted operand stack; this does not establish general support
+for experimental refcounted-stack builds. Older private controls keep their
+Perl method wrappers when they load the current module.
+
 ### Wait groups
 
 Wait groups track explicitly registered work, as in Go. Functions and methods

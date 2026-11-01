@@ -129,7 +129,7 @@ C
 	close $input or die "$file: $!\n";
 	# Restore the previous existing-cell load blocks before exercising the
 	# older read-only/reference upgrades. The new pass must rebuild them all.
-	$text =~ s{    if \(PL_wump_task && CvISXSUB\(cv\)\) \{\n        Perl_wump_xs_check\(aTHX_ cv\);\n        Perl_wump_publish\(aTHX_ \(SV \*\)cv\);\n    \}}{    if (PL_wump_task && CvISXSUB(cv)) Perl_wump_publish(aTHX_ (SV *)cv);}
+	$text =~ s{    if \(PL_wump_task && CvISXSUB\(cv\)\) \{\n        Perl_wump_xs_check\(aTHX_ cv\);\n        Perl_wump_publish\(aTHX_ \(SV \*\)cv\);\n(?:        if \(Perl_wump_channel_call\(aTHX_ cv\)\) return NORMAL;\n)?    \}}{    if (PL_wump_task && CvISXSUB(cv)) Perl_wump_publish(aTHX_ (SV *)cv);}
 		or die "missing parallel XS gate\n";
 	for my $name (qw(method method_named method_super method_redir method_redir_super)) {
 		$text =~ s/^PP\(wump_method_impl_\Q$name\E\)/PP(pp_$name)/m
@@ -249,6 +249,24 @@ for my $file (keys %$after) {
 		or die "legacy lifecycle upgrade changed $relative\n";
 }
 print "ok - upgrading earlier lifecycle, reference loads, deferred ownership and parallel metadata/XS guards preserves the complete generated tree\n";
+{
+	my $file = "$legacy/pp_hot.c";
+	my $text = read_file_for_test($file);
+	$text =~ s/^        if \(Perl_wump_channel_call\(aTHX_ cv\)\) return NORMAL;\n//m
+		or die "missing native channel entry\n";
+	open my $out, '>', $file or die $!;
+	print {$out} $text or die $!;
+	close $out or die $!;
+	system 'perl', 'perl/apply.pl', $legacy;
+	$? == 0 or die "native channel entry upgrade failed: $?\n";
+	my $current = snapshot($legacy);
+	for my $original (keys %$after) {
+		(my $relative = $original) =~ s/^\Q$source\E\///;
+		$current->{"$legacy/$relative"} eq $after->{$original}
+			or die "native channel upgrade changed $relative\n";
+	}
+	print "ok - upgrading the previous XS guard installs native channel dispatch exactly once\n";
+}
 for my $case (
 	['perly.y', qr/unexpected pinned grammar/, 'unknown grammar changes cannot be marked as regenerated'],
 	['regen/opcodes', qr/unexpected opcode definitions/, 'unknown opcode definitions cannot acquire generated dispatch tables'],

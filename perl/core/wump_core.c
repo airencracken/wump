@@ -864,11 +864,9 @@ static void xs_wump_chan(pTHX_ CV *cv) {
 	XSRETURN(1);
 }
 
-static void xs_wump_send(pTHX_ CV *cv) {
-	dXSARGS;
+static void wump_perl_send(pTHX_ SV *object, SV *value) {
 	wump_schedule_check(aTHX);
-	if (items != 2) croak("Usage: CHANNEL->send(VALUE)");
-	wump_perl_channel *ch = wump_perl_channel_get(aTHX_ ST(0));
+	wump_perl_channel *ch = wump_perl_channel_get(aTHX_ object);
 	wump_perl_message *message;
 	Newxz(message, 1, wump_perl_message);
 	wump_registry_lock();
@@ -876,26 +874,22 @@ static void xs_wump_send(pTHX_ CV *cv) {
 	if (message->next != NULL) message->next->previous = message;
 	wump_perl_active->messages = message;
 	wump_registry_unlock();
-	message->value = newSVsv(ST(1));
+	message->value = newSVsv(value);
 	Perl_wump_publish(aTHX_ message->value);
 	if (wump_chan_send(ch->ch, &message) != 0) croak("Wump: send on closed channel");
-	XSRETURN_EMPTY;
 }
 
-static void xs_wump_recv(pTHX_ CV *cv) {
-	dXSARGS;
+static SV *wump_perl_recv(pTHX_ SV *object, bool *ok) {
 	wump_schedule_check(aTHX);
-	if (items != 1) croak("Usage: CHANNEL->recv()");
-	wump_perl_channel *ch = wump_perl_channel_get(aTHX_ ST(0));
+	wump_perl_channel *ch = wump_perl_channel_get(aTHX_ object);
 	wump_perl_message *message = NULL;
 	int result = wump_chan_recv(ch->ch, &message);
 	if (result < 0) croak("Wump: receive failed");
 	if (result == 0) {
-		ST(0) = &PL_sv_undef;
-		if (GIMME_V == G_LIST) { EXTEND(SP, 1); ST(1) = &PL_sv_no; XSRETURN(2); }
-		XSRETURN(1);
+		*ok = FALSE;
+		return &PL_sv_undef;
 	}
-	ST(0) = sv_2mortal(newSVsv(message->value));
+	SV *value = sv_2mortal(newSVsv(message->value));
 	SvREFCNT_dec(message->value);
 	wump_registry_lock();
 	if (message->previous != NULL) message->previous->next = message->next;
@@ -903,16 +897,92 @@ static void xs_wump_recv(pTHX_ CV *cv) {
 	if (message->next != NULL) message->next->previous = message->previous;
 	wump_registry_unlock();
 	Safefree(message);
-	if (GIMME_V == G_LIST) { EXTEND(SP, 1); ST(1) = &PL_sv_yes; XSRETURN(2); }
+	*ok = TRUE;
+	return value;
+}
+
+static void wump_perl_close(pTHX_ SV *object) {
+	wump_perl_channel *ch = wump_perl_channel_get(aTHX_ object);
+	if (wump_chan_close(ch->ch) != 0) croak("Wump: close of closed channel");
+}
+
+static void xs_wump_send(pTHX_ CV *cv) {
+	dXSARGS;
+	if (items != 2) croak("Usage: CHANNEL->send(VALUE)");
+	wump_perl_send(aTHX_ ST(0), ST(1));
+	XSRETURN_EMPTY;
+}
+
+static void xs_wump_recv(pTHX_ CV *cv) {
+	dXSARGS;
+	if (items != 1) croak("Usage: CHANNEL->recv()");
+	bool ok;
+	SV *value = wump_perl_recv(aTHX_ ST(0), &ok);
+	SPAGAIN;
+	ST(0) = value;
+	if (GIMME_V == G_LIST) { EXTEND(SP, 1); ST(1) = ok ? &PL_sv_yes : &PL_sv_no; XSRETURN(2); }
 	XSRETURN(1);
 }
 
 static void xs_wump_close(pTHX_ CV *cv) {
 	dXSARGS;
 	if (items != 1) croak("Usage: CHANNEL->close()");
-	wump_perl_channel *ch = wump_perl_channel_get(aTHX_ ST(0));
-	if (wump_chan_close(ch->ch) != 0) croak("Wump: close of closed channel");
+	wump_perl_close(aTHX_ ST(0));
 	XSRETURN_EMPTY;
+}
+
+/* Distinct entries retain ordinary XS behavior for call_sv, goto and implicit
+ * argument forwarding. Normal entersub dispatch recognizes their addresses
+ * only after resolving the actual method CV, preserving overrides and MRO. */
+static void xs_wump_channel_send(pTHX_ CV *cv) { xs_wump_send(aTHX_ cv); }
+static void xs_wump_channel_recv(pTHX_ CV *cv) { xs_wump_recv(aTHX_ cv); }
+static void xs_wump_channel_close(pTHX_ CV *cv) { xs_wump_close(aTHX_ cv); }
+
+bool Perl_wump_channel_call(pTHX_ CV *cv) {
+#ifdef PERL_RC_STACK
+	/* Retain the upstream refcounted-stack argument/return adapter. */
+	return FALSE;
+#else
+	XSUBADDR_t entry = CvXSUB(cv);
+	int operation;
+	if (entry == xs_wump_channel_send) operation = 0;
+	else if (entry == xs_wump_channel_recv) operation = 1;
+	else if (entry == xs_wump_channel_close) operation = 2;
+	else return FALSE;
+	if (PL_op->op_type != OP_ENTERSUB || !(PL_op->op_flags & OPf_STACKED)
+		|| (PL_op->op_private & (OPpENTERSUB_DB | OPpLVAL_INTRO))) return FALSE;
+	dSP;
+	SSize_t mark = POPMARK;
+	SSize_t items = SP - (PL_stack_base + mark);
+	if (items != (operation == 0 ? 2 : 1))
+		croak(operation == 0 ? "Usage: CHANNEL->send(VALUE)"
+			: operation == 1 ? "Usage: CHANNEL->recv()" : "Usage: CHANNEL->close()");
+	/* Match XS argument materialization. Keep stack indices, not pointers,
+ * across callbacks which may grow the operand stack or suspend this act. */
+	for (SSize_t i = 1; i <= items; i++) {
+		SV *arg = PL_stack_base[mark + i];
+		if (arg && SvPADTMP(arg)) {
+			SV *copy = sv_mortalcopy(arg);
+			PL_stack_base[mark + i] = copy;
+		}
+	}
+	SV *object = PL_stack_base[mark + 1];
+	U8 context = GIMME_V;
+	SV *value = &PL_sv_undef;
+	bool ok = FALSE;
+	if (operation == 0) wump_perl_send(aTHX_ object, PL_stack_base[mark + 2]);
+	else if (operation == 1) value = wump_perl_recv(aTHX_ object, &ok);
+	else wump_perl_close(aTHX_ object);
+	SPAGAIN;
+	SP = PL_stack_base + mark;
+	if (operation == 1 && context != G_VOID) {
+		EXTEND(SP, 2);
+		PUSHs(value);
+		if (context == G_LIST) PUSHs(ok ? &PL_sv_yes : &PL_sv_no);
+	} else if (context == G_SCALAR) XPUSHs(&PL_sv_undef);
+	PUTBACK;
+	return TRUE;
+#endif
 }
 
 PP(pp_wumpyield) {
@@ -974,6 +1044,9 @@ static void xs_wump_execution_slots(pTHX_ CV *cv) {
 void Perl_wump_boot(pTHX) {
 	newXS("Wump::_intrinsic", xs_wump_intrinsic, __FILE__);
 	newXS("Wump::_act_intrinsic", xs_wump_act_intrinsic, __FILE__);
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::_channel_send", xs_wump_channel_send, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::_channel_recv", xs_wump_channel_recv, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("Wump::_channel_close", xs_wump_channel_close, __FILE__));
 	Perl_wump_xs_allow(aTHX_ newXS("Wump::execution_slots", xs_wump_execution_slots, __FILE__));
 	Perl_wump_xs_allow(aTHX_ newXS("Wump::_enable", xs_wump_enable, __FILE__));
 	Perl_wump_xs_allow(aTHX_ newXS("Wump::_waitgroup", xs_wump_waitgroup, __FILE__));

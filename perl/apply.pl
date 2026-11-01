@@ -73,6 +73,7 @@ int Perl_wump_active_runops(pTHX_ struct wump_perl_task *task);
 void Perl_wump_checkpoint(pTHX);
 void Perl_wump_xs_allow(pTHX_ CV *cv);
 void Perl_wump_xs_check(pTHX_ CV *cv);
+bool Perl_wump_channel_call(pTHX_ CV *cv);
 bool Perl_wump_parallel(pTHX);
 bool Perl_wump_numeric_enter(pTHX_ SV *target);
 void Perl_wump_numeric_leave(pTHX);
@@ -571,8 +572,12 @@ edit('class.c', '    fields[fieldix] = val;',
 	my $old = '    if (PL_wump_task && CvISXSUB(cv)) Perl_wump_publish(aTHX_ (SV *)cv);';
 	$text =~ s/^\Q$old\E\n//mg;
 	my $guard = "    if (PL_wump_task && CvISXSUB(cv)) {\n        Perl_wump_xs_check(aTHX_ cv);\n        Perl_wump_publish(aTHX_ (SV *)cv);\n    }\n";
-	if (index($text, $guard) < 0) {
-		$text =~ s/^(    if \(!\(CvISXSUB\(cv\)\)\) \{)/$guard$1/m
+	my $native_guard = $guard;
+	$native_guard =~ s/    }\n\z/        if (Perl_wump_channel_call(aTHX_ cv)) return NORMAL;\n    }\n/;
+	if (index($text, $guard) >= 0) {
+		$text =~ s/\Q$guard\E/$native_guard/ or die "missing previous XS guard\n";
+	} elsif (index($text, $native_guard) < 0) {
+		$text =~ s/^(    if \(!\(CvISXSUB\(cv\)\)\) \{)/$native_guard$1/m
 			or die "missing XS invocation guard anchor\n";
 	}
 	write_file($file, $text);

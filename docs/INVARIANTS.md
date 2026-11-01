@@ -370,6 +370,31 @@ Enforcement: [compiler checker and spawn helper](../perl/core/wump_core.c),
 Evidence: [native compilation, lifecycle and override checks](../tests/perl/native-act.t),
 [constructors, timers, inputs and masks](../tests/perl/native-scalar-ops.t).
 
+**COMPAT-6 — Native channel dispatch follows the resolved implementation.**
+Normal method/CV resolution completes before the core recognizes one of the
+three immutable channel entry addresses. Existing XS admission and CV
+publication still run. Only those entries skip the Perl wrapper/XS invocation;
+custom CVs, overrides, unrelated methods and MRO changes retain normal dispatch.
+The original entries remain real XS functions for paths needing the upstream
+argument adapter, including implicit forwarding and tail calls. Debugger,
+lvalue and experimental refcounted-stack paths keep their adapter.
+
+The direct path pops exactly its own argument mark, checks arity, materializes
+PADTMP arguments as XS does and retains operands on the act-owned stack while
+helpers can invoke magic, throw or suspend. Stack indices survive growth;
+SP is refreshed before replacing arguments with context-appropriate results.
+Payload scalars are copied and references published by the same helper as XS.
+Received values remain mortal through the caller statement, including void
+receives. Runtime/ID validation still uses the registry; no channel pointer,
+method cache or native-thread address is cached by this optimization. No new
+mutable interpreter state or cross-executor ownership is introduced.
+
+Enforcement: [entry hook](../perl/apply.pl), [dispatch and shared helpers](../perl/core/wump_core.c),
+[method aliases and older controls](../perl/lib/Wump.pm).
+Evidence: [contexts, callbacks, lifetime, overrides and migration](../tests/perl/native-channel.t),
+[previous-guard upgrades](../tests/perl/patcher.pl),
+[channel workload verification](../tests/perl/matrix-bench.t).
+
 ## Maintenance
 
 Every change introducing a mutable field, native cache, callback, escape path

@@ -2238,3 +2238,30 @@ different fixture cannot erase the original failure. The default baseline is
 the preceding interpreter's v3 capture, keeping that regression visible.
 General compute overhead, native channel methods/selection, Perl I/O integration
 and deployment tooling remain open work.
+
+## Native channel method continuation (2026-11-01)
+
+The original `Wump::Channel` send/recv/close methods now have core entrypoints.
+Normal method resolution still selects the actual CV, including replacement
+methods and `SUPER`. After the existing XS admission/publication gate, core
+`entersub` recognizes only those three C entry addresses and calls shared
+channel helpers directly, before allocating a Perl method pad or entering the
+XS adapter. This runtime specialization adds no reserved method names or new
+opcodes. Compatibility XS and fallback paths reuse the same helpers.
+
+Forty-six focused checks pass normally and under ASan/LSan with full teardown.
+They cover contexts, payload copies/reference identity, void-result lifetime,
+magic that grows the stack/yields/throws, arity and closed-channel errors,
+lvalue rejection without consuming a message, overrides, inherited methods,
+captured CVs, implicit forwarding/tail calls and four-slot message delivery.
+The preceding interpreter fails eight entry/bypass assertions while the
+behavior checks pass. The ordinary project/context/legacy suites pass, and
+the full upstream UTC run passes 2,919 files / 1,351,274 checks.
+
+The whole project suite also passes on a separate ASan private Perl with
+stack-use-after-return detection and leak detection disabled; the new focused
+suite additionally passes with leak detection enabled. The first instrumented
+build omitted the repository's documented ASan options and stopped on miniperl
+startup leaks without full teardown; rebuilding with the standard ASan build
+environment succeeds. That build diagnostic is separate from the focused
+full-teardown LSan result. Further timing and TSan evidence follows separately.
