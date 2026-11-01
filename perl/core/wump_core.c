@@ -731,10 +731,10 @@ PP(pp_wumpact) {
 	RETURN;
 }
 
-/* Perl already parsed the & prototype and constructed its closure. Lower
- * only calls through an imported act GV, with the lexical opt-in. Custom
- * wrappers, explicit Wump::act, ampersand and indirect calls stay ordinary. */
-static OP *wump_ck_act(pTHX_ OP *o, GV *namegv, SV *ckobj) {
+/* Preserve Perl's prototype checks before lowering calls through an imported
+ * intrinsic CV. Qualified calls, custom CVs and indirect calls stay ordinary. */
+static OP *wump_ck_intrinsic(pTHX_ OP *o, GV *namegv, SV *ckobj,
+	const char *name, OPCODE opcode, bool default_zero) {
 	o = Perl_ck_entersub_args_proto_or_list(aTHX_ o, namegv, ckobj);
 	if (o->op_type != OP_ENTERSUB || (PL_parser && PL_parser->error_count)
 		|| !PL_hintgv || !GvHV(PL_hintgv)) return o;
@@ -747,17 +747,48 @@ static OP *wump_ck_act(pTHX_ OP *o, GV *namegv, SV *ckobj) {
 		mark = cUNOPx(parent)->op_first;
 	}
 	if (!mark || mark->op_type != OP_PUSHMARK) return o;
-	OP *arg = OpSIBLING(mark);
-	OP *callee = arg ? OpSIBLING(arg) : NULL;
+	OP *first = OpSIBLING(mark);
+	OP *arg = first && OpHAS_SIBLING(first) ? first : NULL;
+	OP *callee = arg ? OpSIBLING(arg) : first;
+	if (!arg && !default_zero) return o;
 	if (!callee || OpHAS_SIBLING(callee) || !(callee->op_flags & OPf_KIDS)) return o;
 	OP *gvop = cUNOPx(callee)->op_first;
 	if (!gvop || gvop->op_type != OP_GV) return o;
 	GV *gv = cGVOPx_gv(gvop);
-	if (GvSTASH(gv) == gv_stashpvs("Wump", 0) || !strEQ(GvNAME(gv), "act")) return o;
+	if (GvSTASH(gv) == gv_stashpvs("Wump", 0) || !strEQ(GvNAME(gv), name)) return o;
 	U8 flags = o->op_flags & OPf_WANT;
-	op_sibling_splice(parent, mark, 1, NULL);
+	if (arg) op_sibling_splice(parent, mark, 1, NULL);
 	op_free(o);
-	return newUNOP(OP_WUMPACT, flags, arg);
+	if (!arg) arg = newSVOP(OP_CONST, 0, newSViv(0));
+	return newUNOP(opcode, flags, arg);
+}
+
+static OP *wump_ck_act(pTHX_ OP *o, GV *namegv, SV *ckobj) {
+	return wump_ck_intrinsic(aTHX_ o, namegv, ckobj, "act", OP_WUMPACT, FALSE);
+}
+
+static OP *wump_ck_chan(pTHX_ OP *o, GV *namegv, SV *ckobj) {
+	return wump_ck_intrinsic(aTHX_ o, namegv, ckobj, "chan", OP_WUMPCHAN, TRUE);
+}
+
+static OP *wump_ck_sleep(pTHX_ OP *o, GV *namegv, SV *ckobj) {
+	return wump_ck_intrinsic(aTHX_ o, namegv, ckobj, "sleep", OP_WUMPSLEEP, FALSE);
+}
+
+static void xs_wump_intrinsic(pTHX_ CV *cv) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	if (items != 2 || !SvROK(ST(0)) || SvTYPE(SvRV(ST(0))) != SVt_PVCV || !SvPOK(ST(1)))
+		croak("Wump: intrinsic registration requires a code reference and name");
+	CV *target = (CV *)SvRV(ST(0));
+	const char *name = SvPV_nolen(ST(1));
+	Perl_call_checker checker;
+	if (strEQ(name, "act")) checker = wump_ck_act;
+	else if (strEQ(name, "chan")) checker = wump_ck_chan;
+	else if (strEQ(name, "sleep")) checker = wump_ck_sleep;
+	else croak("Wump: unknown intrinsic");
+	cv_set_call_checker_flags(target, checker, (SV *)target, 0);
+	XSRETURN_EMPTY;
 }
 
 /* Setup-only entry used while Wump.pm defines its original wrapper. The
@@ -794,11 +825,10 @@ static wump_perl_channel *wump_perl_channel_get(pTHX_ SV *object) {
 	croak("Wump: channel belongs to an inactive runtime");
 }
 
-static void xs_wump_chan(pTHX_ CV *cv) {
-	dXSARGS;
-	if (items != 1 || wump_self() == NULL || PL_wump_task == NULL) croak("Wump: chan requires a running task");
-	if (!SvOK(ST(0)) || SvROK(ST(0)) || !looks_like_number(ST(0))) croak("Wump: invalid channel capacity");
-	NV capacity = SvNV(ST(0));
+static SV *wump_perl_chan(pTHX_ SV *value) {
+	if (wump_self() == NULL || PL_wump_task == NULL) croak("Wump: chan requires a running task");
+	if (!SvOK(value) || SvROK(value) || !looks_like_number(value)) croak("Wump: invalid channel capacity");
+	NV capacity = SvNV(value);
 	if (!isfinite(capacity) || capacity < 0 || capacity > INT_MAX || capacity != (NV)(IV)capacity) croak("Wump: invalid channel capacity");
 	UV channel_id = wump_next_id(aTHX_ &wump_channel_id, "channel");
 	wump_perl_channel *ch;
@@ -814,7 +844,23 @@ static void xs_wump_chan(pTHX_ CV *cv) {
 	SV *object = newRV_noinc(id);
 	sv_bless(object, gv_stashpvs("Wump::Channel", GV_ADD));
 	SvREADONLY_on(id);
-	ST(0) = sv_2mortal(object);
+	return sv_2mortal(object);
+}
+
+PP(pp_wumpchan) {
+	dSP;
+	SV *value = TOPs;
+	PUTBACK;
+	SV *object = wump_perl_chan(aTHX_ value);
+	SPAGAIN;
+	SETs(object);
+	RETURN;
+}
+
+static void xs_wump_chan(pTHX_ CV *cv) {
+	dXSARGS;
+	if (items != 1) croak("Wump: chan requires a running task");
+	ST(0) = wump_perl_chan(aTHX_ ST(0));
 	XSRETURN(1);
 }
 
@@ -889,14 +935,30 @@ static void xs_wump_yield(pTHX_ CV *cv) {
 	XSRETURN_EMPTY;
 }
 
-static void xs_wump_sleep(pTHX_ CV *cv) {
-	dXSARGS;
+static void wump_perl_sleep(pTHX_ SV *value) {
 	wump_schedule_check(aTHX);
-	if (items != 1 || wump_self() == NULL || PL_wump_task == NULL) croak("Wump: sleep requires a running task");
-	if (!SvOK(ST(0)) || SvROK(ST(0)) || !looks_like_number(ST(0))) croak("Wump: invalid sleep duration");
-	NV duration = SvNV(ST(0));
+	if (wump_self() == NULL || PL_wump_task == NULL) croak("Wump: sleep requires a running task");
+	if (!SvOK(value) || SvROK(value) || !looks_like_number(value)) croak("Wump: invalid sleep duration");
+	NV duration = SvNV(value);
 	if (!isfinite(duration) || duration < 0 || duration >= (NV)INT64_MAX / 1e9) croak("Wump: invalid sleep duration");
 	if (wump_sleep((int64_t)(duration * 1e9)) != 0) croak("Wump: sleep failed");
+}
+
+PP(pp_wumpsleep) {
+	dSP;
+	SV *value = TOPs;
+	PUTBACK;
+	wump_perl_sleep(aTHX_ value);
+	SPAGAIN;
+	SP--;
+	if (GIMME_V == G_SCALAR) XPUSHs(&PL_sv_undef);
+	RETURN;
+}
+
+static void xs_wump_sleep(pTHX_ CV *cv) {
+	dXSARGS;
+	if (items != 1) croak("Wump: sleep requires a running task");
+	wump_perl_sleep(aTHX_ ST(0));
 	XSRETURN_EMPTY;
 }
 
@@ -910,6 +972,7 @@ static void xs_wump_execution_slots(pTHX_ CV *cv) {
 }
 
 void Perl_wump_boot(pTHX) {
+	newXS("Wump::_intrinsic", xs_wump_intrinsic, __FILE__);
 	newXS("Wump::_act_intrinsic", xs_wump_act_intrinsic, __FILE__);
 	Perl_wump_xs_allow(aTHX_ newXS("Wump::execution_slots", xs_wump_execution_slots, __FILE__));
 	Perl_wump_xs_allow(aTHX_ newXS("Wump::_enable", xs_wump_enable, __FILE__));

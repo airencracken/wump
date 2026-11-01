@@ -20,8 +20,6 @@ sub import {
 sub unimport { delete @^H{'Wump/pocket', 'Wump/keywords'} }
 
 sub act (&) { _act($_[0]); return }
-# Older private interpreters retain the function path for matched controls.
-_act_intrinsic(\&act) if defined &_act_intrinsic;
 sub waitgroup () { _waitgroup('Wump::WaitGroup') }
 sub add ($;$) { _wg_add(@_ == 1 ? ($_[0], 1) : @_); return }
 sub done ($) { _wg_done(@_); return }
@@ -29,6 +27,16 @@ sub await ($) { _wg_wait(@_); return }
 sub chan (;$) { _chan(@_ ? $_[0] : 0) }
 sub yield () { _yield(); return }
 sub sleep ($) { _sleep($_[0]); return }
+
+# Registration is setup only. Older private controls retain their supported
+# call paths; the native timing probe verifies the compiled operation itself.
+if (defined &_intrinsic) {
+	_intrinsic(\&act, 'act');
+	_intrinsic(\&chan, 'chan');
+	_intrinsic(\&sleep, 'sleep');
+} elsif (defined &_act_intrinsic) {
+	_act_intrinsic(\&act);
+}
 
 package Wump::WaitGroup;
 sub new { Wump::_waitgroup(@_) }

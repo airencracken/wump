@@ -44,7 +44,7 @@ for my $file (keys %$after) {
 	open my $input, '<', $file or die $!;
 	my $text = do { local $/; <$input> };
 	close $input or die $!;
-	$text =~ s/\nwumpyield\t[^\n]+\n(?:wumpact\t[^\n]+\n)?\z// or die "missing native opcodes\n";
+	$text =~ s/\nwumpyield\t[^\n]+\n(?:wumpact\t[^\n]+\n)?(?:wumpchan\t[^\n]+\n)?(?:wumpsleep\t[^\n]+\n)?\z// or die "missing native opcodes\n";
 	open my $output, '>', $file or die $!;
 	print {$output} $text or die $!;
 	close $output or die $!;

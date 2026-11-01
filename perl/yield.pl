@@ -5,13 +5,17 @@ sub apply_yield {
 	my $opcodes = read_file("$source/regen/opcodes");
 	my $yield_entry = "wumpyield\tWump task yield\t\tck_null\t\t0\n";
 	my $act_entry = "wumpact\t\tWump task creation\tck_null\t\t1\tS\n";
-	my $entry = $yield_entry . $act_entry;
+	my @entries = ($yield_entry, $act_entry,
+		"wumpchan\tWump channel creation\tck_null\t\t1\tS\n",
+		"wumpsleep\tWump task sleep\t\tck_null\t\t1\tS\n");
 	my $original = $opcodes;
-	$original =~ s/\n(?:\Q$entry\E|\Q$yield_entry\E)\z//;
+	my $removed = 0;
+	for my $entry (reverse @entries) { $removed += $original =~ s/\Q$entry\E\z// }
+	$original =~ s/\n\z// if $removed;
 	require Digest::SHA;
 	Digest::SHA::sha256_hex($original) eq '9bd5cfd093b1b11ae79a1605a90e33d15685f2d0940a8dd9b0a5f8190a34f6e0'
 		or die "unexpected opcode definitions; audit the pinned transformation\n";
-	write_file("$source/regen/opcodes", $original . "\n" . $entry);
+	write_file("$source/regen/opcodes", $original . "\n" . join('', @entries));
 	# Generate all opcode metadata from the pinned upstream generator rather
 	# than maintaining independent opcode numbers, ppaddr tables or B flags.
 	my $pid = fork();
@@ -36,10 +40,10 @@ C
 	edit('toke.c', '    /* Wump syntax is lexical:', $hook . '    /* Wump syntax is lexical:');
 	edit('lib/B/Deparse.pm', 'sub pp_stub {', "sub pp_wumpyield { return 'yield()' }\n\nsub pp_stub {");
 	my $thread_ops = read_file("$source/ext/Opcode/Opcode.pm");
-	my $old_thread_ops = $thread_ops =~ /    lock wumpyield\n\n=item :default/
-		? "    lock wumpyield\n\n=item :default" : "    lock\n\n=item :default";
+	my ($old_thread_ops) = $thread_ops =~ /(    lock(?: wumpyield(?: wumpact(?: wumpchan(?: wumpsleep)?)?)?)?\n\n=item :default)/;
+	defined($old_thread_ops) or die "unknown Opcode thread classification\n";
 	edit('ext/Opcode/Opcode.pm', $old_thread_ops,
-		"    lock wumpyield wumpact\n\n=item :default");
+		"    lock wumpyield wumpact wumpchan wumpsleep\n\n=item :default");
 	my $act_deparse = <<'PERL';
 sub pp_wumpact {
     my ($self, $op) = @_;
@@ -48,5 +52,18 @@ sub pp_wumpact {
 PERL
 	edit('lib/B/Deparse.pm', 'sub pp_stub { "()" }',
 		'sub pp_stub { "()" }' . "\n\n" . $act_deparse);
+	my $scalar_deparse = <<'PERL';
+
+sub pp_wumpchan {
+    my ($self, $op) = @_;
+    return 'chan(' . $self->deparse($op->first, 0) . ')';
+}
+
+sub pp_wumpsleep {
+    my ($self, $op) = @_;
+    return 'sleep(' . $self->deparse($op->first, 0) . ')';
+}
+PERL
+	edit('lib/B/Deparse.pm', $act_deparse, $act_deparse . $scalar_deparse);
 }
 1;

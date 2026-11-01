@@ -68,9 +68,10 @@ preserve reference identity. Main return ends the runtime, so applications
 must receive results or explicitly wait for registered work. An uncaught act
 exception stops the process; `eval` catches exceptions within an act.
 
-Bare `yield` and imported `act` compile to native core operations in `use Wump`
-scope. Qualified calls and custom wrappers retain compatibility dispatch.
-Other task/channel operations still use functions. The design's full core syntax,
+Bare `yield` and imported `act`, `chan` and `sleep` compile to native core
+operations in `use Wump` scope. Qualified calls and custom wrappers retain
+compatibility dispatch. Channel methods and wait groups still use functions.
+The design's full core syntax,
 Perl `sel` and deployment tool are pending. See the
 [Perl integration reference](docs/PERL-INTEGRATION.md) for APIs, examples,
 localization, memory rules and explicit restrictions.

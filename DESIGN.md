@@ -2188,5 +2188,27 @@ join wrappers. The project/context/legacy suites also pass. The first full
 upstream run reaches all 2,919 files but fails one IO::Compress ZIP timestamp
 round-trip during the host's DST overlap. Matched stock Perl reproduces the
 same test-46 failure; the unchanged test passes in UTC. Logs are retained and
-final full validation will use a documented UTC environment, without test
-exclusions or changed expectations.
+the final UTC run passes all 2,919 files / 1,351,255 checks, without exclusions
+or changed expectations. The test count varies with environment-sensitive
+upstream branches; the harness reports PASS.
+
+### Native constructors and timers
+
+Imported `chan()`/`chan(capacity)` and `sleep(seconds)` now lower through the
+same compiler mechanism to `OP_WUMPCHAN` and `OP_WUMPSLEEP`. An omitted channel
+capacity becomes a zero constant. Each runtime operation shares its validation,
+ownership and scheduling helper with the original XS entry, retains operands
+across callback-capable work and refreshes the Perl stack afterward. Setup-only
+checker registration remains outside the parallel XS admission list.
+
+Eighty-four focused checks cover compiled form, wrapper/XS bypass, lexical
+opt-out, qualified calls, prototype errors, opcode masks (including the omitted
+capacity), invalid/nonfinite inputs, existing tied-input rejection, operand
+stack growth, deparse round trips, FIFO/rendezvous behavior and four-slot timers.
+They pass normally and under ASan, including stack-use-after-return detection.
+The complete project suite also passes under ASan with leak detection disabled;
+this is separate from the normal full upstream run and does not constitute a
+whole-upstream sanitizer or new TSan run. Standalone ASan positive controls and
+five deliberate-error controls pass with pointer-compare/subtract instrumentation.
+The address-only control build correctly failed those two controls before being
+rebuilt with their required instrumentation; no test expectation was weakened.

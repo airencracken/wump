@@ -346,22 +346,29 @@ Evidence: [compiled form and observable behavior](../tests/perl/native-yield.t),
 [metadata regeneration](../tests/perl/opcode-regeneration.pl),
 [idempotent source upgrade](../tests/perl/patcher.pl).
 
-## Maintenance
-
 **COMPAT-5 — Intrinsic lowering follows the original CV, not a name alone.**
-The original imported `act` CV carries a compiler checker. Perl first applies
-its existing prototype/closure rules, then the checker can replace a one-arg
-call with `OP_WUMPACT` under the lexical Wump hint. Qualified `Wump::act`,
+The original imported `act`, `chan` and `sleep` CVs carry compiler checkers.
+Perl first applies its existing prototype/closure rules, then the checker can
+replace eligible calls with their unary core operations under the lexical
+Wump hint. An omitted channel capacity becomes a zero constant. Qualified calls,
 ampersand/indirect calls and custom wrapper CVs retain ordinary dispatch.
 Namespace identity, not the CV's mutable display name, identifies qualified
 compatibility calls. The checker self-reference is non-owning; it must not
 create a CV reference cycle. Native creation retains its argument on the
 operand stack until the common spawn helper owns the callback CV, refreshes
-SP after helper callbacks, and shares XS snapshot/failure cleanup.
+SP after helper callbacks, and shares XS snapshot/failure cleanup. Channel
+creation and sleep retain their input on the operand stack while their shared
+helpers can invoke callbacks or suspend; all native paths refresh SP afterward.
+Capacity/duration validation, channel ownership and timer scheduling are shared
+with XS. All operations belong to Opcode's thread group and honor masks,
+including cleanup of the synthesized default capacity on compilation failure.
 
 Enforcement: [compiler checker and spawn helper](../perl/core/wump_core.c),
 [registration](../perl/lib/Wump.pm), [metadata](../perl/yield.pl).
-Evidence: [native compilation, lifecycle and override checks](../tests/perl/native-act.t).
+Evidence: [native compilation, lifecycle and override checks](../tests/perl/native-act.t),
+[constructors, timers, inputs and masks](../tests/perl/native-scalar-ops.t).
+
+## Maintenance
 
 Every change introducing a mutable field, native cache, callback, escape path
 or suspension point must update its ownership/access classification and name
