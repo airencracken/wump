@@ -69,7 +69,7 @@ must receive results or explicitly wait for registered work. An uncaught act
 exception stops the process; `eval` catches exceptions within an act.
 
 Bare `yield` and imported `act`, `chan` and `sleep` compile to native core
-operations in `use Wump` scope. Qualified `Wump::` calls and custom wrappers retain
+operations in `use Wump` scope. Qualified task/constructor calls and custom wrappers retain
 compatibility dispatch. Channel `send`, `recv` and `close` resolve methods
 normally, then enter the core directly for the original methods. Overrides
 retain ordinary dispatch. Wait groups still use functions.

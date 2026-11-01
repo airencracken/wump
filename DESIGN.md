@@ -2249,11 +2249,12 @@ channel helpers directly, before allocating a Perl method pad or entering the
 XS adapter. This runtime specialization adds no reserved method names or new
 opcodes. Compatibility XS and fallback paths reuse the same helpers.
 
-Forty-six focused checks pass normally and under ASan/LSan with full teardown.
+Forty-eight focused checks pass normally and under ASan/LSan with full teardown.
 They cover contexts, payload copies/reference identity, void-result lifetime,
 magic that grows the stack/yields/throws, arity and closed-channel errors,
 lvalue rejection without consuming a message, overrides, inherited methods,
-captured CVs, implicit forwarding/tail calls and four-slot message delivery.
+captured CVs, implicit forwarding/tail calls, four-slot message delivery and
+the exact named-wrapper fallback for older private controls.
 The preceding interpreter fails eight entry/bypass assertions while the
 behavior checks pass. The ordinary project/context/legacy suites pass, and
 the full upstream UTC run passes 2,919 files / 1,351,274 checks.

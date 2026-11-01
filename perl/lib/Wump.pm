@@ -46,14 +46,15 @@ sub wait { &Wump::await(@_); return }
 sub DESTROY { Wump::_wg_destroy(@_); return }
 
 package Wump::Channel;
+sub send { Wump::_send(@_); return }
+sub recv { Wump::_recv(@_) }
+sub close { Wump::_close(@_); return }
+# Keep the original named wrappers byte-for-byte for older matched controls.
 if (defined &Wump::_channel_send) {
+	no warnings 'redefine';
 	*send = \&Wump::_channel_send;
 	*recv = \&Wump::_channel_recv;
 	*close = \&Wump::_channel_close;
-} else {
-	*send = sub { Wump::_send(@_); return };
-	*recv = sub { Wump::_recv(@_) };
-	*close = sub { Wump::_close(@_); return };
 }
 
 1;

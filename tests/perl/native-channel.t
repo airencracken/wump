@@ -165,4 +165,20 @@ check_program(q{
 	die "bad sum" unless $sum == 256*257*513/6;
 	print "parallel native channels verified\n";
 }, 0, qr/parallel native channels verified/, 'native calls migrate and exchange every message on four slots');
+check_program(q{
+	BEGIN { undef &Wump::_channel_send }
+	use Wump;
+	use B ();
+	for my $name (qw(send recv close)) {
+		no strict 'refs';
+		my $method=B::svref_2object(\&{"Wump::Channel::$name"});
+		die "changed fallback CV" if $method->XSUB || $method->GV->NAME ne $name
+			|| $method->GV->STASH->NAME ne 'Wump::Channel';
+	}
+	my $ch=chan(1);
+	$ch->send(42);
+	die "bad fallback" unless $ch->recv==42;
+	$ch->close;
+	print "named compatibility methods verified\n";
+}, 0, qr/named compatibility methods verified/, 'controls without native entries retain the original named wrappers');
 done_testing;
