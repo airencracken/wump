@@ -102,9 +102,12 @@ static wump_local *wump_local_implicit(pTHX_ GV *gv, char kind, SV *value) {
 	return slot;
 }
 
-static void wump_local_check(pTHX_ SV *value, char kind) {
-	if (value == NULL) return;
-	struct wump_mutation *guard = Perl_wump_metadata_begin(aTHX);
+static char wump_local_check(pTHX_ SV *value, char kind) {
+	if (value == NULL) return 0;
+	/* This header-only check cannot invoke a callback or suspend. A single
+	 * execution-slot owner therefore needs no metadata exclusion here. */
+	struct wump_mutation *guard = PL_wump_task && wump_nprocs() == 1
+		? NULL : Perl_wump_metadata_begin(aTHX);
 	Perl_wump_memory_check(aTHX_ value);
 	bool unsafe = SvGMAGICAL(value) || SvSMAGICAL(value);
 	Perl_wump_mutation_end(aTHX_ guard);
@@ -116,7 +119,8 @@ static void wump_local_check(pTHX_ SV *value, char kind) {
 				unsafe = TRUE;
 		}
 	}
-	if (kind == 's' && Perl_wump_magic_kind(aTHX_ value)) unsafe = FALSE;
+	char magic = kind == 's' ? Perl_wump_magic_kind(aTHX_ value) : 0;
+	if (magic) unsafe = FALSE;
 	if (kind != 's' && SvMAGICAL(value)) {
 		for (MAGIC *mg = SvMAGIC(value); mg; mg = mg->mg_moremagic) {
 			if (mg->mg_type != PERL_MAGIC_backref && mg->mg_type != PERL_MAGIC_arylen_p
@@ -128,6 +132,7 @@ static void wump_local_check(pTHX_ SV *value, char kind) {
 	if (unsafe) {
 		croak("Wump: magic variable localization in a task is not supported yet");
 	}
+	return magic;
 }
 
 void Perl_wump_save_capture(pTHX_ GV *gv) {
@@ -233,8 +238,7 @@ SV *Perl_wump_localize(pTHX_ GV *gv, char kind) {
 		PL_localizing = localizing;
 		return value;
 	}
-	wump_local_check(aTHX_ old, kind);
-	char magic = kind == 's' ? Perl_wump_magic_kind(aTHX_ old) : 0;
+	char magic = wump_local_check(aTHX_ old, kind);
 	SV *value = magic ? Perl_wump_magic_new(aTHX_ magic, NULL)
 		: kind == 's' ? newSV(0) : kind == 'a' ? (SV *)newAV() : (SV *)newHV();
 	wump_local *slot = wump_local_add(aTHX_ PL_wump_task,

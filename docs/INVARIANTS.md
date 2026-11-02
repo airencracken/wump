@@ -396,6 +396,13 @@ value before its saved holder/origin references, preserving ordinary native
 GP destruction. The holder remains a valid named GV if it becomes the GP's
 last owner.
 
+The successful localization header check cannot suspend or call user code.
+Only parallel execution needs metadata exclusion around that short prefix;
+one execution slot has a single Perl owner. Validation returns the builtin
+magic kind it has already checked, so binding creation must reuse it rather
+than immediately repeat the shared-root classification. This does not remove
+parallel guards or admit unsupported magic.
+
 Evidence: the C/C++ [scalar lookup fixture](../tests/perl/scalar-lookup.c)
 counts native mutex calls around selection, and
 [binding regressions](../tests/perl/local-lookup.t) cover alias precedence,
