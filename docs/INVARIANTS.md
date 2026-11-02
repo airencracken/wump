@@ -1,18 +1,13 @@
 # Execution and memory invariants
 
-Last reviewed: 2026-11-01, runtime source `8d78b10` with caller lifetime guard
-`9638d8c`, pinned Perl 5.42.2. Incremental archive dependencies are fixed in
-`4365dac`.
-Scheduler continuation: CTX-8/CTX-9 describe the ownership and clock-polling
-change based on `2b66dfa`; its source hashes and validation are recorded in
-[scheduler-owner-machine.json](../bench/scheduler-owner-machine.json).
-The solitary-continuation extension to CTX-8 is recorded in
-[scheduler-yield-machine.json](../bench/scheduler-yield-machine.json).
+The [validation reference](VALIDATION.md) records current test scope and
+known failures. The [current performance record](../bench/operation-matrix-machine.json)
+identifies the measured source and build artifacts.
 
 These are requirements for preserving the current supported behavior, not a
 claim that every Perl or XS path has been proved safe. Enforcement and tests
 below are bounded evidence. Proposed architecture in `DESIGN.md` is not a
-substitute for implementation. See the [audit](EXECUTION-CONTEXT-AUDIT.md) for
+substitute for implementation. See the [audit](COMPATIBILITY.md) for
 unsupported behavior, open risks, and the remaining test matrix.
 
 ## Ownership vocabulary
@@ -385,59 +380,6 @@ hooks; no native mutex spans those callbacks. Exceptions unwind the claim and
 the XSUB refreshes its stack pointer after callbacks. This is not permission
 for arbitrary magical inputs or other UTF-8 entries.
 
-**COMPAT-7 — Module scratch state follows invocation lifetime.** JSON::PP's
-mutable encoder/parser scalars have dynamic call-local bindings; its default
-functional codec is constructed before execution. Yielding and nested codecs
-must preserve options, parser cursor, errors and incremental state.
-
-Ordinary local bindings select private storage without inspecting the shared
-root head. Search candidates in binding order: resolve the root magic kind
-only when a candidate carries a magic kind, and retain magic-before-GP
-precedence at that candidate. Pocket filtering happens before matching during
-inheritance. A direct GP match cannot be moved ahead of an earlier magic
-alias. This keeps alias/hook precedence while avoiding a metadata mutex on
-ordinary private scalar loads.
-
-Each binding retains its GP independently of later glob replacement. Its
-private GV holder is allocated directly with a diagnostic name and a GP
-reference; creating a disposable GP is unnecessary. Release the binding's
-value before its saved holder/origin references, preserving ordinary native
-GP destruction. The holder remains a valid named GV if it becomes the GP's
-last owner.
-
-The successful localization header check cannot suspend or call user code.
-Only parallel execution needs metadata exclusion around that short prefix;
-one execution slot has a single Perl owner. Validation returns the builtin
-magic kind it has already checked, so binding creation must reuse it rather
-than immediately repeat the shared-root classification. This does not remove
-parallel guards or admit unsupported magic.
-
-Evidence: the C/C++ [scalar lookup fixture](../tests/perl/scalar-lookup.c)
-counts native mutex calls around selection, and
-[binding regressions](../tests/perl/local-lookup.t) cover alias precedence,
-hooks, inheritance, scope unwind and final release of a replaced GP.
-
-The active `PL_dbargs` cache resolves the current act's `DB::args` binding.
-Carp localizes that scratch array per `caller_info` invocation. Implicit
-task-lifetime bindings stay below lexical save-stack bindings and are not
-inherited. Debugger argument arrays borrow their frame's SVs: still-borrowed
-arrays cannot be published. Reference construction may reify them into owning
-storage; once published, they cannot be reset to borrowed storage by another
-caller inspection. Shifted-out slots are undefined in active
-execution. This does not certify the general Perl debugger.
-
-The native builtin scalar heads for `$!`, `$^E`, `$?`, `$^F` and `$.` are also
-act-local on their canonical GV paths; logical values still come from the
-existing errno/status/IO state. This prevents cache-flag races, not concurrent
-ownership of shared filehandles or arbitrary magical aliases.
-
-Evidence: [UTF-8 XS](../tests/perl/utf8-xs.t),
-[ordinary reentrancy](../tests/perl/json-state.t),
-[parallel JSON](../tests/perl/json-parallel.t),
-[caller and Carp](../tests/perl/caller-parallel.t),
-[publication/localization](../tests/perl/element-mark-parallel.t),
-[namespace and class caches](../tests/perl/gv-parallel.t).
-
 **COMPAT-3 — Compiler and embedding limits remain explicit.** Runtime string
 eval/require/do-file and runtime regex compilation are rejected with multiple
 slots; block eval is distinct. `PL_parser` is not task-local. The Perl bridge
@@ -523,6 +465,60 @@ Enforcement: [entry hook](../perl/apply.pl), [dispatch and shared helpers](../pe
 Evidence: [contexts, callbacks, lifetime, overrides and migration](../tests/perl/native-channel.t),
 [previous-guard upgrades](../tests/perl/patcher.pl),
 [channel workload verification](../tests/perl/matrix-bench.t).
+
+**COMPAT-7 — Module scratch state follows invocation lifetime.** JSON::PP's
+mutable encoder/parser scalars have dynamic call-local bindings; its default
+functional codec is constructed before execution. Yielding and nested codecs
+must preserve options, parser cursor, errors and incremental state.
+
+An ordinary binding reached before any magic candidate selects private storage
+without inspecting the shared root head. Search candidates in binding order: resolve the root magic kind
+only when a candidate carries a magic kind, and retain magic-before-GP
+precedence at that candidate. Pocket filtering happens before matching during
+inheritance. A direct GP match cannot be moved ahead of an earlier magic
+alias. This keeps alias/hook precedence while avoiding a metadata mutex on
+ordinary private scalar loads.
+
+Each binding retains its GP independently of later glob replacement. Its
+private GV holder is allocated directly with a diagnostic name and a GP
+reference; creating a disposable GP is unnecessary. Release the binding's
+value before its saved holder/origin references, preserving ordinary native
+GP destruction. The holder remains a valid named GV if it becomes the GP's
+last owner.
+
+The successful localization header check cannot suspend or call user code.
+Inactive execution retains its metadata guard. Active execution with one
+slot has a single Perl owner and needs no guard around that short prefix;
+parallel execution retains exclusion. Validation returns the builtin
+magic kind it has already checked, so binding creation must reuse it rather
+than immediately repeat the shared-root classification. This does not remove
+parallel guards or admit unsupported magic.
+
+Evidence: the C/C++ [scalar lookup fixture](../tests/perl/scalar-lookup.c)
+counts native mutex calls around selection, and
+[binding regressions](../tests/perl/local-lookup.t) cover alias precedence,
+hooks, inheritance, scope unwind and final release of a replaced GP.
+
+The active `PL_dbargs` cache resolves the current act's `DB::args` binding.
+Carp localizes that scratch array per `caller_info` invocation. Implicit
+task-lifetime bindings stay below lexical save-stack bindings and are not
+inherited. Debugger argument arrays borrow their frame's SVs: still-borrowed
+arrays cannot be published. Reference construction may reify them into owning
+storage; once published, they cannot be reset to borrowed storage by another
+caller inspection. Shifted-out slots are undefined in active
+execution. This does not certify the general Perl debugger.
+
+The native builtin scalar heads for `$!`, `$^E`, `$?`, `$^F` and `$.` are also
+act-local on their canonical GV paths; logical values still come from the
+existing errno/status/IO state. This prevents cache-flag races, not concurrent
+ownership of shared filehandles or arbitrary magical aliases.
+
+Evidence: [UTF-8 XS](../tests/perl/utf8-xs.t),
+[ordinary reentrancy](../tests/perl/json-state.t),
+[parallel JSON](../tests/perl/json-parallel.t),
+[caller and Carp](../tests/perl/caller-parallel.t),
+[publication/localization](../tests/perl/element-mark-parallel.t),
+[namespace and class caches](../tests/perl/gv-parallel.t).
 
 ## Maintenance
 

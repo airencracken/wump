@@ -7,7 +7,7 @@ use File::Temp qw(tempdir tempfile);
 use IPC::Open3;
 
 my $scratch = tempdir(CLEANUP => 1);
-open my $original, '<', 'bench/perl-active-after.jsonl' or die $!;
+open my $original, '<', 'tests/perl/fixtures/perl-baseline-legacy.jsonl' or die $!;
 my @original = map { decode_json($_) } <$original>;
 close $original or die $!;
 sub fixture ($name, $edit = sub {}) {

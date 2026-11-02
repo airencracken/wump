@@ -19,9 +19,9 @@ stock-Perl performance and standalone deployment remain unfinished.
 | Performance | Verified comparisons against stock Perl, forks, ithreads and Go, with saved regression baselines | Lower ordinary-Perl and task overhead, cheaper spawn, larger-scale validation |
 | Deployment | A private interpreter build | Static application bundles, dependency tooling and portability |
 
-See the [design and implementation assessment](DESIGN.md#implementation-assessment-updated-2026-10-31)
-for the goals and current evidence. The [audit](docs/EXECUTION-CONTEXT-AUDIT.md)
-and [invariants](docs/INVARIANTS.md) define supported boundaries; passing selected
+See the [design](DESIGN.md) for the goals and architecture. The
+[compatibility reference](docs/COMPATIBILITY.md) and
+[invariants](docs/INVARIANTS.md) define supported boundaries; passing selected
 tests does not establish general CPAN compatibility or thread safety.
 
 ## Build and run
@@ -101,32 +101,24 @@ one/two/four slots. Work and whole-process timing stay separate.
 Coroutine-only fixtures are N/A for stock Perl, forks and ithreads. The checker
 flags regressions
 against the saved baseline; it never turns unsupported work into a fast result.
-The [latest recorded matrix](bench/operation-matrix-xs-current.md) includes
-fork/ithread controls and newly working JSON on two/four slots. Both the
-[preceding-build check](bench/operation-matrix-xs-check.txt) and
-[retained-anchor check](bench/operation-matrix-xs-anchor-check.txt) fail the
-10% budget on one-slot JSON: work is +21.48%/+18.73%, respectively. Every
-other previously supported metric passes. The default baseline is unchanged.
+The [current matrix](bench/operation-matrix-current.md) includes fork and
+ithread controls. Its [regression check](bench/operation-matrix-check.txt)
+passes the unchanged retained baseline. JSON work takes 48.95/44.10/42.33
+microseconds on one/two/four slots, about 9%/18%/21% less than the preceding
+XS build. Scaling remains weak, and one-slot JSON still fails the older
+pre-XS selection comparison at +10.64%. Ordinary active Perl overhead remains
+substantial. The [benchmark guide](docs/BENCHMARKS.md) explains the workloads,
+[three optimization lanes](docs/BENCHMARKS.md#three-optimization-lanes),
+controls and remaining performance gaps. Use a local baseline when your
+machine, CPU mask or controls differ.
 
-This is a correctness checkpoint. JSON work takes about 53.5–53.7 microseconds
-on one/two/four slots; this fixture does not scale yet. Earlier
-[selection](bench/operation-matrix-select-current.md) and
-[yield](bench/operation-matrix-yield-current.md) captures retain their own
-results and failures. The [runtime probe](bench/scheduler-yield.md) measures
-C and Perl separately.
-Work is tracked in [three optimization lanes](docs/BENCHMARKS.md#three-optimization-lanes).
-Use a local baseline when your machine, CPU mask or controls differ.
-Ordinary active Perl overhead remains substantial.
-
-Read the [benchmark guide](docs/BENCHMARKS.md) for workload definitions, baseline
-updates, machine/build requirements and the existing focused benchmarks.
 
 ## Development references
 
 - [C runtime and lifetime rules](docs/RUNTIME.md), [public header](runtime/include/wump.h)
 - [Perl APIs and implementation details](docs/PERL-INTEGRATION.md)
 - [Tests, sanitizers and known tooling failures](docs/VALIDATION.md)
-- [Benchmark matrix and historical measurements](docs/BENCHMARKS.md)
+- [Benchmark workloads and regression checks](docs/BENCHMARKS.md)
 - [Execution and memory invariants](docs/INVARIANTS.md), [state inventory](docs/state-inventory.tsv)
 - [Architecture and milestones](DESIGN.md)
 
