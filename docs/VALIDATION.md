@@ -443,3 +443,72 @@ The tracked machine record preserves source/binary/archive hashes and the
 capture/validation sources. Primary matrix fixtures and the default baseline
 remain unchanged. Selection has correctness coverage here; it is not yet a
 timed row in the primary common-operations matrix.
+
+## UTF-8 XS and module-state checkpoint (2026-11-01)
+
+`edf40ee` isolates JSON::PP's mutable encoder/parser state per invocation and
+prepares its default codec before execution. This is a general Perl module
+fix: the ordinary reentrancy regression fails 4/11 on the old binary without
+activating Wump, and passes afterward. `8d78b10` adds guarded parallel
+`utf8::encode`/`utf8::decode` and the supporting interpreter corrections.
+`9638d8c` adds the final caller lifetime guard; `4365dac` repairs incremental
+archive dependencies. The runtime C scheduler itself is unchanged.
+
+New regressions cover UTF-8 aliases, COW, positions, invalid bytes, return
+contexts, warning hooks that grow the stack/yield/throw, mixed and nested
+JSON codecs, cold functional APIs, booleans, malformed JSON, incremental
+UTF-8 parsing, first aggregate localization/publication, named sorts, class
+queries, caller scratch and borrowed argument lifetimes. The parallel JSON
+suite fails 14/18 on the old binary. The caller-reuse regression fails 4/12
+before its guard. Existing suites retain their error and rejection cases.
+
+| Check | Evidence |
+| --- | --- |
+| Normal private project suite | Pass, including the final caller guard and native fixture drivers |
+| Final stock differentials | Context 53 checks; legacy/inactive behavior 26 checks pass |
+| Full upstream at `8d78b10`, before the final caller guard | 2,919 files / 1,351,311 checks pass in 391 seconds, TZ=UTC |
+| Upstream after the caller guard | All Carp/JSON::PP tests plus diagnostics/customization: 84 files / 28,508 checks pass in 90 seconds |
+| Source tooling | Complete-tree patch idempotence/upgrades, opcode and Bison 3.8.2 parser regeneration, inventory pass |
+| ASan | Full project suite passes at `8d78b10`; final guard passes focused caller/JSON/UTF-8 checks |
+| LSan with full teardown | Miniperl and all new suites plus selection pass before the final guard; final caller 12, JSON 18 and UTF-8 16 checks pass again |
+| Whole-core scoped TSan | New suites, selection 133, parallel 56, Encode 10, digest/base64 6, existing XS 68 and native integration 12 checks pass; caller/JSON rerun after final guard pass |
+| TSan control | Final allocator fixture passes and detects its deliberate `Perl_more_bodies` race |
+| Incremental build regression | Fails 3/6 before the dependency repair; all six checks pass afterward |
+| Mojolicious 9.37 | CLI 54, single-slot jobs 42 and service 66 checks pass; live HTTP/WebSocket 48 checks each on one/four slots pass |
+
+The full upstream harness was not rerun after the narrow caller guard; its
+fresh focused upstream checks are recorded separately. The existing
+full-project TSan upstream ithreads clone race remains open. No full upstream
+sanitizer pass is claimed.
+
+An additional attempt to run the in-process Mojo jobs test on four slots
+is rejected by Test2's INIT-time string eval at `Test2/API.pm:72`. The job and
+service scripts assert single-slot behavior; they were not changed to hide
+this restriction. Four-slot Mojo evidence comes from the prepared live server
+with an external test client. The failed in-process attempt is retained.
+
+Failed logs remain in `build/checkpoint-xs-json/validation-logs/`. Initial
+diagnostic registration and test-fixture mistakes were corrected without
+dropping error cases. An incremental sanitizer command omitted runtime flags;
+correcting its objects exposed that Perl's archive did not depend on those
+objects. This left stale, incorrectly instrumented runtime members in the
+binary. The separate build fix forces relinking; final normal/ASan/TSan
+archives are checked against all six runtime objects. The rebuilt fiber
+hooks, focused sanitizer passes and deliberate-race control were verified.
+Wrong-configuration failures remain recorded; no suppression or output
+filter was added.
+
+Admission remains entry-specific. Unsupported magical/reference UTF-8
+inputs, arbitrary XSUBs, runtime loading/compilation, general debugger
+behavior, native affinity and shared IO ownership remain outside this work.
+Carp uses a fresh localized debugger scratch array. Raw borrowed argument
+arrays cannot be published; once an owning array is shared, caller inspection
+must localize a fresh array before reusing scratch storage.
+
+The [fresh](../bench/operation-matrix-xs-check.txt) and
+[retained-anchor](../bench/operation-matrix-xs-anchor-check.txt) performance
+gates both fail one-slot JSON work/process; every other previously supported
+metric passes. [Benchmark notes](BENCHMARKS.md#utf-8-xs-and-json-correctness-checkpoint)
+record the cost and new two/four-slot JSON measurements. The default baseline
+is unchanged. The [machine record](../bench/xs-json-machine.json) preserves
+exact provenance, runners, raw-result counts and failed iterations.

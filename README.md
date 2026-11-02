@@ -14,6 +14,7 @@ stock-Perl performance and standalone deployment remain unfinished.
 | --- | --- | --- |
 | Tasks | Stackful C tasks; Perl closures on multiple slots; channels, wait groups, yielding and compute checkpoints | Native core language surface and broader execution-context coverage |
 | Perl state | Audited stacks, pads, exceptions, captures, localization and shared-value paths | Remaining interpreter globals, magic, weak references and XS/compiler boundaries |
+| XS and modules | Audited native entries, guarded UTF-8 conversion, and tested JSON::PP/Carp paths across acts | Broader module audits, runtime loading and native affinity |
 | I/O | C epoll sockets/pipes and explicit blocking-call handoff; a tested Mojolicious fixture | General Perl I/O integration and transparent native-call handling |
 | Performance | Verified comparisons against stock Perl, forks, ithreads and Go, with saved regression baselines | Lower ordinary-Perl and task overhead, cheaper spawn, larger-scale validation |
 | Deployment | A private interpreter build | Static application bundles, dependency tooling and portability |
@@ -100,13 +101,19 @@ one/two/four slots. Work and whole-process timing stay separate.
 Coroutine-only fixtures are N/A for stock Perl, forks and ithreads. The checker
 flags regressions
 against the saved baseline; it never turns unsupported work into a fast result.
-The [latest recorded matrix](bench/operation-matrix-yield-current.md) includes
-fork/ithread controls. Yield work takes 39%/70% less time on two/four slots
-than the preceding build. Both the matched comparison and the unchanged
-10% gate against the retained channel/context anchor pass. The
-[runtime probe](bench/scheduler-yield.md) measures C and Perl separately.
-The [earlier call checkpoint](bench/operation-matrix-callee-current.md) retains
-its gains and failed yield capture; the new result does not erase that history.
+The [latest recorded matrix](bench/operation-matrix-xs-current.md) includes
+fork/ithread controls and newly working JSON on two/four slots. Both the
+[preceding-build check](bench/operation-matrix-xs-check.txt) and
+[retained-anchor check](bench/operation-matrix-xs-anchor-check.txt) fail the
+10% budget on one-slot JSON: work is +21.48%/+18.73%, respectively. Every
+other previously supported metric passes. The default baseline is unchanged.
+
+This is a correctness checkpoint. JSON work takes about 53.5–53.7 microseconds
+on one/two/four slots; this fixture does not scale yet. Earlier
+[selection](bench/operation-matrix-select-current.md) and
+[yield](bench/operation-matrix-yield-current.md) captures retain their own
+results and failures. The [runtime probe](bench/scheduler-yield.md) measures
+C and Perl separately.
 Work is tracked in [three optimization lanes](docs/BENCHMARKS.md#three-optimization-lanes).
 Use a local baseline when your machine, CPU mask or controls differ.
 Ordinary active Perl overhead remains substantial.
@@ -125,8 +132,3 @@ updates, machine/build requirements and the existing focused benchmarks.
 
 Build products stay under `build/`. Keep fork changes in the tracked patch
 sources under `perl/`; `make clean` removes generated source trees and binaries.
-
-The [native selection checkpoint](bench/operation-matrix-select-current.md)
-adds timed channel waits and cancellation. Its fresh performance check fails
-four-slot yield work (+13.18%); the retained-anchor check passes. The default
-baseline remains unchanged.

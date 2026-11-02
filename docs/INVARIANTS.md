@@ -1,6 +1,8 @@
 # Execution and memory invariants
 
-Last reviewed: 2026-10-31, runtime source `f5ce9cf`, pinned Perl 5.42.2.
+Last reviewed: 2026-11-01, runtime source `8d78b10` with caller lifetime guard
+`9638d8c`, pinned Perl 5.42.2. Incremental archive dependencies are fixed in
+`4365dac`.
 Scheduler continuation: CTX-8/CTX-9 describe the ownership and clock-polling
 change based on `2b66dfa`; its source hashes and validation are recorded in
 [scheduler-owner-machine.json](../bench/scheduler-owner-machine.json).

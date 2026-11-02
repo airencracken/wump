@@ -556,3 +556,37 @@ passes. All 1,540 samples and exact reports remain available. The default
 `operation-matrix-callee-baseline.json` remains unchanged. This is a feature
 checkpoint with a measured regression, not a claimed performance pass.
 Selection has correctness coverage but no dedicated primary timing row yet.
+
+### UTF-8 XS and JSON correctness checkpoint
+
+The [current capture](../bench/operation-matrix-xs-current.md) uses source
+`4365dac`, including the guarded UTF-8 entries, JSON call-state isolation,
+module/error-path fixes and the incremental archive dependency repair. The
+preceding selection capture is the frozen before control. Primary fixtures,
+`Wump.pm`, stock/Go binaries, affinity `0,2,4,6`, five rotated runs, 50,000
+operations and eight jobs are unchanged. There are 770 observations in each
+capture; successful observations increase from 640 to 650 because JSON now
+runs on two/four slots. These new cells establish measurements, not speedups
+over previously unsupported work.
+
+Both [fresh](../bench/operation-matrix-xs-check.txt) and
+[retained-anchor](../bench/operation-matrix-xs-anchor-check.txt) comparisons
+fail exactly two metrics under the unchanged +10% budget:
+
+| Comparison | One-slot JSON work | One-slot JSON process |
+| --- | ---: | ---: |
+| Preceding selection build | +21.48% | +21.41% |
+| Retained callee anchor | +18.73% | +18.67% |
+
+Every other previously supported metric passes. JSON work takes
+53.74/53.48/53.64 microseconds on one/two/four slots, versus stock Perl's
+6.07 microseconds in this capture. Correct execution does not yet deliver
+parallel scaling for this fixture. The default baseline is unchanged; this
+checkpoint does not claim a complete performance pass.
+
+The [machine record](../bench/xs-json-machine.json) includes source, binary,
+archive and validation-log hashes, exact runners, failed iterations and
+verification of all six current runtime objects inside each Perl archive.
+Raw artifacts and logs remain under `build/checkpoint-xs-json/`.
+The next performance work is reducing the cost of call-local JSON state and
+its shared metadata paths while retaining the yielding/reentrant regressions.
