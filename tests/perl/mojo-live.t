@@ -60,6 +60,8 @@ sub start_server ($port = 0) {
 	# PRIVATE_PERL is the executable in a configured source tree.
 	(my $directory = $private) =~ s{/perl\z}{};
 	$pid = open3($input, $output, '>&' . fileno($errors), $private, "-I$directory/lib",
+		"-I$root/perl/lib", "-I$root/examples/mojo/lib", "-I$root/tests/perl/lib",
+		'-MWumpTest::MojoGate',
 		"$root/examples/mojo/dashboard.pl", '--listen', "http://127.0.0.1:$port",
 		'--max-active', 2, '--max-history', 3);
 	close $input;
@@ -165,7 +167,7 @@ for my $batch (1..12) {
 my $snapshot = json_get("$base/jobs");
 is(scalar @{$snapshot->{jobs}}, 3, 'HTTP history stays within retention limit');
 cmp_ok(rss_kib() - $warm_rss, '<', 16 * 1024, 'repeated batches stay within a 16MiB RSS growth budget');
-my $cancel_tx = $ua->post("$base/jobs" => json => {text => $text, passes => 100});
+my $cancel_tx = $ua->post("$base/jobs" => json => {text => "WUMP_LIVE_CANCEL_GATE\n$text", passes => 100});
 is($cancel_tx->res->code, 202, 'cancellable job admitted');
 my $cancel_id = $cancel_tx->res->json->{id};
 is($ua->delete("$base/jobs/$cancel_id")->res->code, 202, 'HTTP cancellation accepted');
@@ -173,7 +175,17 @@ my $until = time + 5;
 while (!json_get("$base/jobs/$cancel_id")->{terminal}) { die "Cancellation timed out\n" if time > $until }
 is(json_get("$base/jobs/$cancel_id")->{state}, 'cancelled', 'HTTP cancellation reaches terminal state');
 
-$ua->post("$base/jobs" => json => {text => $text, passes => 100});
+my $shutdown_tx = $ua->post("$base/jobs" => json => {text => "WUMP_LIVE_CANCEL_GATE\n$text", passes => 100});
+is($shutdown_tx->res->code, 202, 'shutdown probe admitted');
+my $shutdown_id = $shutdown_tx->res->json->{id};
+my $shutdown_job;
+$until = time + 5;
+while (1) {
+	$shutdown_job = json_get("$base/jobs/$shutdown_id");
+	last if $shutdown_job->{state} eq 'running';
+	die "Shutdown probe did not start\n" if $shutdown_job->{terminal} || time > $until;
+}
+is($shutdown_job->{state}, 'running', 'shutdown probe is in flight before SIGTERM');
 my $stopped = stop_server();
 cmp_ok($stopped->{cancelled}, '>=', 2, 'SIGTERM cancels in-flight CPU work');
 $ua = Mojo::UserAgent->new->request_timeout(5);
