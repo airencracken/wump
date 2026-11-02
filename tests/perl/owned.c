@@ -7,6 +7,10 @@
 #define CHECK(expr) do { if (!(expr)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #expr); abort(); } } while (0)
 
 static _Thread_local unsigned locks;
+static unsigned collected;
+static SV *collection_source;
+static struct wump_borrow *collection_pin;
+static struct wump_retired *collection_extra;
 extern int __real_pthread_mutex_lock(pthread_mutex_t *);
 int __wrap_pthread_mutex_lock(pthread_mutex_t *mutex) {
 	locks++;
@@ -22,6 +26,69 @@ static void private_paths(pTHX_ SV *value) {
 	CHECK(!Perl_wump_mutation_begin(aTHX_ value));
 	CHECK(!Perl_wump_capture_begin(aTHX_ value));
 	Perl_wump_memory_forget(aTHX_ value);
+}
+
+static int collection_free(pTHX_ SV *value, MAGIC *magic) {
+	PERL_UNUSED_ARG(value);
+	PERL_UNUSED_ARG(magic);
+	collected++;
+	if (collection_extra) {
+		/* The outer collector has detached its queue. A destructor may create
+		 * another pin and queue more storage before that drain returns. */
+		struct wump_retired *extra = collection_extra;
+		collection_extra = NULL;
+		collection_pin = Perl_wump_capture_begin(aTHX_ collection_source);
+		CHECK(collection_pin);
+		Perl_wump_retire_commit(aTHX_ extra);
+	}
+	return 0;
+}
+
+static const MGVTBL collection_vtbl = { .svt_free = collection_free };
+
+static struct wump_retired *collection_record(pTHX) {
+	SV *value = newSV(0);
+	sv_magicext(value, NULL, PERL_MAGIC_ext, &collection_vtbl, NULL, 0);
+	struct wump_retired *record = Perl_wump_retire_prepare(aTHX_ value);
+	SvREFCNT_dec(value);
+	return record;
+}
+
+static void collection_paths(pTHX) {
+	locks = 0;
+	for (int i = 0; i < 32; i++) Perl_wump_memory_collect(aTHX);
+	CHECK(!locks && "idle collection must not take a native mutex");
+	ENTER;
+	SAVETMPS;
+	collection_source = newSViv(17);
+	Perl_wump_publish(aTHX_ collection_source);
+	struct wump_borrow *pin = Perl_wump_capture_begin(aTHX_ collection_source);
+	CHECK(pin);
+	collection_extra = collection_record(aTHX);
+	Perl_wump_retire_commit(aTHX_ collection_record(aTHX));
+	size_t pins, pending, nodes;
+	Perl_wump_memory_stats(aTHX_ &pins, &pending, &nodes);
+	CHECK(pins == 1 && pending == 1 && !collected);
+	Perl_wump_memory_collect(aTHX);
+	CHECK(!collected);
+	Perl_wump_capture_end(aTHX_ pin);
+	Perl_wump_memory_collect(aTHX);
+	Perl_wump_memory_stats(aTHX_ &pins, &pending, &nodes);
+	CHECK(pins == 1 && pending == 1 && collected == 1);
+	Perl_wump_memory_collect(aTHX);
+	CHECK(collected == 1);
+	Perl_wump_capture_end(aTHX_ collection_pin);
+	collection_pin = NULL;
+	Perl_wump_memory_collect(aTHX);
+	Perl_wump_memory_stats(aTHX_ &pins, &pending, &nodes);
+	CHECK(!pins && !pending && collected == 2);
+	locks = 0;
+	Perl_wump_memory_collect(aTHX);
+	CHECK(!locks && "a completed drain must restore idle collection");
+	SvREFCNT_dec(collection_source);
+	collection_source = NULL;
+	FREETMPS;
+	LEAVE;
 }
 
 int main(int argc, char **argv, char **env) {
@@ -138,10 +205,12 @@ int main(int argc, char **argv, char **env) {
 	CHECK(SvREFCNT(cleared) == 1 && SvIV(cleared) == 456);
 	LEAVE;
 	SvREFCNT_dec(cleared);
+	collection_paths(aTHX);
 	Perl_wump_task_activate(aTHX_ NULL);
 	perl_destruct(interp);
 	perl_free(interp);
 	PERL_SYS_TERM();
 	puts("ok - private probes avoid mutexes; native regions, publication, conflicts and address reuse retain their semantics");
+	puts("ok - idle collection avoids mutexes and destructor-enqueued storage waits for its last pin");
 	return 0;
 }

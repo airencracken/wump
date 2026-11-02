@@ -43,7 +43,8 @@ struct wump_memory {
 	_Atomic uint64_t published[WUMP_MEMORY_FILTER_WORDS];
 	wump_shared *buckets[WUMP_MEMORY_BUCKETS];
 	struct wump_retired *retired;
-	size_t nodes, pins, pending;
+	size_t nodes, pins;
+	_Atomic size_t pending;
 	struct wump_parallel_xs *parallel_xs;
 };
 
@@ -239,6 +240,7 @@ void Perl_wump_memory_init(pTHX) {
 	struct wump_memory *memory = calloc(1, sizeof(*memory));
 	if (!memory) croak("Wump: cannot allocate reclamation domain");
 	atomic_init(&memory->numeric_writer, 0);
+	atomic_init(&memory->pending, 0);
 	for (size_t i = 0; i < WUMP_MEMORY_FILTER_WORDS; i++)
 		atomic_init(&memory->published[i], 0);
 	pthread_mutexattr_t attr;
@@ -545,13 +547,14 @@ void Perl_wump_memory_forget(pTHX_ SV *value) {
 
 static void wump_memory_requeue(pTHX_ void *arg) {
 	struct wump_retired **remaining = arg;
+	if (!*remaining) return;
 	Perl_wump_memory_lock(aTHX);
 	while (*remaining) {
 		struct wump_retired *record = *remaining;
 		*remaining = record->next;
 		record->next = aTHX->Iwump_memory->retired;
 		aTHX->Iwump_memory->retired = record;
-		aTHX->Iwump_memory->pending++;
+		atomic_fetch_add_explicit(&aTHX->Iwump_memory->pending, 1, memory_order_release);
 	}
 	Perl_wump_memory_unlock(aTHX);
 }
@@ -574,6 +577,12 @@ static void wump_memory_drain(pTHX_ struct wump_retired *retired) {
 void Perl_wump_memory_collect(pTHX) {
 	struct wump_memory *memory = aTHX->Iwump_memory;
 	if (!memory) return;
+	/* An empty queue needs no registry probe. Enqueue, requeue and detach
+	 * publish the count under the mutex; only this no-work observation is
+	 * lock-free. A last pin's release probes after its registry unlock, so
+	 * it observes earlier enqueues. A later retirement sees zero pins and
+	 * drains directly, or leaves work for a later pin's collector. */
+	if (!atomic_load_explicit(&memory->pending, memory_order_acquire)) return;
 	/* Most temporary pins retire no storage. A registry-only observation
 	 * can finish that no-op without stopping independent numeric work.
 	 * Recheck under writer exclusion before actually removing any owners. */
@@ -586,7 +595,7 @@ void Perl_wump_memory_collect(pTHX) {
 	if (!memory->pins) {
 		retired = memory->retired;
 		memory->retired = NULL;
-		memory->pending = 0;
+		atomic_store_explicit(&memory->pending, 0, memory_order_release);
 	}
 	Perl_wump_memory_unlock(aTHX);
 	wump_memory_drain(aTHX_ retired);
@@ -607,7 +616,7 @@ void Perl_wump_retire_commit(pTHX_ struct wump_retired *retired) {
 	if (defer) {
 		retired->next = memory->retired;
 		memory->retired = retired;
-		memory->pending++;
+		atomic_fetch_add_explicit(&memory->pending, 1, memory_order_release);
 	}
 	Perl_wump_memory_unlock(aTHX);
 	if (!defer) wump_memory_drain(aTHX_ retired);
@@ -616,7 +625,7 @@ void Perl_wump_retire_commit(pTHX_ struct wump_retired *retired) {
 void Perl_wump_memory_stats(pTHX_ size_t *pins, size_t *retired, size_t *nodes) {
 	wump_registry_read_lock(aTHX);
 	*pins = aTHX->Iwump_memory->pins;
-	*retired = aTHX->Iwump_memory->pending;
+	*retired = atomic_load_explicit(&aTHX->Iwump_memory->pending, memory_order_relaxed);
 	*nodes = aTHX->Iwump_memory->nodes;
 	wump_registry_read_unlock(aTHX);
 }

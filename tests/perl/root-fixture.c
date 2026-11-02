@@ -637,7 +637,11 @@ XS_EXTERNAL(boot_RootFixture) {
 	newXS("RootFixture::activate_and_clear", xs_activate_and_clear, __FILE__);
 	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::constant_hook", xs_constant_hook, __FILE__));
 	newXS("RootFixture::key_missing", xs_key_missing, __FILE__);
-	newXS("RootFixture::scalar_publish", xs_scalar_publish, __FILE__);
+	/* Parallel retirement fixtures pass private reference heads and plain
+	 * kind constants. The APIs below retain published storage across their
+	 * callback; results use stack indices after callback stack growth. No
+	 * process-global scratch or native-thread affinity is retained. */
+	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::scalar_publish", xs_scalar_publish, __FILE__));
 	newXS("RootFixture::vivify", xs_vivify, __FILE__);
 	newXS("RootFixture::deferred", xs_deferred, __FILE__);
 	newXS("RootFixture::lvalue_state", xs_lvalue_state, __FILE__);
@@ -649,12 +653,12 @@ XS_EXTERNAL(boot_RootFixture) {
 	newXS("RootFixture::task_globs", xs_task_globs, __FILE__);
 	newXS("RootFixture::namespace_generation", xs_namespace_generation, __FILE__);
 	newXS("RootFixture::borrow_read", xs_borrow_read, __FILE__);
-	newXS("RootFixture::memory_stats", xs_memory_stats, __FILE__);
+	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::memory_stats", xs_memory_stats, __FILE__));
 	newXS("RootFixture::memory_replace", xs_memory_replace, __FILE__);
 	newXS("RootFixture::scalar_write", xs_scalar_write, __FILE__);
 	newXS("RootFixture::unguarded_increment", xs_unguarded_increment, __FILE__);
 	newXS("RootFixture::memory_guard", xs_memory_guard, __FILE__);
-	newXS("RootFixture::memory_borrow", xs_memory_borrow, __FILE__);
-	newXS("RootFixture::memory_container", xs_memory_container, __FILE__);
+	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::memory_borrow", xs_memory_borrow, __FILE__));
+	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::memory_container", xs_memory_container, __FILE__));
 	XSRETURN_YES;
 }

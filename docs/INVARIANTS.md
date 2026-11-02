@@ -285,6 +285,17 @@ to a live borrower. Reclamation waits for the relevant domain's pins. This is
 the implemented conservative pin/retirement protocol, not the design's proposed
 general safe-point tracing collector. Long-lived pins can defer reclamation.
 
+The pending-retirement count is atomic so an empty collector can return
+without a registry mutex. Queue insertion, exception requeue and detachment
+update it under the existing metadata mutex. A nonzero count grants no access
+to the list: collectors still check pins under registry exclusion and detach
+under writer exclusion, then destroy values outside the mutex. The last pin
+probes after releasing its registry lock; a later retirement either drains
+directly with no pins or leaves work for a later pin. Clearing the count must
+precede callbacks, so a destructor's new queue cannot be erased afterward.
+The [native ownership fixture](../tests/perl/owned.c) verifies idle mutex counts
+and retirement queued during a destructor while a new pin remains active.
+
 Enforcement: [retirement](../perl/core/wump_memory.c#L566),
 [SV storage](../perl/core/wump_storage_sv.c),
 [AV storage](../perl/core/wump_storage_av.c), [HV storage](../perl/core/wump_storage_hv.c).
