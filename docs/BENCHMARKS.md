@@ -84,8 +84,8 @@ Stock Perl, forks, ithreads and the unused Wump fork have no equivalent
 coroutine fixture, so their primitive cells are explicitly N/A. Process/thread
 creation and IPC benchmarks need their own bounded fixtures; the coroutine
 spawn row is not a measurement of `fork()` or `threads->create()`.
-The JSON worker probes the real entry: the current
-multi-slot `utf8::encode` rejection is recorded with its diagnostic. Other
+The JSON worker probes the real entry: older captures retain the
+multi-slot `utf8::encode` rejection with its diagnostic. Other
 errors, timeouts, warnings, malformed results or incorrect checksums fail the
 entire capture. Newly supported JSON is accepted as measured work; losing
 previously working support fails the progress comparison. Unsupported work is
