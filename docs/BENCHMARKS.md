@@ -101,7 +101,7 @@ runtime tuning overrides are cleared; the locale is C. Build and test before
 measuring on an otherwise quiet machine.
 
 The default control is [operation-matrix-baseline.json](../bench/operation-matrix-baseline.json).
-It is the existing callee baseline under a stable name, with identical bytes.
+Its contents are unchanged.
 The default budget permits at most +10% in each supported Wump cell's median
 work and process time. Go has no fixed acceptance ratio. The checker
 recomputes medians, rejects missing/duplicate/forged evidence and incompatible
@@ -123,28 +123,49 @@ Do not fabricate historical observations for changed fixtures.
 
 ### Current result
 
-Source `eecbbcd` has 770 observations, including 650 successful samples, at
-five runs / 50,000 iterations / eight jobs / affinity `0,2,4,6`. JSON work is
-48.95/44.10/42.33 microseconds on one/two/four slots, about 9%/18%/21% lower
-than the preceding XS build. Private binding lookup avoids unnecessary
-shared-root scans and disposable GP allocation; serial localization also
-avoids redundant validation and metadata guards. A separate correctness fix
-retains hash keys without changing a shared scalar's TEMP flag.
+Source `193914b` has 770 observations, including 650 successful samples, at
+five runs / 50,000 iterations / eight jobs / affinity `0,2,4,6`. The preceding
+binding build is the frozen before control; fixtures and stock/Go binaries
+are unchanged.
 
-The default retained-anchor check passes: one-slot JSON is +8.14% work and
-+8.12% process. Newly supported two/four-slot JSON cells have no timing baseline
-in that anchor. The preceding XS comparison passes every supported metric.
-The older pre-XS selection comparison still fails one-slot JSON at +10.64%
-work / +10.61% process. Its exact report is retained in the provenance record;
-this cleanup does not clear that regression or replace either active baseline.
-JSON scaling is weak; hashes, UTF-8, spawn and channels also expose substantial
-remaining overhead. Broader ordinary-Perl parity and deployment remain open.
+| Executors | Previous JSON work (us) | Current JSON work (us) | Change |
+| --- | ---: | ---: | ---: |
+| 1 | 48.95 | 48.50 | -0.92% |
+| 2 | 44.10 | 42.35 | -3.99% |
+| 4 | 42.33 | 40.49 | -4.36% |
+
+Empty reclamation probes now read the existing atomic pending count without
+a mutex. Nonempty queues retain the pin checks, writer exclusion and callback
+cleanup protocol. A separate correctness fix resolves direct plain package
+scalar `lock` operands without republishing a scalar owned by another writer.
+These are Perl-for-Wump changes; they do not establish a general Perl gain.
+
+| Comparison | Status |
+| --- | --- |
+| Previous binding build | PASS |
+| Retained default anchor | PASS |
+| Pre-XS selection build | PASS |
+
+Every previously supported metric passes all three comparisons under the
+unchanged +10% budget.
+
+Two/four-slot JSON has no timing baseline in the retained anchor: those cells
+remain newly supported measurements. One-slot JSON is still +9.63% work/
++9.60% process versus pre-XS selection,
+close to its 10% budget. Four-slot hashes and UTF-8 take about 20% and 11%
+less work time than the preceding build. Other rows include smaller
+regressions within budget. No baseline was replaced. Exact extra
+reports, source/binary/archive/log hashes and runners are in the current
+[provenance record](../bench/operation-matrix-machine.json). Exploratory CPU
+profiles and shorter interleaved probes are diagnostics, separate from gates.
+JSON scaling remains weak; hashes, UTF-8, spawn and channels also expose
+substantial overhead. Broad stock-Perl parity and deployment remain open.
 
 Retrieve superseded captures from Git when investigating a regression:
 
 ```sh
-git show 91a18ab:bench/operation-matrix-xs-current.json > build/previous-xs.json
-perl bench/matrix-check.pl build/previous-xs.json bench/operation-matrix-current.json
+git show ec80a59:bench/operation-matrix-current.json > build/previous.json
+perl bench/matrix-check.pl build/previous.json bench/operation-matrix-current.json
 ```
 
 ## Focused probes
@@ -156,8 +177,7 @@ make bench
 make bench-compare ITERATIONS=1000000
 ```
 
-The integer probe uses [perl-baseline.jsonl](../bench/perl-baseline.jsonl),
-formerly `perl-scalar-after.jsonl`, with unchanged contents. Its checker
+The integer probe uses [perl-baseline.jsonl](../bench/perl-baseline.jsonl) with unchanged contents. Its checker
 compares work/process time relative to the matched stock control. It measures
 one interpreter workload and cannot establish general Perl parity. For direct
 use: `perl bench/perl-baseline.pl PRIVATE_PERL STOCK_PERL --runs 5 --iterations 500000 --jobs 8`.

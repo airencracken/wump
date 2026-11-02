@@ -102,16 +102,14 @@ Coroutine-only fixtures are N/A for stock Perl, forks and ithreads. The checker
 flags regressions
 against the saved baseline; it never turns unsupported work into a fast result.
 The [current matrix](bench/operation-matrix-current.md) includes fork and
-ithread controls. Its [regression check](bench/operation-matrix-check.txt)
-passes the unchanged retained baseline. JSON work takes 48.95/44.10/42.33
-microseconds on one/two/four slots, about 9%/18%/21% less than the preceding
-XS build. Scaling remains weak, and one-slot JSON still fails the older
-pre-XS selection comparison at +10.64%. Ordinary active Perl overhead remains
-substantial. The [benchmark guide](docs/BENCHMARKS.md) explains the workloads,
-[three optimization lanes](docs/BENCHMARKS.md#three-optimization-lanes),
-controls and remaining performance gaps. Use a local baseline when your
-machine, CPU mask or controls differ.
-
+ithread controls. JSON work takes 48.50/42.35/40.49 microseconds on one/two/four
+executors, about 1%/4%/4% less than the preceding build.
+The [default regression check](bench/operation-matrix-check.txt) passes with
+its existing baseline. The [benchmark guide](docs/BENCHMARKS.md) records
+comparison results, workload definitions and the
+[three optimization lanes](docs/BENCHMARKS.md#three-optimization-lanes).
+JSON scaling and ordinary active Perl overhead remain substantial gaps.
+Use a local baseline when your machine, CPU mask or controls differ.
 
 ## Development references
 

@@ -461,6 +461,9 @@ and abandoned-task cleanup. Acquisition is not reentrant: locking the same
 identity twice in one act raises an error. Locks are not inherited at spawn.
 The lock retains its target while holders or waiters exist, then releases it
 immediately. Scripts that do not enable Wump keep upstream Perl's lock behavior.
+Direct plain package-scalar lock operands wait for an in-flight writer before
+inspecting the scalar head, then release their reader before acquiring the user
+lock. Ordinary reads and explicit publication retain their conflict checks.
 See [examples/safety.pl](../examples/safety.pl), or run `make perl-safety-example`.
 
 The private core now uses atomic SV-head reference counts as a conservative

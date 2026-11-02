@@ -7,43 +7,50 @@ general Perl/XS thread safety or CPAN compatibility.
 
 ## Current verification
 
-Measured source is `eecbbcd` (private binding lookup/localization plus hash-key
-temporary ownership). The following runs use that code; subsequent cleanup
-changes documentation, report names and the path of a legacy test fixture.
+Measured source is `193914b`: empty-queue reclamation probes, package-scalar
+lock identity selection and live cancellation test synchronization. The
+production core matches `904f1d9`; the final source adds only the live-test
+fixture. Subsequent report updates change documentation and generated evidence.
 
 | Check | Result and scope |
 | --- | --- |
-| Normal project | Complete `perl-test` target passes, including native C/C++/embedding fixtures, source upgrade/idempotence, inventory and opcode checks |
-| AddressSanitizer | Complete project target passes with full Perl teardown and stack-use-after-return enabled; leak detection is separate |
-| Whole-core TSan, scoped | Hash-key temporaries 8, local lookup 8, parallel JSON 18, UTF-8 XS 16, caller 12, element marks 4, GVs 4 and parallel 56 assertions pass |
-| Native TSan controls | C/C++ lookup fixture passes on one/four slots; allocator/race control detects the deliberate `Perl_more_bodies` race |
-| LeakSanitizer, scoped | Hash-key, local lookup, JSON, caller and UTF-8 suites pass with leak detection/full teardown; C/C++ native lookup fixture passes on one/four slots |
+| Normal project | Complete `perl-test` passes, including native C/C++/embedding, source upgrade/idempotence, inventory and opcode checks |
+| AddressSanitizer | Complete project passes with full teardown and stack-use-after-return; leak detection is separate |
+| Whole-core TSan, scoped | Package lock 4, retirement 8, memory 54, hash keys 8, local lookup 8, JSON 18, UTF-8 16, caller 12, element marks 4, GVs 4 and parallel 56 assertions pass |
+| Native TSan controls | Idle/destructor collection probe, C/C++ borrows, eight-executor reclamation, retirement fault/clone and allocator fixtures pass; the deliberate `Perl_more_bodies` race is detected |
+| LeakSanitizer, scoped | Package lock, retirement, memory and JSON suites plus native ownership, C/C++ borrows, eight-executor reclamation and fault fixtures pass with full teardown |
 | Stock differentials | Context 53 and legacy 26 assertions pass against matched unmodified Perl 5.42.2 |
-| Selected upstream | 12 files / 2,000 assertions pass for hash, assignment, localization and temporary behavior |
+| Full upstream | 2,919 files / 1,351,358 checks pass in UTC, with upstream skips and expectations unchanged |
 | Parser regeneration | Bison 3.8.2 regeneration matches |
-| Mojolicious integration | 48 live HTTP/WebSocket assertions pass on each of one/four slots with the prepared 9.37 dependency stack |
-| Runtime archive integrity | All six current runtime objects match the members linked into each normal/ASan/TSan Perl archive |
+| Mojolicious integration | 50 live HTTP/WebSocket assertions pass on each of one/four slots with prepared 9.37 dependencies and the controlled cancellation analyzer |
+| Runtime archive integrity | All six runtime objects match the members linked into each normal/ASan/TSan Perl archive; copied core sources match the measured revision |
 
-No fresh full upstream harness, whole-upstream sanitizer run or complete TSan
-project run is claimed for this change. Prior full upstream results remain in
-Git. The separate full-TSan ithreads failure described below is still open.
+No whole-upstream sanitizer or complete TSan project pass is claimed. The
+separate full-TSan ithreads failure described below remains open.
 
-Regression controls use the preceding frozen build: the native four-slot
-lookup probe fails because it takes a metadata mutex for an existing private
-binding. The new hash-key regression fails four of eight TSan assertions on
-that build, exposing TEMP-flag access between `pp_aassign`, `free_tmps` and
-shared scalar reads. The fix preserves key identity through a private RV
-keepalive instead of making the shared key itself a temporary. Both controls
-pass after the fixes; the tests retain their original expectations.
+The preceding frozen interpreter fails the idle-collection zero-mutex probe.
+It also fails all four package-lock assertions: a parked writer makes GV
+lookup reject a lock operand before lock acquisition. The fix waits to inspect
+plain published heads, then releases its reader before acquiring the user
+lock. Alias contention preserves every increment; ordinary reads and explicit
+publication still reject foreign mutation. Retirement tests preserve borrowed
+storage, exact destruction, destructor-enqueued records and quiescent cleanup.
 
-The [current matrix check](../bench/operation-matrix-check.txt) passes the
-unchanged default anchor, and the preceding XS comparison passes. The older
-pre-XS selection comparison still fails one-slot JSON work/process at
-+10.64%/+10.61%. [Provenance](../bench/operation-matrix-machine.json) includes
-exact reports, capture/verification scripts, source/binary/archive/log hashes
-and exploratory diagnostics. Raw logs and build trees are local under
-`build/checkpoint-local-lookup/`. Diagnostics are not substituted for failed
-gates; see the [benchmark guide](BENCHMARKS.md).
+The original finite-work live probe failed one four-slot shutdown cancellation
+assertion. The original run did not record the final job state; diagnostic repeats
+passed on both interpreters. Those passes alone do not establish the cause. The revised test requires admission and running state,
+then keeps doing real Unicode analysis until cancellation through the existing
+analyzer injection point. The demo's production code is unchanged. A cancelled
+control exits, while an uncancelled control cannot complete and times out.
+Final live tests pass on current one/four slots and the frozen four-slot control.
+The original failure and all diagnostic runs remain in local logs.
+
+The [default matrix check](../bench/operation-matrix-check.txt) passes.
+See the [benchmark guide](BENCHMARKS.md#current-result) for all comparisons and
+budget margins. [Provenance](../bench/operation-matrix-machine.json) retains
+raw-capture identities, exact reports, runners and source/binary/archive/log
+hashes. Local logs/builds are under `build/checkpoint-reclamation/`. The active
+baselines and legacy checker fixture bytes are unchanged.
 
 ## Normal and stock compatibility checks
 
