@@ -134,6 +134,7 @@ perl-build: perl-source $(BUILD)/libwump.a
 
 perl-source-test:
 	bash tests/perl/source.sh
+	perl tests/perl/build-dependencies.t
 
 perl-test: perl-build perl-source-test
 	perl tests/perl/matrix-check.t

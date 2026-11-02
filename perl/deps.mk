@@ -7,6 +7,6 @@ run$(OBJ_EXT): wump_select.c
 sv$(OBJ_EXT): wump_alloc.c wump_reads.c wump_storage_sv.c
 hv$(OBJ_EXT): wump_keys.c wump_storage_hv.c
 av$(OBJ_EXT): wump_storage_av.c
-$(MINIPERL_EXE) $(LIBPERL): wump_runtime.mk
+$(MINIPERL_EXE) $(LIBPERL): wump_runtime.mk $(ARCHOBJS)
 $(MINIPERL_EXE) $(LIBPERL) lib/buildcustomize.pl: wump_plain_ops$(OBJ_EXT) wump_active_ops$(OBJ_EXT)
 regcomp$(OBJ_EXT): wump_regex_roots.c
