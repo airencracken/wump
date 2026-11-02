@@ -10,7 +10,8 @@ for my $language ('c', 'c++') {
 	my @command = ($language eq 'c++' ? shellwords($ENV{CXX} // 'c++') : shellwords($Config{cc}),
 		shellwords($Config{ccflags}), '-O2', '-g', '-pthread', "-I$source",
 		'-x', $language, 'tests/perl/scalar-lookup.c', '-x', 'none', "$source/libperl.a",
-		'-Wl,--wrap=Perl_wump_gv_sv', shellwords($Config{ldflags}), shellwords($Config{perllibs}), '-o', $target);
+		'-Wl,--wrap=Perl_wump_gv_sv', '-Wl,--wrap=pthread_mutex_lock',
+		shellwords($Config{ldflags}), shellwords($Config{perllibs}), '-o', $target);
 	system @command;
 	$? == 0 or die "$language scalar lookup fixture failed to compile: $?\n";
 	for my $slots (1, 4) {

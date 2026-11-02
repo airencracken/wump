@@ -1,5 +1,6 @@
 #include "EXTERN.h"
 #include "perl.h"
+#include "XSUB.h"
 #include "../../perl/core/wump_scalar.h"
 #include <stdio.h>
 
@@ -7,7 +8,17 @@
 
 static unsigned long public_loads;
 static unsigned long hook_calls;
+#ifdef __cplusplus
+static thread_local unsigned mutex_calls;
+#else
+static _Thread_local unsigned mutex_calls;
+#endif
 START_EXTERN_C
+int __real_pthread_mutex_lock(pthread_mutex_t *mutex);
+int __wrap_pthread_mutex_lock(pthread_mutex_t *mutex) {
+	mutex_calls++;
+	return __real_pthread_mutex_lock(mutex);
+}
 OP *Perl_pp_gvsv(pTHX);
 SV **__real_Perl_wump_gv_sv(GV *gv);
 SV **__wrap_Perl_wump_gv_sv(GV *gv) {
@@ -25,6 +36,25 @@ SV **__wrap_Perl_wump_gv_sv(GV *gv) {
 	return actual;
 }
 END_EXTERN_C
+
+XS_INTERNAL(xs_local_lookup) {
+	dXSARGS;
+	PERL_UNUSED_VAR(cv);
+	CHECK(items == 0);
+	GV *gv = gv_fetchpvs("main::lookup_value", 0, SVt_PV);
+	CHECK(gv);
+	/* Resolve the name before measuring. Only selection of an existing
+	 * act-local binding belongs in this bounded, callback-free probe. */
+	mutex_calls = 0;
+	SV **selected = Perl_wump_gv_sv(gv);
+	unsigned locks = mutex_calls;
+	CHECK(selected && SvIOK(*selected));
+	IV value = SvIVX(*selected);
+	EXTEND(SP, 2);
+	ST(0) = sv_2mortal(newSViv(value));
+	ST(1) = sv_2mortal(newSVuv(locks));
+	XSRETURN(2);
+}
 
 static OP *hooked_scalar(pTHX) {
 	__atomic_fetch_add(&hook_calls, 1, __ATOMIC_RELAXED);
@@ -146,8 +176,13 @@ int main(int argc, char **argv, char **env) {
 	char program[] = "scalar-lookup", modules[] = "-Iperl/lib", option[] = "-e";
 	char code[] =
 		"use v5.42; use Wump; $^R = 0; $_ = 0;"
+		"our $lookup_value = 0;"
+		"sub check_lookup ($id) { local $lookup_value = $id;"
+		" my ($value, $locks) = WumpLookup::probe();"
+		" die 'local lookup returned another binding' unless $value == $id;"
+		" die 'ordinary local lookup took a native mutex' if $locks; }"
 		"sub hooked { $_ }"
-		"sub compute ($id) { $_ = $id; my $sum = $id; $sum += $_ % 97 for 1..2000;"
+		"sub compute ($id) { check_lookup($id); $_ = $id; my $sum = $id; $sum += $_ % 97 for 1..2000;"
 		" die 'scalar hook lost its act' unless hooked() == $id; return $sum }"
 		"my $out = chan(32);"
 		"for my $id (1..32) { act { $out->send([$id, compute($id)]) } }"
@@ -157,6 +192,7 @@ int main(int argc, char **argv, char **env) {
 		"die 'missing computation' unless keys(%seen) == 32;";
 	char *embedding[] = {program, modules, argv[1], option, code, NULL};
 	CHECK(perl_parse(interp, NULL, 5, embedding, NULL) == 0);
+	Perl_wump_xs_allow(aTHX_ newXS("WumpLookup::probe", xs_local_lookup, __FILE__));
 	CV *hooked = get_cv("main::hooked", 0);
 	CHECK(hooked && install_hook(CvROOT(hooked)));
 	check_slots(aTHX);
@@ -171,5 +207,6 @@ int main(int argc, char **argv, char **env) {
 	puts("ok - canonical scalar cells preserve root/child identity, aliases and scoped localization");
 	puts("ok - main and spawned numeric loops verify canonical public scalar loads and every result");
 	puts("ok - replaced scalar opcode entries retain their hooks and act context");
+	puts("ok - ordinary act-local scalar lookup takes no native mutex");
 	return 0;
 }

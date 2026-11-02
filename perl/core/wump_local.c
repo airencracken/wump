@@ -26,9 +26,18 @@ static wump_local *wump_local_find(pTHX_ GV *gv, char kind, bool inherit) {
 	/* These canonical GVs identify private task slots. Their root values
 	 * can be changing on the main act (notably the implicit for iterator). */
 	bool special = gv == aTHX->Idefgv || gv == aTHX->Ierrgv || gv == aTHX->Ireplgv;
-	char magic = kind == 's' && gp && !special ? Perl_wump_magic_kind(aTHX_ gp->gp_sv) : 0;
+	char magic = 0;
+	bool pending_magic = kind == 's' && gp && !special;
 	for (wump_local *slot = task->locals; slot; slot = slot->next) {
 		if (inherit && slot->pocket) continue;
+		/* Ordinary bindings cannot match a builtin magic kind. Inspect the
+		 * shared root only when the ordered search reaches a magic binding;
+		 * earlier GP matches need no shared-head read or metadata lock.
+		 * Keep magic-before-GP precedence at every candidate. */
+		if (pending_magic && slot->magic) {
+			magic = Perl_wump_magic_kind(aTHX_ gp->gp_sv);
+			pending_magic = FALSE;
+		}
 		if (kind == 's' && magic && slot->magic == magic) return slot;
 		if (slot->kind == kind && GvGP(slot->anchor) == GvGP(gv)) return slot;
 	}
@@ -65,10 +74,12 @@ static wump_local *wump_local_add(pTHX_ struct wump_perl_task *task,
 	wump_local *slot;
 	Newxz(slot, 1, wump_local);
 	slot->origin = (GV *)SvREFCNT_inc(gv);
-	/* Hold the GP independently of symbol-table alias replacement. */
-	slot->anchor = (GV *)newSV(0);
-	gv_init(slot->anchor, NULL, "__wump_local", 12, 0);
-	gp_free(slot->anchor);
+	/* Hold the GP independently of symbol-table alias replacement. Build
+	 * only the private holder, without allocating and discarding a new GP,
+	 * scalar slot and filename key. Keep a name for native teardown paths. */
+	slot->anchor = (GV *)newSV_type(SVt_PVGV);
+	isGV_with_GP_on(slot->anchor);
+	gv_name_set(slot->anchor, "__wump_local", 12, GV_ADD);
 	GvGP_set(slot->anchor, gp_ref(GvGP(gv)));
 	slot->kind = kind;
 	slot->value = value;

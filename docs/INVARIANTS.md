@@ -381,6 +381,26 @@ mutable encoder/parser scalars have dynamic call-local bindings; its default
 functional codec is constructed before execution. Yielding and nested codecs
 must preserve options, parser cursor, errors and incremental state.
 
+Ordinary local bindings select private storage without inspecting the shared
+root head. Search candidates in binding order: resolve the root magic kind
+only when a candidate carries a magic kind, and retain magic-before-GP
+precedence at that candidate. Pocket filtering happens before matching during
+inheritance. A direct GP match cannot be moved ahead of an earlier magic
+alias. This keeps alias/hook precedence while avoiding a metadata mutex on
+ordinary private scalar loads.
+
+Each binding retains its GP independently of later glob replacement. Its
+private GV holder is allocated directly with a diagnostic name and a GP
+reference; creating a disposable GP is unnecessary. Release the binding's
+value before its saved holder/origin references, preserving ordinary native
+GP destruction. The holder remains a valid named GV if it becomes the GP's
+last owner.
+
+Evidence: the C/C++ [scalar lookup fixture](../tests/perl/scalar-lookup.c)
+counts native mutex calls around selection, and
+[binding regressions](../tests/perl/local-lookup.t) cover alias precedence,
+hooks, inheritance, scope unwind and final release of a replaced GP.
+
 The active `PL_dbargs` cache resolves the current act's `DB::args` binding.
 Carp localizes that scratch array per `caller_info` invocation. Implicit
 task-lifetime bindings stay below lexical save-stack bindings and are not
