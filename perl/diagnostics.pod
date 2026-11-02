@@ -33,6 +33,11 @@ engine. Only the native engine's audited capture storage is supported.
 (F) An act tried to share the debugger's non-owning caller argument array.
 Copy its live values into an ordinary array before sharing them.
 
+=item Wump: cannot reuse published debugger arguments; localize DB::args first
+
+(F) Caller inspection would turn an already shared debugger argument array
+back into borrowed storage. Use a fresh C<local @DB::args> for inspection.
+
 =item Wump: parallel UTF-8 mutation requires a plain scalar
 
 (F) Parallel C<utf8::encode> or C<utf8::decode> received a reference,

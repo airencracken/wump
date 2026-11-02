@@ -382,8 +382,10 @@ must preserve options, parser cursor, errors and incremental state.
 The active `PL_dbargs` cache resolves the current act's `DB::args` binding.
 Carp localizes that scratch array per `caller_info` invocation. Implicit
 task-lifetime bindings stay below lexical save-stack bindings and are not
-inherited. Debugger argument arrays borrow their frame's SVs: they cannot be
-published without copying, and shifted-out slots are undefined in active
+inherited. Debugger argument arrays borrow their frame's SVs: still-borrowed
+arrays cannot be published. Reference construction may reify them into owning
+storage; once published, they cannot be reset to borrowed storage by another
+caller inspection. Shifted-out slots are undefined in active
 execution. This does not certify the general Perl debugger.
 
 The native builtin scalar heads for `$!`, `$^E`, `$?`, `$^F` and `$.` are also

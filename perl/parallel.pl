@@ -192,6 +192,14 @@ C
 	# inspect them when constructing the debugger's non-owning alias array.
 	edit('pp_ctl.c', '            SV* sv = AvALLOC(ary)[i];',
 		'            SV* sv = PL_wump_task && i < off ? NULL : AvALLOC(ary)[i];');
+	# A reference can reify DB::args into owning storage before it is shared.
+	# Never reset that published array to non-owning caller aliases afterward.
+	edit('perl.c', "    if (AvREAL(args)) {\n        /* Someone has already created it.", <<'C');
+    if (PL_wump_task && Perl_wump_is_shared(aTHX_ (SV *)args))
+        croak("Wump: cannot reuse published debugger arguments; localize DB::args first");
+    if (AvREAL(args)) {
+        /* Someone has already created it.
+C
 	edit('pp_sort.c', "                GvINTRO_off(PL_firstgv);\n                GvINTRO_off(PL_secondgv);", <<'C');
                 if (!PL_wump_task) {
                     GvINTRO_off(PL_firstgv);

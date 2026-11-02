@@ -312,8 +312,11 @@ arbitrary aliases of native magical scalars still require separate review.
 Caller argument inspection from package DB uses an act-local `@DB::args` and
 the native cache resolves its current binding. Carp localizes this scratch
 array for each invocation, preserving nested diagnostics. These arrays borrow
-SVs from their call frames: sharing the original array is rejected; copy its
-values before sending them. Shifted-out prefix slots are undefined during
+SVs from their call frames: native publication of still-borrowed storage is
+rejected. Perl reference construction can reify the array into owning storage;
+after it is shared, further caller inspection must use a fresh
+`local @DB::args`. Explicit value copies avoid sharing the scratch array.
+Shifted-out prefix slots are undefined during
 active inspection. This bounded caller support does not enable the debugger.
 
 Regex match state is task-local. Numbered and named captures, capture offsets,

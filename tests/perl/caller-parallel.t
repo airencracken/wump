@@ -94,5 +94,33 @@ for my $slots (1,4) {
 		print "borrow boundaries and builtin caches verified\n";
 	},0,qr/\Aborrow boundaries and builtin caches verified\n\z/,
 		"borrowed argument lifetime, copies and native builtin caches on $slots slots");
+
+	WumpTest::check_program(q{
+		use Wump;
+		{ package DB;
+			sub inspect {
+				my ($share,$out)=@_;
+				my @frame=caller(1);
+				# Native Perl reference construction reifies borrowed elements.
+				$out->send(\@DB::args) if $share;
+			}
+		}
+		sub frame {DB::inspect(@_)}
+		my $out=chan(1);
+		act {
+			frame(1,$out);
+			eval {frame(0,$out)};
+			die "published debugger storage was reused" unless $@ =~ /cannot reuse published debugger arguments/;
+			{
+				local @DB::args;
+				frame(0,$out);
+			}
+		};
+		my $saved=$out->recv;
+		yield;
+		die "published caller arguments changed" unless @$saved==2 && $saved->[0]==1 && ref($saved->[1]) eq 'Wump::Channel';
+		print "published caller storage remains owned\n";
+	},0,qr/\Apublished caller storage remains owned\n\z/,
+		"caller rejects reuse of published storage and accepts a fresh local on $slots slots");
 }
 done_testing;
