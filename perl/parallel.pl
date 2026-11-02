@@ -2,6 +2,21 @@
 # Actual Perl method bodies execute only after that region has ended.
 sub apply_parallel {
 	my ($source) = @_;
+	# Hash assignment retains possibly aliased RHS keys while clearing the
+	# destination. A private mortal holder preserves that ownership without
+	# placing shared literal/key heads on a temporary stack that clears TEMP.
+	edit('pp_hot.c', "                    else\n                        PL_tmps_stack[++PL_tmps_ix] =\n                                    SvREFCNT_inc_simple_NN(rsv);", <<'C');
+                    else if (PL_wump_task) {
+                        SV *holder = newSV_type(SVt_IV);
+                        SvRV_set(holder, SvREFCNT_inc_simple_NN(rsv));
+                        SvROK_on(holder);
+                        SvTEMP_on(holder);
+                        PL_tmps_stack[++PL_tmps_ix] = holder;
+                    }
+                    else
+                        PL_tmps_stack[++PL_tmps_ix] =
+                                    SvREFCNT_inc_simple_NN(rsv);
+C
 	# Reference generation and tail-call dispatch inspect heads which a
 	# sibling can be publishing for the first time. Read flags under the
 	# publication mutex without holding it across magic or lvalue callbacks.

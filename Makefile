@@ -35,7 +35,7 @@ MATRIX_CURRENT = $(BUILD)/operation-matrix-current.json
 MATRIX_REPORT = $(BUILD)/operation-matrix-current.md
 MATRIX_MAX_REGRESSION = 10
 SANITIZER_TEST_ARGS = CPPFLAGS='$(CPPFLAGS) -DWUMP_TEST_CASE_TIMEOUT=120' TEST_TIMEOUT=300 TEST_LONG_TIMEOUT=300 TEST_FAILURE_TIMEOUT=300
-PERL_SUITES = entry ordinary active callee waitgroup native-yield native-act native-scalar-ops native-channel native-select preempt tasks parallel xs-parallel utf8-xs json-state json-parallel element-mark-parallel gv-parallel caller-parallel encode-parallel bytes-parallel native-integration regex-parallel regex local local-lookup elements pocket pocket-deparse separators hooks locks shared keys reads read-claims scalar-writes operands stack-loads lvalue-loads reference-loads scalar-references materialization iteration memory publication hidden-roots
+PERL_SUITES = entry ordinary active callee waitgroup native-yield native-act native-scalar-ops native-channel native-select preempt tasks parallel xs-parallel utf8-xs json-state json-parallel element-mark-parallel gv-parallel caller-parallel encode-parallel bytes-parallel native-integration regex-parallel regex local local-lookup hash-key-temporaries elements pocket pocket-deparse separators hooks locks shared keys reads read-claims scalar-writes operands stack-loads lvalue-loads reference-loads scalar-references materialization iteration memory publication hidden-roots
 
 RUNTIME = stack sched chan io error
 OBJECTS = $(addprefix $(BUILD)/,$(addsuffix .o,$(RUNTIME))) $(BUILD)/ctx_x86_64.o
@@ -167,6 +167,7 @@ perl-test: perl-build perl-source-test
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/regex.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/local.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/local-lookup.t
+	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib -I$(BUILD) tests/perl/hash-key-temporaries.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/elements.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/pocket.t
 	timeout 90s $(BUILD)/perl/perl-5.42.2/perl -I$(BUILD)/perl/perl-5.42.2/lib -Iperl/lib tests/perl/pocket-deparse.t

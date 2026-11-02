@@ -82,6 +82,15 @@ head becomes shared, even with TEMP already clear and with duplicate temporary
 references. Ordinary cleanup then drops the holders without writing shared
 head flags. Refcounts and values must balance on normal and exceptional cleanup.
 
+Active hash assignment's keepalive references for possibly aliased RHS keys
+must also use private mortal holders. Putting an unchanged shared literal
+directly on an act's temporary stack lets cleanup rewrite its TEMP bit.
+Retain the original key SV rather than copying it: key conversion may yield
+or throw after the destination hash has been cleared, and its identity and
+destruction boundary must survive that interval. Inactive Perl keeps its
+native stack protocol. Evidence:
+[key temporary ownership](../tests/perl/hash-key-temporaries.t).
+
 Enforcement: [task fields](../perl/taskvars), generated core accessors and
 audited load/capture patches. Evidence: [active callbacks](../tests/perl/active.t),
 [forced stack growth](../tests/perl/scalar-lookup.c),
