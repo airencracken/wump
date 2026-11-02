@@ -657,7 +657,7 @@ XS_EXTERNAL(boot_RootFixture) {
 	newXS("RootFixture::memory_replace", xs_memory_replace, __FILE__);
 	newXS("RootFixture::scalar_write", xs_scalar_write, __FILE__);
 	newXS("RootFixture::unguarded_increment", xs_unguarded_increment, __FILE__);
-	newXS("RootFixture::memory_guard", xs_memory_guard, __FILE__);
+	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::memory_guard", xs_memory_guard, __FILE__));
 	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::memory_borrow", xs_memory_borrow, __FILE__));
 	Perl_wump_xs_allow(aTHX_ newXS("RootFixture::memory_container", xs_memory_container, __FILE__));
 	XSRETURN_YES;

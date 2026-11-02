@@ -362,6 +362,42 @@ static SV **wump_regex_scalar(pTHX_ GV *gv) {
 	return &slot->value;
 }
 
+static SV **wump_lock_scalar_cell(pTHX_ GV *gv) {
+	/* A bare package scalar used by lock supplies an identity, not a value
+	 * read. Its current owner may be changing that scalar. Wait for the
+	 * short writer claim before inspecting a plain, already-published head;
+	 * do not republish it or hold a reader while acquiring its user lock. */
+	if (!PL_op || PL_op->op_type != OP_GVSV || !PL_op->op_next
+		|| PL_op->op_next->op_type != OP_LOCK) return NULL;
+	if (gv == aTHX->Idefgv || gv == aTHX->Ierrgv || gv == aTHX->Ireplgv
+		|| gv == PL_defgv || gv == PL_errgv || gv == PL_replgv) return NULL;
+	for (;;) {
+		SV **cell = NULL;
+		struct wump_shared *claim;
+		Perl_wump_memory_lock(aTHX);
+		SV *value = GvGP(gv)->gp_sv;
+		bool ready = Perl_wump_read_try_begin(aTHX_ value, &claim);
+		if (ready) {
+			bool plain = value && SvTYPE(value) <= SVt_PVMG;
+			MAGIC *marker = NULL;
+			if (plain && SvTYPE(value) == SVt_PVMG) {
+				for (MAGIC *magic = SvMAGIC(value); magic; magic = magic->mg_moremagic) {
+					if (Perl_wump_publish_magic(magic)) marker = magic;
+					else if (magic->mg_type != PERL_MAGIC_backref) plain = FALSE;
+				}
+			}
+			if (plain && marker && marker->mg_private == WUMP_PUBLISH_SHARED)
+				cell = &GvGP(gv)->gp_sv;
+			Perl_wump_read_end(aTHX_ claim);
+		}
+		Perl_wump_memory_unlock(aTHX);
+		if (ready) return cell;
+		/* Keep no cell, claim or native-thread address across suspension. */
+		wump_schedule_check(aTHX);
+		wump_yield();
+	}
+}
+
 SV **Perl_wump_gv_sv(GV *gv) {
 	dTHX;
 	struct wump_perl_task *task = PL_wump_task;
@@ -372,6 +408,8 @@ SV **Perl_wump_gv_sv(GV *gv) {
 	if (private) return private;
 	wump_local *binding = wump_local_find(aTHX_ gv, 's', FALSE);
 	if (binding != NULL) return &binding->value;
+	private = wump_lock_scalar_cell(aTHX_ gv);
+	if (private) return private;
 	if (PL_wump_task != NULL) {
 		SV **capture = wump_regex_scalar(aTHX_ gv);
 		if (capture) return capture;

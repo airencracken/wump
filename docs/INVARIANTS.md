@@ -295,6 +295,9 @@ directly with no pins or leaves work for a later pin. Clearing the count must
 precede callbacks, so a destructor's new queue cannot be erased afterward.
 The [native ownership fixture](../tests/perl/owned.c) verifies idle mutex counts
 and retirement queued during a destructor while a new pin remains active.
+The [parallel retirement fixture](../tests/perl/retirement-parallel.t) retains
+512 borrowed array slots while acts clear their owners, then checks exact
+destruction and domain quiescence on one/four slots.
 
 Enforcement: [retirement](../perl/core/wump_memory.c#L566),
 [SV storage](../perl/core/wump_storage_sv.c),
@@ -357,6 +360,19 @@ shutdown; no asynchronous cancellation guarantee may be inferred.
 Enforcement: [public contract](../runtime/include/wump.h),
 [scheduler](../runtime/src/sched.c#L701), [Perl panic](../perl/core/wump_core.c#L230).
 Evidence: [entry](../tests/perl/entry.t), [syscalls](../tests/test_syscall.c).
+
+**SUSP-5 — Lock operands may need identity before a value is readable.** A
+direct package-scalar operand of `lock` must not republish that already-shared
+scalar while another act owns its writer claim. For plain, completed
+publications, GV selection waits for that claim before inspecting the head,
+then releases its reader and metadata mutex before returning the cell. No
+cell or native-thread address survives a wait; reselect the GP each time.
+Private/localized and canonical builtin cells retain their existing selection.
+Magical or incompletely published heads retain general routing. Ordinary
+package reads and explicit publication still reject foreign mutation.
+
+Evidence: [parked-writer and alias contention](../tests/perl/package-lock.t),
+[package counters in destructors](../tests/perl/retirement-parallel.t).
 
 ## Compatibility and extension boundaries
 
