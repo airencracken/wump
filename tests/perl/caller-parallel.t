@@ -115,9 +115,10 @@ for my $slots (1,4) {
 				local @DB::args;
 				frame(0,$out);
 			}
+			$out->send('done');
 		};
 		my $saved=$out->recv;
-		yield;
+		die "caller worker did not finish" unless $out->recv eq 'done';
 		die "published caller arguments changed" unless @$saved==2 && $saved->[0]==1 && ref($saved->[1]) eq 'Wump::Channel';
 		print "published caller storage remains owned\n";
 	},0,qr/\Apublished caller storage remains owned\n\z/,
